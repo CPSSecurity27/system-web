@@ -1,0 +1,612 @@
+-- ============================================================================
+-- CPS Security — Esquema PostgreSQL v2 (base de datos NUEVA)
+-- Fecha: 2026-07-16 · Estado: diseño Fase 2, listo para revisión
+-- Fuente de las decisiones: docs/diseno-relaciones-fase1.md y docs/negocio-redisenado.md
+--
+-- Principios que este esquema impone POR SÍ MISMO (no dependen del código):
+--   1. La alarma es del barrio; el control es del hogar; el portador es reasignable.
+--   2. Todo cliente es una ORGANIZATION con exactamente un OWNER y contrato por barrio.
+--   3. Los cupos son columnas que solo CPS escribe (permiso de app + auditoría).
+--   4. Un solo escritor por tabla entre la web y el servicio de alarmas (GRANTs, §12).
+--   5. La historia no se borra: eventos y auditoría son append-only.
+-- ============================================================================
+
+-- ----------------------------------------------------------------------------
+-- 0. Tipos ENUM (espejarlos en common/enums.ts del backend)
+-- ----------------------------------------------------------------------------
+
+CREATE TYPE account_type      AS ENUM ('COMPANY', 'ORGANIZATION');
+CREATE TYPE org_subtype       AS ENUM ('MUNICIPAL', 'PRIVATE');
+CREATE TYPE user_role         AS ENUM ('OWNER', 'ADMIN', 'TECHNICIAN', 'MONITOR');
+CREATE TYPE user_kind         AS ENUM ('PERSON', 'INSTITUTIONAL');
+CREATE TYPE entity_status     AS ENUM ('ACTIVE', 'SUSPENDED', 'CLOSED');
+CREATE TYPE managed_by_type   AS ENUM ('CPS', 'ORGANIZATION');
+CREATE TYPE home_member_role  AS ENUM ('TITULAR', 'FAMILIAR');
+CREATE TYPE contract_status   AS ENUM ('ACTIVE', 'SUSPENDED', 'EXPIRED', 'CANCELLED');
+CREATE TYPE device_type       AS ENUM ('ALARM_PANEL', 'SIREN', 'REPEATER', 'SENSOR');
+CREATE TYPE device_status     AS ENUM ('INVENTORY', 'INSTALLED', 'OPERATIONAL',
+                                       'MAINTENANCE', 'OUT_OF_SERVICE', 'RETIRED');
+CREATE TYPE maintenance_type  AS ENUM ('INSTALL', 'SERVICE', 'REPAIR', 'CHECK', 'REPLACE');
+CREATE TYPE maintenance_status AS ENUM ('PENDING', 'IN_PROGRESS', 'DONE', 'CANCELLED');
+CREATE TYPE remote_status     AS ENUM ('INVENTORY', 'ACTIVE', 'SUSPENDED', 'LOST',
+                                       'REPLACED', 'CLOSED');
+CREATE TYPE event_origin      AS ENUM ('APP', 'REMOTE', 'DEVICE', 'PANEL');
+CREATE TYPE event_scope       AS ENUM ('SINGLE', 'COMMUNITY');
+CREATE TYPE event_status      AS ENUM ('OPEN', 'RESOLVED', 'FALSE_ALARM');
+                                       -- ACKNOWLEDGED pospuesto (M5): agregarlo después
+                                       -- es un ALTER TYPE ... ADD VALUE, no rompe nada
+CREATE TYPE location_mode     AS ENUM ('LIVE', 'FIXED');
+CREATE TYPE user_token_type   AS ENUM ('EMAIL_VERIFICATION', 'PASSWORD_RESET', 'PHONE_OTP');
+CREATE TYPE user_device_status AS ENUM ('ACTIVE', 'REVOKED');
+
+-- updated_at automático (mismo patrón que el esquema v1)
+CREATE OR REPLACE FUNCTION set_updated_at() RETURNS trigger AS $$
+BEGIN
+  NEW.updated_at := now();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ----------------------------------------------------------------------------
+-- 1. Geografía (read-only, sincronizada desde la API de georef)
+--    georef_id es TEXT: los códigos llevan ceros a la izquierda ("06", "06021")
+-- ----------------------------------------------------------------------------
+
+CREATE TABLE province (
+  id         SERIAL PRIMARY KEY,
+  georef_id  TEXT NOT NULL UNIQUE,
+  name       TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE department (
+  id          SERIAL PRIMARY KEY,
+  georef_id   TEXT NOT NULL UNIQUE,
+  name        TEXT NOT NULL,
+  province_id INT NOT NULL REFERENCES province(id) ON DELETE RESTRICT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_department_province ON department(province_id);
+
+CREATE TABLE locality (
+  id            SERIAL PRIMARY KEY,
+  georef_id     TEXT NOT NULL UNIQUE,
+  name          TEXT NOT NULL,
+  department_id INT NOT NULL REFERENCES department(id) ON DELETE RESTRICT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_locality_department ON locality(department_id);
+
+-- ----------------------------------------------------------------------------
+-- 2. Personas — app_user (una sola tabla para panel y app de vecinos)
+--    ("user" es palabra reservada en PostgreSQL, por eso app_user)
+-- ----------------------------------------------------------------------------
+
+CREATE TABLE app_user (
+  id                SERIAL PRIMARY KEY,
+  kind              user_kind NOT NULL DEFAULT 'PERSON',
+  name              TEXT NOT NULL,            -- INSTITUTIONAL: nombre de la institución
+  username          TEXT UNIQUE,              -- handle del panel (NULL para vecinos puros)
+  dni               TEXT UNIQUE,              -- identidad del vecino (NULL para panel puro)
+  email             TEXT UNIQUE,
+  telephone         TEXT,
+  password_hash     TEXT,                     -- argon2id; NULL para vecinos solo-OTP
+  status            entity_status NOT NULL DEFAULT 'ACTIVE',
+  email_verified_at TIMESTAMPTZ,
+  phone_verified_at TIMESTAMPTZ,
+  last_login_at     TIMESTAMPTZ,
+  -- v2.2 (migración MustChangePassword, 2026-07-24): el OWNER institucional
+  -- nace con una clave TEMPORAL generada por el sistema, no elegida por el
+  -- admin de CPS que lo crea. Se apaga solo al cambiarla (AuthService#changePassword).
+  must_change_password BOOLEAN NOT NULL DEFAULT false,
+  created_by        INT REFERENCES app_user(id) ON DELETE SET NULL,  -- NULL: bootstrap
+  updated_by        INT REFERENCES app_user(id) ON DELETE SET NULL,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+  -- Con algo hay que poder loguearse
+  -- v2.1 (migración VecinoEmailLogin): el vecino ya no exige DNI, registra
+  -- con email; alguna identidad de login tiene que existir siempre.
+  CONSTRAINT chk_user_login_identity CHECK (username IS NOT NULL OR dni IS NOT NULL OR email IS NOT NULL),
+  -- Un usuario institucional no tiene datos de persona
+  CONSTRAINT chk_institutional_no_dni CHECK (kind <> 'INSTITUTIONAL' OR dni IS NULL)
+);
+CREATE TRIGGER trg_app_user_updated BEFORE UPDATE ON app_user
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- ----------------------------------------------------------------------------
+-- 3. Cuentas — el cliente (o CPS) y sus cupos
+-- ----------------------------------------------------------------------------
+
+CREATE TABLE account (
+  id                 SERIAL PRIMARY KEY,
+  name               TEXT NOT NULL,
+  type               account_type NOT NULL,
+  subtype            org_subtype,             -- solo ORGANIZATION
+  status             entity_status NOT NULL DEFAULT 'ACTIVE',
+
+  -- CUPOS (§5.2 del diseño): SOLO CPS los escribe (permiso de app + audit_log).
+  -- Solo tienen sentido en ORGANIZATION, y ahí son obligatorios (>= 1): no
+  -- existe "sin límite" (2026-07-23), lo valida accounts.service.ts. NULL solo
+  -- aparece en COMPANY, donde el cupo directamente no aplica (chk_subtype_by_type
+  -- más abajo lo exige).
+  max_neighborhoods  INT CHECK (max_neighborhoods >= 0),
+  max_monitor_users  INT CHECK (max_monitor_users >= 0),
+
+  created_by         INT REFERENCES app_user(id) ON DELETE SET NULL,
+  updated_by         INT REFERENCES app_user(id) ON DELETE SET NULL,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+  -- Habilita las FK compuestas de neighborhood y service_contract (no borrar)
+  CONSTRAINT uq_account_id_type UNIQUE (id, type),
+  -- ORGANIZATION lleva subtype; COMPANY no lleva ni subtype ni cupos
+  CONSTRAINT chk_subtype_by_type CHECK (
+    (type = 'ORGANIZATION' AND subtype IS NOT NULL)
+    OR
+    (type = 'COMPANY' AND subtype IS NULL
+      AND max_neighborhoods IS NULL AND max_monitor_users IS NULL)
+  )
+);
+-- CPS es una sola: no puede existir una segunda cuenta COMPANY
+CREATE UNIQUE INDEX uq_account_single_company ON account (type) WHERE type = 'COMPANY';
+CREATE TRIGGER trg_account_updated BEFORE UPDATE ON account
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- ----------------------------------------------------------------------------
+-- 4. Membresías del panel — account_user
+--    (ya sin copia de account_type: con HOME eliminado, los 4 roles valen en
+--     ambos tipos de cuenta y el CHECK de matriz quedó vacío)
+--
+--    v2.2 (migración SingleAccountMembership, 2026-07-24): una persona
+--    pertenece a UNA sola cuenta a la vez — UNIQUE(user_id), no compuesto.
+--    El caso "operador compartido entre dos clientes" quedó descartado: no
+--    se va a dar en la práctica y complicaba el padrón sin necesidad.
+-- ----------------------------------------------------------------------------
+
+CREATE TABLE account_user (
+  id         SERIAL PRIMARY KEY,
+  account_id INT NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+  user_id    INT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+  role       user_role NOT NULL,
+  created_by INT REFERENCES app_user(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+  -- A lo sumo UNA membresía por persona (no compuesto con account_id)
+  CONSTRAINT uq_account_user_single_account UNIQUE (user_id),
+  -- Habilita la FK compuesta de staff_assignment (no borrar)
+  CONSTRAINT uq_account_user_id_account UNIQUE (id, account_id)
+);
+-- Exactamente un OWNER por cuenta
+CREATE UNIQUE INDEX uq_account_single_owner ON account_user(account_id)
+  WHERE role = 'OWNER';
+-- idx_account_user_user ya no hace falta: uq_account_user_single_account
+-- crea su propio índice único sobre user_id.
+CREATE INDEX idx_account_user_account ON account_user(account_id);
+CREATE TRIGGER trg_account_user_updated BEFORE UPDATE ON account_user
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Invariantes que van en el SERVICIO (la base no llega):
+--   * el usuario con rol OWNER debe ser kind = INSTITUTIONAL, y viceversa
+--   * un INSTITUTIONAL solo puede tener membresías OWNER
+--   * cupo max_monitor_users al crear una membresía MONITOR
+--   * toda cuenta conserva su OWNER (no se borra la última soberanía)
+
+-- ----------------------------------------------------------------------------
+-- 5. Barrio — la unidad operativa, con su organización cliente y sus cupos
+-- ----------------------------------------------------------------------------
+
+CREATE TABLE neighborhood (
+  id                      SERIAL PRIMARY KEY,
+  name                    TEXT NOT NULL,
+  status                  entity_status NOT NULL DEFAULT 'ACTIVE',
+  locality_id             INT NOT NULL REFERENCES locality(id) ON DELETE RESTRICT,
+  latitude                DOUBLE PRECISION,
+  longitude               DOUBLE PRECISION,
+
+  -- La organización cliente (muni o consorcio). La columna organization_type
+  -- es redundancia CONTROLADA POR LA BASE: fijada en 'ORGANIZATION' por el CHECK
+  -- y atada con FK compuesta -> una cuenta COMPANY no puede ser dueña de barrios.
+  organization_id         INT NOT NULL,
+  organization_type       account_type NOT NULL DEFAULT 'ORGANIZATION',
+  CONSTRAINT chk_neighborhood_org_type CHECK (organization_type = 'ORGANIZATION'),
+  CONSTRAINT fk_neighborhood_org FOREIGN KEY (organization_id, organization_type)
+    REFERENCES account(id, type) ON DELETE RESTRICT,
+
+  -- Quién opera: CPS (esquema privado) o la propia organización (municipal)
+  managed_by              managed_by_type NOT NULL,
+
+  -- CUPOS del barrio (§5.2): SOLO CPS los escribe
+  max_family_members      INT NOT NULL DEFAULT 3 CHECK (max_family_members >= 0),
+  remote_controls_enabled BOOLEAN NOT NULL DEFAULT true,
+
+  created_by              INT REFERENCES app_user(id) ON DELETE SET NULL,
+  updated_by              INT REFERENCES app_user(id) ON DELETE SET NULL,
+  created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+  -- Habilita la FK compuesta de staff_assignment (no borrar)
+  CONSTRAINT uq_neighborhood_id_org UNIQUE (id, organization_id)
+);
+CREATE INDEX idx_neighborhood_locality ON neighborhood(locality_id);
+CREATE INDEX idx_neighborhood_org      ON neighborhood(organization_id);
+CREATE TRIGGER trg_neighborhood_updated BEFORE UPDATE ON neighborhood
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Servicio: cupo max_neighborhoods al crear; transferencia = UPDATE organization_id
+-- + managed_by, SOLO CPS, siempre con fila en audit_log.
+
+-- ----------------------------------------------------------------------------
+-- 6. Personal acotado por barrio — staff_assignment
+--    Sin filas = ve todos los barrios de su organización. Con filas = solo esos.
+--    Las DOS FK compuestas comparten account_id/organization_id: asignar a un
+--    miembro un barrio de OTRA organización es imposible a nivel base.
+-- ----------------------------------------------------------------------------
+
+CREATE TABLE staff_assignment (
+  id              SERIAL PRIMARY KEY,
+  account_user_id INT NOT NULL,
+  account_id      INT NOT NULL,
+  neighborhood_id INT NOT NULL,
+  created_by      INT REFERENCES app_user(id) ON DELETE SET NULL,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+  CONSTRAINT uq_staff_assignment UNIQUE (account_user_id, neighborhood_id),
+  CONSTRAINT fk_sa_membership FOREIGN KEY (account_user_id, account_id)
+    REFERENCES account_user(id, account_id) ON DELETE CASCADE,
+  CONSTRAINT fk_sa_neighborhood FOREIGN KEY (neighborhood_id, account_id)
+    REFERENCES neighborhood(id, organization_id) ON DELETE CASCADE
+);
+CREATE INDEX idx_sa_neighborhood ON staff_assignment(neighborhood_id);
+
+-- ----------------------------------------------------------------------------
+-- 7. Comercial — service_contract (condiciones congeladas al firmar)
+-- ----------------------------------------------------------------------------
+
+CREATE TABLE service_contract (
+  id              SERIAL PRIMARY KEY,
+  price           NUMERIC(12,2) NOT NULL,   -- nunca DOUBLE: es dinero
+  description     TEXT,
+  start_date      DATE NOT NULL,
+  end_date        DATE,                     -- NULL = abierto / autorrenovable
+  status          contract_status NOT NULL DEFAULT 'ACTIVE',
+
+  -- Solo una ORGANIZATION contrata (CPS presta el servicio; COMPANY no firma).
+  account_id      INT NOT NULL,
+  account_type    account_type NOT NULL DEFAULT 'ORGANIZATION',
+  CONSTRAINT chk_contract_org_only CHECK (account_type = 'ORGANIZATION'),
+  CONSTRAINT fk_contract_account FOREIGN KEY (account_id, account_type)
+    REFERENCES account(id, type) ON DELETE RESTRICT,
+
+  neighborhood_id INT NOT NULL REFERENCES neighborhood(id) ON DELETE RESTRICT,
+
+  created_by      INT REFERENCES app_user(id) ON DELETE SET NULL,
+  updated_by      INT REFERENCES app_user(id) ON DELETE SET NULL,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- Un solo contrato ACTIVE por barrio (el 23505 se traduce a 409, no se pre-chequea)
+CREATE UNIQUE INDEX uq_contract_active_per_neighborhood
+  ON service_contract(neighborhood_id) WHERE status = 'ACTIVE';
+CREATE INDEX idx_contract_account ON service_contract(account_id);
+CREATE TRIGGER trg_contract_updated BEFORE UPDATE ON service_contract
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- ----------------------------------------------------------------------------
+-- 8. Activos — device (alarma comunitaria), su estado vivo y su bitácora
+-- ----------------------------------------------------------------------------
+
+CREATE TABLE device (
+  id              SERIAL PRIMARY KEY,
+  serial          TEXT NOT NULL UNIQUE,     -- identidad física, no se cambia
+  type            device_type NOT NULL DEFAULT 'ALARM_PANEL',
+  status          device_status NOT NULL DEFAULT 'INVENTORY',
+  name            TEXT,                     -- "Esquina Norte" (al instalar)
+
+  -- Provisioning (nace en fábrica CPS)
+  claim_code      TEXT,                     -- el técnico lo usa para reclamar
+  manufactured_at TIMESTAMPTZ,
+  tested          BOOLEAN NOT NULL DEFAULT false,
+  imei            TEXT,
+  iccid           TEXT,
+  mac             TEXT,
+
+  -- Custodia: en INVENTORY puede estar en stock de una organización
+  -- (NULL = fábrica CPS). Instalado, pertenece a un barrio.
+  organization_id INT REFERENCES account(id) ON DELETE RESTRICT,
+  neighborhood_id INT REFERENCES neighborhood(id) ON DELETE RESTRICT,
+  latitude        DOUBLE PRECISION,
+  longitude       DOUBLE PRECISION,
+  installed_at    TIMESTAMPTZ,
+
+  created_by      INT REFERENCES app_user(id) ON DELETE SET NULL,
+  updated_by      INT REFERENCES app_user(id) ON DELETE SET NULL,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+  -- INVENTORY <=> sin barrio; en servicio <=> con barrio
+  CONSTRAINT chk_device_custody CHECK (
+    (status = 'INVENTORY' AND neighborhood_id IS NULL)
+    OR
+    (status <> 'INVENTORY' AND neighborhood_id IS NOT NULL)
+  ),
+  -- El stock organizacional solo existe mientras está en inventario
+  CONSTRAINT chk_device_stock_owner CHECK (
+    status = 'INVENTORY' OR organization_id IS NULL
+  )
+);
+CREATE UNIQUE INDEX uq_device_claim_code ON device(claim_code)
+  WHERE claim_code IS NOT NULL;
+CREATE INDEX idx_device_neighborhood ON device(neighborhood_id);
+CREATE TRIGGER trg_device_updated BEFORE UPDATE ON device
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Estado VIVO: una fila por device, UPDATE in place, SIN historial (el historial
+-- es event). La escribe SOLO el servicio de alarmas (GRANTs en §12).
+CREATE TABLE device_state (
+  device_id      INT PRIMARY KEY REFERENCES device(id) ON DELETE CASCADE,
+  online         BOOLEAN NOT NULL DEFAULT false,
+  alarm_status   TEXT,                      -- 'connected' | 'trigger' | ... (catálogo hw)
+  last_heartbeat TIMESTAMPTZ,
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE device_maintenance (
+  id           SERIAL PRIMARY KEY,
+  device_id    INT NOT NULL REFERENCES device(id) ON DELETE CASCADE,
+  type         maintenance_type NOT NULL,
+  status       maintenance_status NOT NULL DEFAULT 'PENDING',
+  description  TEXT,
+  performed_at TIMESTAMPTZ,
+  user_id      INT REFERENCES app_user(id) ON DELETE SET NULL,  -- el técnico
+  created_by   INT REFERENCES app_user(id) ON DELETE SET NULL,
+  updated_by   INT REFERENCES app_user(id) ON DELETE SET NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_maintenance_device ON device_maintenance(device_id, created_at);
+CREATE TRIGGER trg_maintenance_updated BEFORE UPDATE ON device_maintenance
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- ----------------------------------------------------------------------------
+-- 9. Hogar y sus miembros
+--    (home va después de device por default_device_id)
+-- ----------------------------------------------------------------------------
+
+CREATE TABLE home (
+  id                SERIAL PRIMARY KEY,
+  name              TEXT NOT NULL,
+  address           TEXT,
+  contact_phone     TEXT,                   -- teléfono DEL HOGAR (sobrevive al titular)
+  status            entity_status NOT NULL DEFAULT 'ACTIVE',
+  latitude          DOUBLE PRECISION,
+  longitude         DOUBLE PRECISION,
+  neighborhood_id   INT NOT NULL REFERENCES neighborhood(id) ON DELETE RESTRICT,
+  -- Alarma PREFERIDA para eventos SINGLE (preferencia, no propiedad).
+  -- Servicio: debe ser un device del mismo barrio.
+  default_device_id INT REFERENCES device(id) ON DELETE SET NULL,
+  created_by        INT REFERENCES app_user(id) ON DELETE SET NULL,
+  updated_by        INT REFERENCES app_user(id) ON DELETE SET NULL,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_home_neighborhood ON home(neighborhood_id);
+CREATE TRIGGER trg_home_updated BEFORE UPDATE ON home
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TABLE home_member (
+  id         SERIAL PRIMARY KEY,
+  home_id    INT NOT NULL REFERENCES home(id) ON DELETE CASCADE,
+  user_id    INT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+  role       home_member_role NOT NULL,
+  status     entity_status NOT NULL DEFAULT 'ACTIVE',
+  created_by INT REFERENCES app_user(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+  CONSTRAINT uq_home_member UNIQUE (home_id, user_id)
+);
+-- Un solo TITULAR por hogar…
+CREATE UNIQUE INDEX uq_home_single_titular ON home_member(home_id)
+  WHERE role = 'TITULAR';
+-- …y una persona es titular de UN solo hogar (regla del PDF que se conserva)
+CREATE UNIQUE INDEX uq_user_single_titular ON home_member(user_id)
+  WHERE role = 'TITULAR';
+CREATE INDEX idx_home_member_user ON home_member(user_id);
+CREATE TRIGGER trg_home_member_updated BEFORE UPDATE ON home_member
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Servicio: FAMILIAR nunca supera neighborhood.max_family_members al CREAR
+-- (grandfathering si CPS baja el cupo). Un INSTITUTIONAL no puede ser home_member.
+
+-- ----------------------------------------------------------------------------
+-- 10. Controles remotos y sus códigos RF
+-- ----------------------------------------------------------------------------
+
+CREATE TABLE remote (
+  id                  SERIAL PRIMARY KEY,
+  name                TEXT NOT NULL,        -- "llavero cocina", "Control (stock)"
+  status              remote_status NOT NULL DEFAULT 'INVENTORY',
+
+  -- Custodia de 3 niveles: fábrica CPS -> stock org -> hogar (dueño)
+  organization_id     INT REFERENCES account(id) ON DELETE RESTRICT,
+  home_id             INT REFERENCES home(id) ON DELETE RESTRICT,
+  -- Portador actual (puede no haber: "en el cajón de la casa")
+  assigned_to_user_id INT REFERENCES app_user(id) ON DELETE SET NULL,
+  -- Alarma donde están grabados sus códigos RF
+  device_id           INT REFERENCES device(id) ON DELETE SET NULL,
+
+  created_by          INT REFERENCES app_user(id) ON DELETE SET NULL,
+  updated_by          INT REFERENCES app_user(id) ON DELETE SET NULL,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+  CONSTRAINT chk_remote_custody CHECK (
+    (status = 'INVENTORY' AND home_id IS NULL)
+    OR
+    (status <> 'INVENTORY' AND home_id IS NOT NULL)
+  ),
+  CONSTRAINT chk_remote_stock_owner CHECK (
+    status = 'INVENTORY' OR organization_id IS NULL
+  )
+);
+CREATE INDEX idx_remote_home     ON remote(home_id);
+CREATE INDEX idx_remote_assigned ON remote(assigned_to_user_id);
+CREATE INDEX idx_remote_device   ON remote(device_id);
+CREATE TRIGGER trg_remote_updated BEFORE UPDATE ON remote
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Servicio: portador ∈ miembros del hogar; device del mismo barrio que el hogar;
+-- alta bloqueada si neighborhood.remote_controls_enabled = false.
+
+CREATE TABLE remote_code (
+  id             SERIAL PRIMARY KEY,
+  remote_id      INT NOT NULL REFERENCES remote(id) ON DELETE CASCADE,
+  -- AES-256-GCM: iv (12) || authTag (16) || ciphertext. La base NUNCA ve el claro.
+  code_encrypted BYTEA NOT NULL,
+  position       SMALLINT NOT NULL CHECK (position BETWEEN 1 AND 4),  -- M2: 4 códigos
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+  CONSTRAINT uq_remote_code_position UNIQUE (remote_id, position)
+);
+CREATE INDEX idx_remote_code_remote ON remote_code(remote_id);
+
+-- ----------------------------------------------------------------------------
+-- 11. Eventos (append-only) — el corazón operativo. ILIMITADOS, sin cupo.
+--     Candidata a particionar por created_at cuando el volumen lo pida.
+-- ----------------------------------------------------------------------------
+
+CREATE TABLE event (
+  id                  BIGSERIAL PRIMARY KEY,
+  neighborhood_id     INT NOT NULL REFERENCES neighborhood(id) ON DELETE RESTRICT,
+  device_id           INT REFERENCES device(id) ON DELETE RESTRICT,
+  home_id             INT REFERENCES home(id) ON DELETE RESTRICT,
+  remote_id           INT REFERENCES remote(id) ON DELETE RESTRICT,
+
+  origin              event_origin NOT NULL,
+  scope               event_scope NOT NULL DEFAULT 'SINGLE',  -- descriptivo, sin cupo
+  trigger_mode        TEXT,                  -- catálogo del hardware (cps001, cps002…)
+  gps_lat             DOUBLE PRECISION,
+  gps_lng             DOUBLE PRECISION,
+  location_mode       location_mode,
+
+  -- SNAPSHOT congelado del activador: si el vecino cambia de teléfono, el evento
+  -- histórico sigue mostrando el que era válido entonces (criterio "factura")
+  activator_user_id   INT REFERENCES app_user(id) ON DELETE SET NULL,
+  activator_name      TEXT,
+  activator_phone     TEXT,
+
+  status              event_status NOT NULL DEFAULT 'OPEN',
+  resolved_by_user_id INT REFERENCES app_user(id) ON DELETE SET NULL,
+  resolver_name       TEXT,                  -- snapshot, mismo criterio
+  resolved_at         TIMESTAMPTZ,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+  -- Append-only: sin updated_at. La web solo toca status/resolved_* al resolver.
+);
+CREATE INDEX idx_event_neighborhood ON event(neighborhood_id, created_at DESC);
+CREATE INDEX idx_event_open ON event(neighborhood_id) WHERE status = 'OPEN';
+CREATE INDEX idx_event_device ON event(device_id);
+
+CREATE TABLE event_response (
+  id         BIGSERIAL PRIMARY KEY,
+  event_id   BIGINT NOT NULL REFERENCES event(id) ON DELETE CASCADE,
+  user_id    INT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+  note       TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+  CONSTRAINT uq_event_response UNIQUE (event_id, user_id)
+);
+
+-- ----------------------------------------------------------------------------
+-- 12. Sesiones, tokens, dispositivos de la app y auditoría
+-- ----------------------------------------------------------------------------
+
+CREATE TABLE refresh_token (
+  id         SERIAL PRIMARY KEY,
+  user_id    INT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL UNIQUE,
+  user_agent TEXT,
+  ip_address TEXT,
+  expires_at TIMESTAMPTZ NOT NULL,
+  revoked_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_refresh_token_user ON refresh_token(user_id);
+
+CREATE TABLE user_token (
+  id         SERIAL PRIMARY KEY,
+  user_id    INT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+  type       user_token_type NOT NULL,      -- incluye PHONE_OTP (login del vecino)
+  token_hash TEXT NOT NULL UNIQUE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  used_at    TIMESTAMPTZ,                   -- un solo uso
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_user_token_user ON user_token(user_id, type);
+
+-- Un dispositivo móvil ACTIVO por persona (regla del PDF que se conserva):
+-- registrar un teléfono nuevo revoca el anterior y sus refresh tokens.
+CREATE TABLE user_device (
+  id                 SERIAL PRIMARY KEY,
+  user_id            INT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+  platform           TEXT,                  -- 'android' | 'ios'
+  device_fingerprint TEXT,
+  fcm_token          TEXT,
+  status             user_device_status NOT NULL DEFAULT 'ACTIVE',
+  last_seen_at       TIMESTAMPTZ,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX uq_user_device_active ON user_device(user_id)
+  WHERE status = 'ACTIVE';
+
+-- Append-only. Sin UPDATE ni DELETE (se refuerza con GRANTs).
+-- Acciones que SIEMPRE auditan: reveal de códigos RF, transferencias de comunidad,
+-- contratos, cambios de CUPOS (valor viejo -> nuevo), roles/membresías, suspensiones,
+-- claim de equipos, credenciales y logins del OWNER.
+CREATE TABLE audit_log (
+  id            BIGSERIAL PRIMARY KEY,
+  actor_user_id INT REFERENCES app_user(id) ON DELETE SET NULL,
+  action        TEXT NOT NULL,              -- 'contract.sign', 'quota.update', ...
+  entity_type   TEXT NOT NULL,              -- 'neighborhood', 'remote_code', ...
+  entity_id     BIGINT,
+  account_id    INT,                        -- contexto, sin FK (histórico polimórfico)
+  neighborhood_id INT,
+  old_value     JSONB,
+  new_value     JSONB,
+  metadata      JSONB,
+  ip_address    TEXT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_audit_entity ON audit_log(entity_type, entity_id);
+CREATE INDEX idx_audit_actor  ON audit_log(actor_user_id, created_at DESC);
+
+-- ----------------------------------------------------------------------------
+-- 13. Roles de conexión — "un solo escritor" impuesto por la BASE
+--     La web y el servicio de alarmas comparten SOLO esta base (§8 del diseño);
+--     estos GRANTs hacen que la regla no dependa de la disciplina de nadie.
+--
+--     APLICADO (2026-07-18): el script ejecutable es `roles-conexion-v2.sql`
+--     (mismo directorio) — agrega lo que estos comentarios no cubren: USAGE de
+--     secuencias para los SERIAL, GRANT del schema y privilegios por defecto
+--     para tablas futuras. La app corre como cps_web; las migraciones, con el
+--     rol admin (DB_MIGRATIONS_USER en el .env del backend).
+-- ----------------------------------------------------------------------------
+
+-- CREATE ROLE cps_web LOGIN PASSWORD '...';
+-- CREATE ROLE cps_alarms LOGIN PASSWORD '...';
+--
+-- -- La web: todo, EXCEPTO escribir estado vivo y tocar la auditoría ajena
+-- GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO cps_web;
+-- REVOKE INSERT, UPDATE, DELETE ON device_state FROM cps_web;
+-- REVOKE UPDATE, DELETE ON audit_log FROM cps_web;   -- append-only
+-- REVOKE UPDATE, DELETE ON event_response FROM cps_web;
+--
+-- -- El servicio de alarmas: lee configuración, escribe SOLO su territorio
+-- GRANT SELECT ON ALL TABLES IN SCHEMA public TO cps_alarms;
+-- GRANT INSERT, UPDATE ON device_state TO cps_alarms;
+-- GRANT INSERT ON event TO cps_alarms;               -- crea eventos, NO los resuelve
+-- GRANT INSERT ON audit_log TO cps_alarms;

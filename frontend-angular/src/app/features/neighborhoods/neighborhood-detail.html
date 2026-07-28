@@ -1,0 +1,251 @@
+@if (loading()) {
+  <div class="text-center text-muted py-5">
+    <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+    Cargando…
+  </div>
+} @else if (error()) {
+  <div class="alert bg-brand-soft text-brand border-0" role="alert">
+    <i class="bi bi-exclamation-triangle-fill me-2"></i>{{ error() }}
+  </div>
+} @else if (neighborhood(); as barrio) {
+  <div class="d-flex align-items-center mb-3">
+    <a routerLink="/barrios" class="btn btn-sm btn-outline-secondary me-2" title="Volver">
+      <i class="bi bi-arrow-left"></i>
+    </a>
+    <div>
+      <h2 class="h5 fw-bold mb-0">{{ barrio.name }}</h2>
+      <p class="text-muted small mb-0">
+        <i class="bi bi-geo-alt me-1"></i>
+        {{ barrio.locality.name }}, {{ barrio.locality.department.name }},
+        {{ barrio.locality.department.province.name }}
+        ·
+        @if (barrio.managedBy === 'ORGANIZATION') {
+          <span class="badge text-bg-light border">Autogestionado</span>
+        } @else {
+          <span class="badge bg-brand-soft text-brand border">Gestiona CPS</span>
+        }
+        @if (auth.isCps()) {
+          <span class="text-muted">· {{ ownerName() }}</span>
+        }
+      </p>
+    </div>
+  </div>
+
+  @if (adminMessage()) {
+    <div class="alert bg-success-soft border-0 py-2 small">
+      <i class="bi bi-check-circle me-1"></i>{{ adminMessage() }}
+    </div>
+  }
+  @if (error()) {
+    <div class="alert bg-brand-soft text-brand border-0 py-2 small" role="alert">
+      <i class="bi bi-exclamation-triangle-fill me-1"></i>{{ error() }}
+    </div>
+  }
+
+  <div class="row g-3">
+    <!-- Mapa: postes de alarma con coordenadas cargadas -->
+    <div class="col-12 col-xl-7">
+      <div class="card border h-100">
+        <div class="card-header bg-white border-bottom">
+          <span class="fw-semibold small"> <i class="bi bi-map me-1"></i> Alarmas en el mapa </span>
+        </div>
+        <div class="card-body">
+          @if (markers().length > 0) {
+            <app-map [markers]="markers()" />
+          } @else {
+            <div class="text-center text-muted py-5 bg-light rounded">
+              <i class="bi bi-map d-block mb-2" style="font-size: 2rem"></i>
+              Ninguna alarma de este barrio tiene coordenadas cargadas.
+            </div>
+          }
+
+          @if (withoutCoordinates() > 0 && markers().length > 0) {
+            <p class="text-muted small mb-0 mt-2">
+              <i class="bi bi-info-circle me-1"></i>
+              {{ withoutCoordinates() }} alarma(s) sin coordenadas no aparecen en el mapa.
+            </p>
+          }
+
+          <!--
+            El mapa muestra DÓNDE están los postes, no cómo están. El estado vivo
+            (online / disparada) todavía no existe en el backend.
+          -->
+          <p class="text-muted small mb-0 mt-2">
+            <i class="bi bi-broadcast me-1"></i>
+            El estado en vivo (online / disparada) todavía no está disponible.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-12 col-xl-5">
+      <!-- Viviendas -->
+      <div class="card border mb-3">
+        <div
+          class="card-header bg-white border-bottom d-flex align-items-center justify-content-between"
+        >
+          <span class="fw-semibold small"><i class="bi bi-house-door me-1"></i> Viviendas</span>
+          <span class="badge text-bg-light border">{{ homeList().length }}</span>
+        </div>
+        <ul class="list-group list-group-flush">
+          @for (home of homeList(); track home.id) {
+            <li class="list-group-item d-flex align-items-center justify-content-between">
+              <div>
+                <span class="fw-medium small">{{ home.name }}</span>
+                @if (home.address) {
+                  <span class="text-muted small d-block">{{ home.address }}</span>
+                }
+              </div>
+              <a [routerLink]="['/viviendas', home.id]" class="btn btn-sm btn-outline-brand">
+                <i class="bi bi-people me-1"></i> Miembros
+              </a>
+            </li>
+          } @empty {
+            <li class="list-group-item text-muted small">Sin viviendas cargadas.</li>
+          }
+        </ul>
+      </div>
+
+      <!-- Alarmas: son del BARRIO, no de la vivienda -->
+      <div class="card border">
+        <div
+          class="card-header bg-white border-bottom d-flex align-items-center justify-content-between"
+        >
+          <span class="fw-semibold small"><i class="bi bi-broadcast-pin me-1"></i> Alarmas</span>
+          <span class="badge text-bg-light border">{{ deviceList().length }}</span>
+        </div>
+        <ul class="list-group list-group-flush">
+          @for (device of deviceList(); track device.id) {
+            <li class="list-group-item d-flex align-items-center justify-content-between">
+              <div>
+                <span class="fw-medium small">{{ device.name }}</span>
+                <span class="text-muted small d-block font-monospace">{{ device.serial }}</span>
+              </div>
+              <a [routerLink]="['/alarmas', device.id]" class="btn btn-sm btn-outline-secondary">
+                <i class="bi bi-chevron-right"></i>
+              </a>
+            </li>
+          } @empty {
+            <li class="list-group-item text-muted small">Sin alarmas cargadas.</li>
+          }
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Administración del barrio: SOLO CPS. Cupos = tarifa; transferir = cambiar de cliente. -->
+  @if (auth.isCps()) {
+    <div class="row g-3 mt-0">
+      <div class="col-12 col-lg-6">
+        <div class="card border">
+          <div class="card-header bg-white border-bottom">
+            <span class="fw-semibold small">
+              <i class="bi bi-sliders me-1"></i> Cupos del barrio (tarifa)
+            </span>
+          </div>
+          <div class="card-body">
+            <form [formGroup]="quotasForm" (ngSubmit)="saveQuotas()" novalidate>
+              <div class="row g-3 align-items-end">
+                <div class="col-12 col-sm-5">
+                  <label for="qFam" class="form-label small fw-medium">
+                    Familiares máx. por hogar
+                  </label>
+                  <input
+                    id="qFam"
+                    type="number"
+                    min="0"
+                    class="form-control form-control-sm"
+                    formControlName="maxFamilyMembers"
+                    placeholder="Sin límite"
+                  />
+                </div>
+                <div class="col-12 col-sm-4">
+                  <div class="form-check">
+                    <input
+                      id="qRem"
+                      type="checkbox"
+                      class="form-check-input"
+                      formControlName="remoteControlsEnabled"
+                    />
+                    <label for="qRem" class="form-check-label small">Controles remotos</label>
+                  </div>
+                </div>
+                <div class="col-12 col-sm-3">
+                  <button
+                    type="submit"
+                    class="btn btn-sm btn-brand w-100"
+                    [disabled]="savingQuotas()"
+                  >
+                    @if (savingQuotas()) {
+                      <span class="spinner-border spinner-border-sm" aria-hidden="true"></span>
+                    } @else {
+                      Guardar
+                    }
+                  </button>
+                </div>
+              </div>
+              <!-- El titular no cuenta en el cupo; bajar el cupo no suspende a nadie. -->
+              <p class="text-muted small mb-0 mt-2">
+                <i class="bi bi-info-circle me-1"></i>
+                El titular no cuenta en el cupo. Bajarlo no suspende a nadie: solo frena altas.
+              </p>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-12 col-lg-6">
+        <div class="card border">
+          <div class="card-header bg-white border-bottom">
+            <span class="fw-semibold small">
+              <i class="bi bi-arrow-left-right me-1"></i> Transferir la comunidad
+            </span>
+          </div>
+          <div class="card-body">
+            <form [formGroup]="transferForm" (ngSubmit)="transfer()" novalidate>
+              <div class="row g-3 align-items-end">
+                <div class="col-12 col-sm-8">
+                  <label for="transferOrg" class="form-label small fw-medium">
+                    Nueva organización dueña
+                  </label>
+                  <select
+                    id="transferOrg"
+                    class="form-select form-select-sm"
+                    formControlName="organizationId"
+                  >
+                    <option [ngValue]="null">Elegí la organización destino…</option>
+                    @for (org of organizations(); track org.id) {
+                      <option [ngValue]="org.id">
+                        {{ org.name }}
+                        ({{ org.subtype === 'MUNICIPAL' ? 'Municipalidad' : 'Comunidad' }})
+                      </option>
+                    }
+                  </select>
+                </div>
+                <div class="col-12 col-sm-4">
+                  <button
+                    type="submit"
+                    class="btn btn-sm btn-outline-danger w-100"
+                    [disabled]="transferring() || transferForm.invalid"
+                  >
+                    @if (transferring()) {
+                      <span class="spinner-border spinner-border-sm" aria-hidden="true"></span>
+                    } @else {
+                      Transferir
+                    }
+                  </button>
+                </div>
+              </div>
+              <!-- Descuenta del cupo del destino: si está lleno, ampliarlo primero. -->
+              <p class="text-muted small mb-0 mt-2">
+                <i class="bi bi-exclamation-triangle me-1"></i>
+                Hogares, vecinos, equipos e historial quedan intactos. El barrio descuenta del cupo
+                del destino: si está lleno, ampliá el cupo primero.
+              </p>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+  }
+}

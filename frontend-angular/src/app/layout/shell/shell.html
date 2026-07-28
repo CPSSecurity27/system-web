@@ -1,0 +1,160 @@
+<!-- Layout del Operador — docs/angular-ui-styles-spec.md §5 -->
+<div class="d-flex" style="min-height: 100vh">
+  <!--
+    La navegación se arma con el par (tipo de cuenta, rol), NUNCA con el rol solo:
+    ADMIN en COMPANY es el admin de CPS, ADMIN en HOME es un vecino.
+
+    Esconder un link no es la protección — el backend ya rechaza con 403. Es para
+    no ofrecer puertas que dan a un error o a una pantalla vacía.
+  -->
+  <aside
+    class="bg-light border-end d-none d-md-block sidebar"
+    [class.sidebar-collapsed]="collapsed()"
+  >
+    <div class="sidebar-heading border-bottom px-2 py-3 d-flex align-items-center">
+      <span class="sidebar-brand d-flex align-items-center">
+        <img src="logo.png" alt="CPS Security" class="sidebar-logo me-2" />
+        <span class="fw-bold sidebar-brand-text">Sistema de Monitoreo</span>
+      </span>
+
+      <button
+        type="button"
+        class="btn btn-sm btn-outline-secondary sidebar-toggle ms-auto"
+        (click)="toggleSidebar()"
+        [title]="collapsed() ? 'Expandir menú' : 'Contraer menú'"
+      >
+        <i class="bi" [class.bi-chevron-left]="!collapsed()" [class.bi-chevron-right]="collapsed()"></i>
+      </button>
+    </div>
+
+    <div class="list-group list-group-flush p-2">
+      <a
+        class="list-group-item list-group-item-action border-0 rounded text-dark"
+        routerLink="/"
+        routerLinkActive="active-link"
+        [routerLinkActiveOptions]="{ exact: true }"
+        [title]="'Dashboard'"
+      >
+        <i class="bi bi-speedometer2 me-2"></i> <span>Dashboard</span>
+      </a>
+
+      <!-- El tablero del monitoreo: la pantalla principal del rol MONITOR. -->
+      <a
+        class="list-group-item list-group-item-action border-0 rounded text-dark"
+        routerLink="/eventos"
+        routerLinkActive="active-link"
+        [title]="'Eventos'"
+      >
+        <i class="bi bi-bell me-2"></i> <span>Eventos</span>
+      </a>
+
+      <!--
+        v2: el vecino también ve SU barrio (le llega por homeMemberships).
+        Una comunidad PRIVATE es dueña de UN solo barrio (lo fuerza el negocio):
+        el plural quedaría mal, así que el label singulariza para esa cuenta.
+      -->
+      <a
+        class="list-group-item list-group-item-action border-0 rounded text-dark"
+        routerLink="/barrios"
+        routerLinkActive="active-link"
+        [title]="auth.isPrivateOrg() ? 'Barrio' : 'Barrios'"
+      >
+        <i class="bi bi-houses me-2"></i>
+        <span>{{ auth.isPrivateOrg() ? 'Barrio' : 'Barrios' }}</span>
+      </a>
+
+      <a
+        class="list-group-item list-group-item-action border-0 rounded text-dark"
+        routerLink="/viviendas"
+        routerLinkActive="active-link"
+        [title]="'Viviendas'"
+      >
+        <i class="bi bi-house-door me-2"></i> <span>Viviendas</span>
+      </a>
+
+      <a
+        class="list-group-item list-group-item-action border-0 rounded text-dark"
+        routerLink="/alarmas"
+        routerLinkActive="active-link"
+        [title]="'Sirenas / Alarmas'"
+      >
+        <i class="bi bi-broadcast me-2"></i> <span>Sirenas / Alarmas</span>
+      </a>
+
+      <a
+        class="list-group-item list-group-item-action border-0 rounded text-dark"
+        routerLink="/controles"
+        routerLinkActive="active-link"
+        [title]="'Controles'"
+      >
+        <i class="bi bi-key me-2"></i> <span>Controles</span>
+      </a>
+
+      <!-- Contratos: comercial puro; el vecino no tiene nada que ver acá. -->
+      @if (auth.isManager()) {
+        <a
+          class="list-group-item list-group-item-action border-0 rounded text-dark"
+          routerLink="/contratos"
+          routerLinkActive="active-link"
+          [title]="'Contratos'"
+        >
+          <i class="bi bi-file-earmark-text me-2"></i> <span>Contratos</span>
+        </a>
+      }
+
+      <!-- Cuentas y padrón de usuarios: exclusivo de CPS -->
+      @if (auth.isCps()) {
+        <hr class="my-2" />
+        <span class="text-muted small px-3 text-uppercase fw-semibold sidebar-section-label" style="font-size: 0.7rem">
+          CPS Security
+        </span>
+
+        <a
+          class="list-group-item list-group-item-action border-0 rounded text-dark"
+          routerLink="/cuentas"
+          routerLinkActive="active-link"
+          [title]="'Cuentas'"
+        >
+          <i class="bi bi-briefcase me-2"></i> <span>Cuentas</span>
+        </a>
+
+        <a
+          class="list-group-item list-group-item-action border-0 rounded text-dark"
+          routerLink="/usuarios"
+          routerLinkActive="active-link"
+          [title]="'Usuarios'"
+        >
+          <i class="bi bi-people me-2"></i> <span>Usuarios</span>
+        </a>
+      }
+    </div>
+  </aside>
+
+  <!-- Contenedor principal -->
+  <div class="flex-grow-1 bg-white">
+    <nav class="navbar navbar-expand-lg navbar-light bg-white border-bottom py-3">
+      <div class="container-fluid">
+        <span class="navbar-brand fw-semibold text-brand mb-0 h1">Alarmas Comunitarias</span>
+
+        <div class="ms-auto d-flex align-items-center">
+          <a routerLink="/perfil" class="me-3 text-muted small text-decoration-none">
+            <i class="bi bi-person-circle me-1"></i>
+            <span class="d-none d-sm-inline-block">{{ auth.displayName() }}</span>
+          </a>
+          <button
+            type="button"
+            class="btn btn-sm btn-outline-danger"
+            (click)="logout()"
+            title="Cerrar sesión"
+          >
+            <i class="bi bi-box-arrow-right"></i>
+          </button>
+        </div>
+      </div>
+    </nav>
+
+    <main class="container-fluid p-4">
+      <router-outlet />
+    </main>
+  </div>
+</div>

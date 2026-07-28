@@ -1,0 +1,179 @@
+<h2 class="h5 fw-bold mb-3"><i class="bi bi-person-circle text-brand me-2"></i>Mi perfil</h2>
+
+@if (auth.mustChangePassword()) {
+  <div class="alert bg-brand-soft text-brand border-0 py-2 small mb-3" role="alert">
+    <i class="bi bi-key-fill me-1"></i>
+    Estás usando una contraseña <strong>temporal</strong>. Tenés que cambiarla antes de poder usar el
+    resto del sistema.
+  </div>
+}
+
+<div class="row g-3">
+  <div class="col-12 col-lg-5">
+    <div class="card border h-100">
+      <div class="card-body">
+        <dl class="row small mb-0">
+          <dt class="col-5 text-muted fw-normal">Nombre</dt>
+          <dd class="col-7">{{ auth.user()?.name ?? '—' }}</dd>
+
+          <dt class="col-5 text-muted fw-normal">Usuario</dt>
+          <!-- El vecino no tiene username: entra por email o DNI. -->
+          <dd class="col-7 font-monospace">{{ auth.user()?.username ?? '—' }}</dd>
+
+          <dt class="col-5 text-muted fw-normal">Correo</dt>
+          <dd class="col-7">
+            @if (auth.user()?.email) {
+              {{ auth.user()?.email }}
+              @if (auth.user()?.emailVerified) {
+                <i class="bi bi-patch-check-fill text-success ms-1" title="Verificado"></i>
+              } @else {
+                <span class="badge bg-warning-soft text-warning border ms-1">Sin verificar</span>
+                @if (verificationSent()) {
+                  <span class="text-success d-block mt-1">
+                    <i class="bi bi-check-circle me-1"></i>Mail enviado: revisá tu casilla.
+                  </span>
+                } @else {
+                  <button
+                    type="button"
+                    class="btn btn-link btn-sm p-0 d-block"
+                    [disabled]="sendingVerification()"
+                    (click)="requestVerification()"
+                  >
+                    Enviar mail de verificación
+                  </button>
+                }
+              }
+            } @else {
+              <span class="text-muted">Sin correo</span>
+            }
+          </dd>
+        </dl>
+
+        <hr />
+
+        <p class="text-muted small mb-2">Membresías (tipo de cuenta + rol):</p>
+        <ul class="list-unstyled mb-0">
+          @for (m of auth.user()?.memberships ?? []; track m.accountId) {
+            <li class="small mb-1">
+              <span class="badge text-bg-secondary">{{ m.accountType }}</span>
+              <span class="badge text-bg-light border">{{ m.role }}</span>
+              <span class="text-muted">cuenta #{{ m.accountId }}</span>
+            </li>
+          }
+          @for (h of auth.user()?.homeMemberships ?? []; track h.homeId) {
+            <li class="small mb-1">
+              <span class="badge bg-brand-soft text-brand border">HOGAR</span>
+              <span class="badge text-bg-light border">{{ h.role }}</span>
+              <span class="text-muted">vivienda #{{ h.homeId }}</span>
+            </li>
+          }
+        </ul>
+
+        <hr />
+
+        <button type="button" class="btn btn-outline-brand btn-sm w-100" (click)="logoutAll()">
+          <i class="bi bi-box-arrow-right me-1"></i> Cerrar sesión en todos los dispositivos
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-lg-7">
+    <div class="card border h-100">
+      <div class="card-header bg-white border-bottom">
+        <span class="fw-semibold small"><i class="bi bi-key me-1"></i> Cambiar contraseña</span>
+      </div>
+      <div class="card-body">
+        <form [formGroup]="form" (ngSubmit)="submit()" novalidate>
+          @if (auth.mustChangePassword()) {
+            <div class="mb-3">
+              <label for="email" class="form-label small fw-medium">Correo institucional</label>
+              <input
+                id="email"
+                type="email"
+                class="form-control"
+                formControlName="email"
+                [class.is-invalid]="form.controls.email.touched && form.controls.email.invalid"
+                placeholder="contacto@municipio.gob.ar"
+                autocomplete="email"
+              />
+              <div class="form-text">
+                Hace falta para poder recuperar la cuenta más adelante ("olvidé mi contraseña").
+              </div>
+              @if (form.controls.email.touched && form.controls.email.invalid) {
+                <div class="invalid-feedback d-block">Ingresá un correo válido.</div>
+              }
+            </div>
+          }
+
+          <div class="mb-3">
+            <label for="currentPassword" class="form-label small fw-medium">
+              Contraseña actual
+            </label>
+            <input
+              id="currentPassword"
+              type="password"
+              class="form-control"
+              formControlName="currentPassword"
+              autocomplete="current-password"
+            />
+            <!-- Se pide la actual a propósito: un token robado no alcanza para secuestrar la cuenta. -->
+            <div class="form-text">
+              Se pide para que un token robado no alcance para cambiarte la clave.
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <label for="newPassword" class="form-label small fw-medium">Contraseña nueva</label>
+            <input
+              id="newPassword"
+              type="password"
+              class="form-control"
+              formControlName="newPassword"
+              autocomplete="new-password"
+            />
+            @if (form.controls.newPassword.touched && form.controls.newPassword.invalid) {
+              <div class="form-text text-brand">Mínimo 8 caracteres.</div>
+            }
+          </div>
+
+          <div class="mb-3">
+            <label for="repeat" class="form-label small fw-medium">Repetir contraseña</label>
+            <input
+              id="repeat"
+              type="password"
+              class="form-control"
+              formControlName="repeat"
+              autocomplete="new-password"
+            />
+            @if (form.controls.repeat.touched && form.hasError('mismatch')) {
+              <div class="form-text text-brand">Las contraseñas no coinciden.</div>
+            }
+          </div>
+
+          <!-- Avisar ANTES, no sorprender después: el cambio te desloguea acá también. -->
+          <div class="alert bg-warning-soft border-0 py-2 small">
+            <i class="bi bi-exclamation-triangle me-1"></i>
+            Cambiar la contraseña <strong>cierra todas las sesiones</strong>, incluida esta: vas a
+            tener que volver a ingresar.
+          </div>
+
+          @if (error()) {
+            <div class="alert bg-brand-soft text-brand border-0 py-2 small" role="alert">
+              <i class="bi bi-exclamation-triangle-fill me-1"></i> {{ error() }}
+            </div>
+          }
+
+          <button type="submit" class="btn btn-brand" [disabled]="saving() || form.invalid">
+            @if (saving()) {
+              <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+              Guardando…
+            } @else {
+              Cambiar contraseña
+            }
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>

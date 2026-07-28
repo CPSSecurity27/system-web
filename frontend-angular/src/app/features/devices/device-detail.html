@@ -1,0 +1,169 @@
+@if (loading()) {
+  <div class="text-center text-muted py-5">
+    <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+    Cargando…
+  </div>
+} @else if (error()) {
+  <div class="alert bg-brand-soft text-brand border-0" role="alert">
+    <i class="bi bi-exclamation-triangle-fill me-2"></i>{{ error() }}
+  </div>
+} @else if (device(); as alarma) {
+  <div class="d-flex align-items-center mb-3">
+    <a routerLink="/alarmas" class="btn btn-sm btn-outline-secondary me-2" title="Volver">
+      <i class="bi bi-arrow-left"></i>
+    </a>
+    <div>
+      <h2 class="h5 fw-bold mb-0">{{ alarma.name ?? alarma.serial }}</h2>
+      <p class="text-muted small font-monospace mb-0">{{ alarma.serial }}</p>
+    </div>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-12 col-xl-5">
+      <div class="card border h-100">
+        <div class="card-body">
+          <dl class="row mb-0 small">
+            <dt class="col-5 text-muted fw-normal">Estado del equipo</dt>
+            <dd class="col-7">
+              @switch (alarma.status) {
+                @case ('OPERATIONAL') {
+                  <span class="badge bg-success-soft text-success border">Operativa</span>
+                }
+                @case ('INSTALLED') {
+                  <span class="badge bg-success-soft text-success border">Instalada</span>
+                }
+                @case ('MAINTENANCE') {
+                  <span class="badge bg-warning-soft text-warning border">En soporte</span>
+                }
+                @case ('OUT_OF_SERVICE') {
+                  <span class="badge bg-brand-soft text-brand border">Fuera de servicio</span>
+                }
+                @default {
+                  <span class="badge bg-light text-muted border">{{ alarma.status }}</span>
+                }
+              }
+            </dd>
+
+            <dt class="col-5 text-muted fw-normal">Instalada</dt>
+            <dd class="col-7">
+              {{ alarma.installedAt ? (alarma.installedAt | date: 'dd/MM/yyyy') : '—' }}
+            </dd>
+
+            <dt class="col-5 text-muted fw-normal">Coordenadas</dt>
+            <dd class="col-7">
+              @if (alarma.latitude !== null && alarma.longitude !== null) {
+                {{ alarma.latitude }}, {{ alarma.longitude }}
+              } @else {
+                <span class="text-muted">Sin cargar</span>
+              }
+            </dd>
+          </dl>
+
+          <!-- Estado VIVO ≠ estado del equipo. Lo escribe SOLO el servicio de alarmas. -->
+          @if (state(); as vivo) {
+            <div class="border-top mt-3 pt-3">
+              <p class="fw-semibold small mb-2">
+                <i class="bi bi-broadcast me-1"></i> Estado en vivo
+              </p>
+              <dl class="row mb-0 small">
+                <dt class="col-5 text-muted fw-normal">Conexión</dt>
+                <dd class="col-7">
+                  @if (vivo.online) {
+                    <span class="badge bg-success-soft text-success border">Online</span>
+                  } @else {
+                    <span class="badge bg-light text-muted border">Offline</span>
+                  }
+                </dd>
+                <dt class="col-5 text-muted fw-normal">Alarma</dt>
+                <dd class="col-7">{{ vivo.alarmStatus ?? '—' }}</dd>
+                <dt class="col-5 text-muted fw-normal">Último latido</dt>
+                <dd class="col-7">
+                  {{ vivo.lastHeartbeat ? (vivo.lastHeartbeat | date: 'dd/MM/yy HH:mm:ss') : '—' }}
+                </dd>
+              </dl>
+            </div>
+          } @else {
+            <div class="alert bg-warning-soft border-0 py-2 small mt-3 mb-0">
+              <i class="bi bi-broadcast me-1"></i>
+              <strong>Sin datos de estado en vivo.</strong> Los va a reportar el servicio de alarmas
+              (el programa que habla con los equipos), que todavía no está construido.
+            </div>
+          }
+        </div>
+      </div>
+    </div>
+
+    <div class="col-12 col-xl-7">
+      <div class="card border h-100">
+        <div class="card-header bg-white border-bottom">
+          <span class="fw-semibold small"><i class="bi bi-map me-1"></i> Ubicación</span>
+        </div>
+        <div class="card-body">
+          @if (markers().length > 0) {
+            <app-map [markers]="markers()" [zoom]="16" />
+          } @else {
+            <div class="text-center text-muted py-5 bg-light rounded">
+              <i class="bi bi-geo-alt d-block mb-2" style="font-size: 2rem"></i>
+              Esta alarma no tiene coordenadas cargadas.
+            </div>
+          }
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bitácora del técnico -->
+  <div class="card border mt-3">
+    <div
+      class="card-header bg-white border-bottom d-flex align-items-center justify-content-between"
+    >
+      <span class="fw-semibold small"><i class="bi bi-tools me-1"></i> Mantenimientos</span>
+      <span class="badge text-bg-light border">{{ maintenances().length }}</span>
+    </div>
+
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead>
+          <tr class="small text-muted">
+            <th scope="col">Tipo</th>
+            <th scope="col">Estado</th>
+            <th scope="col">Descripción</th>
+            <th scope="col">Realizado</th>
+            <th scope="col">Técnico</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (m of maintenances(); track m.id) {
+            <tr>
+              <td class="small fw-medium">{{ m.type }}</td>
+              <td>
+                @switch (m.status) {
+                  @case ('DONE') {
+                    <span class="badge bg-success-soft text-success border">Hecho</span>
+                  }
+                  @case ('PENDING') {
+                    <span class="badge bg-warning-soft text-warning border">Pendiente</span>
+                  }
+                  @default {
+                    <span class="badge bg-light text-muted border">{{ m.status }}</span>
+                  }
+                }
+              </td>
+              <td class="small text-muted">{{ m.description ?? '—' }}</td>
+              <td class="small text-muted">
+                {{ m.performedAt ? (m.performedAt | date: 'dd/MM/yyyy') : '—' }}
+              </td>
+              <td class="small text-muted">{{ m.user?.name ?? '—' }}</td>
+            </tr>
+          } @empty {
+            <tr>
+              <td colspan="5" class="text-muted small text-center py-4">
+                Sin mantenimientos registrados.
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  </div>
+}

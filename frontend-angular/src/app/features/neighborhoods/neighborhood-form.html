@@ -1,0 +1,124 @@
+<div class="d-flex align-items-center mb-3">
+  <a routerLink="/barrios" class="btn btn-sm btn-outline-secondary me-2" title="Volver">
+    <i class="bi bi-arrow-left"></i>
+  </a>
+  <h2 class="h5 fw-bold mb-0">Nuevo barrio</h2>
+</div>
+
+<div class="row">
+  <div class="col-12 col-lg-7">
+    <div class="card border">
+      <div class="card-body">
+        <form [formGroup]="form" (ngSubmit)="submit()" novalidate>
+          <div class="mb-3">
+            <label for="name" class="form-label small fw-medium">Nombre del barrio</label>
+            <input id="name" type="text" class="form-control" formControlName="name" />
+            @if (form.controls.name.touched && form.controls.name.invalid) {
+              <div class="form-text text-brand">El nombre es obligatorio.</div>
+            }
+          </div>
+
+          <!-- Solo CPS elige el cliente; una organización siempre crea para sí. -->
+          @if (auth.isCps()) {
+            <div class="mb-3">
+              <label for="organizationId" class="form-label small fw-medium">
+                Organización dueña
+              </label>
+              <select id="organizationId" class="form-select" formControlName="organizationId">
+                <option [ngValue]="null">Elegí la organización cliente…</option>
+                @for (org of organizations(); track org.id) {
+                  <option [ngValue]="org.id">
+                    {{ org.name }}
+                    ({{ org.subtype === 'MUNICIPAL' ? 'Municipalidad' : 'Comunidad' }})
+                  </option>
+                }
+              </select>
+              <div class="form-text">
+                El barrio nace a nombre del cliente y descuenta de SU cupo de barrios.
+              </div>
+            </div>
+          } @else {
+            <div class="alert bg-warning-soft border-0 py-2 small mb-3">
+              <i class="bi bi-info-circle me-1"></i>
+              El barrio se crea a nombre de <strong>tu organización</strong> y descuenta de tu cupo
+              contratado. Si el cupo está lleno, contactá a CPS para ampliarlo.
+            </div>
+          }
+
+          <div class="mb-3 position-relative">
+            <label for="search" class="form-label small fw-medium">Localidad</label>
+            <input
+              id="search"
+              type="text"
+              class="form-control"
+              formControlName="search"
+              placeholder="Escribí al menos 2 letras…"
+              autocomplete="off"
+            />
+            <div class="form-text">
+              Se ignoran acentos y mayúsculas: “cordoba” encuentra “Córdoba”.
+            </div>
+
+            @if (searching()) {
+              <div class="form-text text-muted">
+                <span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>
+                Buscando…
+              </div>
+            }
+
+            @if (results().length > 0) {
+              <ul
+                class="list-group position-absolute w-100 shadow-sm"
+                style="z-index: 5; max-height: 260px; overflow-y: auto"
+              >
+                @for (locality of results(); track locality.id) {
+                  <li>
+                    <button
+                      type="button"
+                      class="list-group-item list-group-item-action text-start"
+                      (click)="select(locality)"
+                    >
+                      <!-- El árbol completo, para desambiguar homónimos -->
+                      {{ fullName(locality) }}
+                    </button>
+                  </li>
+                }
+              </ul>
+            }
+          </div>
+
+          @if (selected(); as locality) {
+            <div class="alert bg-success-soft border-0 py-2 small mb-3">
+              <i class="bi bi-geo-alt-fill me-1"></i>
+              Localidad elegida: <strong>{{ fullName(locality) }}</strong>
+            </div>
+          } @else {
+            <div class="alert bg-warning-soft border-0 py-2 small mb-3">
+              <i class="bi bi-info-circle me-1"></i>
+              Elegí una localidad de la lista. Ojo: <strong>CABA no tiene localidades</strong>
+              en el padrón oficial, así que no se puede crear un barrio ahí.
+            </div>
+          }
+
+          @if (error()) {
+            <div class="alert bg-brand-soft text-brand border-0 py-2 small" role="alert">
+              <i class="bi bi-exclamation-triangle-fill me-1"></i> {{ error() }}
+            </div>
+          }
+
+          <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-brand" [disabled]="saving()">
+              @if (saving()) {
+                <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+                Guardando…
+              } @else {
+                Crear barrio
+              }
+            </button>
+            <a routerLink="/barrios" class="btn btn-outline-secondary">Cancelar</a>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,361 @@
+@if (loading()) {
+  <div class="text-center text-muted py-5">
+    <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+    Cargando…
+  </div>
+} @else {
+  <div class="d-flex align-items-center mb-3">
+    <a routerLink="/cuentas" class="btn btn-sm btn-outline-secondary me-2" title="Volver">
+      <i class="bi bi-arrow-left"></i>
+    </a>
+    <div>
+      <h2 class="h5 fw-bold mb-0">{{ account()?.name ?? 'Cuenta #' + id }}</h2>
+      <p class="text-muted small mb-0">
+        Miembros y cupos de la cuenta
+        @if (account()?.subtype === 'MUNICIPAL') {
+          <span class="badge text-bg-light border ms-1">Municipalidad</span>
+        } @else if (account()?.subtype === 'PRIVATE') {
+          <span class="badge text-bg-light border ms-1">Comunidad</span>
+        }
+      </p>
+    </div>
+  </div>
+
+  @if (error()) {
+    <div class="alert bg-brand-soft text-brand border-0" role="alert">
+      <i class="bi bi-exclamation-triangle-fill me-2"></i>{{ error() }}
+    </div>
+  }
+
+  <div class="row g-3">
+    <div class="col-12 col-lg-7">
+      <div class="card border">
+        <div
+          class="card-header bg-white border-bottom d-flex align-items-center justify-content-between"
+        >
+          <span class="fw-semibold small"><i class="bi bi-people me-1"></i> Miembros</span>
+          <span class="badge text-bg-light border">{{ members().length }}</span>
+        </div>
+
+        <div class="table-responsive">
+          <table class="table table-hover align-middle mb-0">
+            <thead>
+              <tr class="small text-muted">
+                <th scope="col">Persona</th>
+                <th scope="col">Usuario</th>
+                <th scope="col">Rol</th>
+                <th scope="col" class="text-end"></th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (member of members(); track member.id) {
+                <tr>
+                  <td class="fw-medium small">{{ member.user.name }}</td>
+                  <td class="small text-muted font-monospace">{{ member.user.username }}</td>
+                  <td>
+                    @if (member.role === 'OWNER') {
+                      <!-- OWNER = usuario institucional, único, soberanía de la cuenta. -->
+                      <span class="badge bg-brand-soft text-brand border">
+                        <i class="bi bi-bank me-1"></i>OWNER
+                      </span>
+                    } @else {
+                      <span class="badge text-bg-light border">{{ member.role }}</span>
+                    }
+                  </td>
+                  <td class="text-end text-nowrap">
+                    @if (isStaff(member) && orgBarrios().length > 0) {
+                      <button
+                        type="button"
+                        class="btn btn-sm btn-outline-secondary me-1"
+                        title="Barrios asignados"
+                        (click)="toggleAssignments(member)"
+                      >
+                        <i
+                          class="bi"
+                          [class]="
+                            assignmentsMember()?.id === member.id ? 'bi-chevron-up' : 'bi-geo-alt'
+                          "
+                        ></i>
+                      </button>
+                    }
+                    @if (member.role === 'OWNER') {
+                      <!-- Al OWNER no se lo degrada ni se lo saca: no ofrecer la puerta. -->
+                      <i
+                        class="bi bi-lock text-muted"
+                        title="El OWNER institucional no se puede quitar"
+                      ></i>
+                    } @else {
+                      <button
+                        type="button"
+                        class="btn btn-sm btn-outline-danger"
+                        title="Quitar de la cuenta"
+                        [disabled]="saving()"
+                        (click)="removeMember(member)"
+                      >
+                        <i class="bi bi-person-dash"></i>
+                      </button>
+                    }
+                  </td>
+                </tr>
+
+                @if (assignmentsMember()?.id === member.id) {
+                  <tr>
+                    <td colspan="4" class="bg-light">
+                      @if (loadingAssignments()) {
+                        <div class="text-muted small py-2">
+                          <span
+                            class="spinner-border spinner-border-sm me-1"
+                            aria-hidden="true"
+                          ></span>
+                          Cargando asignaciones…
+                        </div>
+                      } @else {
+                        <div class="py-2">
+                          <!-- staff_assignment: nada tildado = ve TODA la organización. -->
+                          <p class="text-muted small mb-2">
+                            <i class="bi bi-geo-alt me-1"></i>
+                            Barrios donde trabaja <strong>{{ member.user.name }}</strong
+                            >. Sin barrios tildados ve <strong>toda la organización</strong>.
+                          </p>
+                          <div class="d-flex flex-wrap gap-3 mb-2">
+                            @for (barrio of orgBarrios(); track barrio.id) {
+                              <div class="form-check">
+                                <input
+                                  type="checkbox"
+                                  class="form-check-input"
+                                  id="sa-{{ member.id }}-{{ barrio.id }}"
+                                  [checked]="assignedIds().has(barrio.id)"
+                                  (change)="toggleBarrio(barrio.id)"
+                                />
+                                <label
+                                  class="form-check-label small"
+                                  for="sa-{{ member.id }}-{{ barrio.id }}"
+                                >
+                                  {{ barrio.name }}
+                                </label>
+                              </div>
+                            }
+                          </div>
+                          <button
+                            type="button"
+                            class="btn btn-sm btn-brand"
+                            [disabled]="saving()"
+                            (click)="saveAssignments()"
+                          >
+                            <i class="bi bi-check-lg me-1"></i> Guardar asignaciones
+                          </button>
+                        </div>
+                      }
+                    </td>
+                  </tr>
+                }
+              } @empty {
+                <tr>
+                  <td colspan="4" class="text-muted small text-center py-4">
+                    Esta cuenta no tiene miembros.
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- CUPOS: la tarifa. Solo CPS los ve editables; el cambio queda auditado. -->
+      @if (auth.isCps()) {
+        <div class="card border mt-3">
+          <div class="card-header bg-white border-bottom">
+            <span class="fw-semibold small"><i class="bi bi-sliders me-1"></i> Cupos (tarifa)</span>
+          </div>
+          <div class="card-body">
+            <form [formGroup]="quotasForm" (ngSubmit)="saveQuotas()" novalidate>
+              <div class="row g-3 align-items-end">
+                <div class="col-12 col-sm-4">
+                  <label for="qNeigh" class="form-label small fw-medium">Barrios máx.</label>
+                  <input
+                    id="qNeigh"
+                    type="number"
+                    min="1"
+                    class="form-control form-control-sm"
+                    [class.is-invalid]="
+                      quotasForm.controls.maxNeighborhoods.touched &&
+                      quotasForm.controls.maxNeighborhoods.invalid
+                    "
+                    formControlName="maxNeighborhoods"
+                    placeholder="Ej: 5"
+                  />
+                  @if (account()?.subtype === 'PRIVATE') {
+                    <div class="form-text mt-1">
+                      <i class="bi bi-lock-fill me-1"></i>Fijo en 1: es una comunidad privada.
+                    </div>
+                  } @else if (
+                    quotasForm.controls.maxNeighborhoods.touched &&
+                    quotasForm.controls.maxNeighborhoods.invalid
+                  ) {
+                    <div class="invalid-feedback">Obligatorio, al menos 1.</div>
+                  }
+                </div>
+                <div class="col-12 col-sm-4">
+                  <label for="qMon" class="form-label small fw-medium">Monitores máx.</label>
+                  <input
+                    id="qMon"
+                    type="number"
+                    min="1"
+                    class="form-control form-control-sm"
+                    [class.is-invalid]="
+                      quotasForm.controls.maxMonitorUsers.touched &&
+                      quotasForm.controls.maxMonitorUsers.invalid
+                    "
+                    formControlName="maxMonitorUsers"
+                    placeholder="Ej: 2"
+                  />
+                  @if (
+                    quotasForm.controls.maxMonitorUsers.touched &&
+                    quotasForm.controls.maxMonitorUsers.invalid
+                  ) {
+                    <div class="invalid-feedback">Obligatorio, al menos 1.</div>
+                  }
+                </div>
+                <div class="col-12 col-sm-4">
+                  <button
+                    type="submit"
+                    class="btn btn-sm btn-brand"
+                    [disabled]="savingQuotas() || quotasForm.invalid"
+                  >
+                    @if (savingQuotas()) {
+                      <span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>
+                    }
+                    Guardar cupos
+                  </button>
+                </div>
+              </div>
+              @if (quotasMessage()) {
+                <p class="text-success small mb-0 mt-2">
+                  <i class="bi bi-check-circle me-1"></i>{{ quotasMessage() }}
+                </p>
+              }
+              <!-- Reducir un cupo NO suspende a nadie: grandfathering. No existe "sin límite". -->
+              <p class="text-muted small mb-0 mt-2">
+                <i class="bi bi-info-circle me-1"></i>
+                Bajar un cupo no suspende lo ya creado: solo bloquea altas nuevas. Todo cupo tiene que
+                ser al menos 1.
+              </p>
+            </form>
+          </div>
+        </div>
+      }
+    </div>
+
+    <div class="col-12 col-lg-5">
+      <!-- Crear persona nueva + sumarla: el flujo de autogestión. -->
+      <div class="card border mb-3">
+        <div class="card-header bg-white border-bottom">
+          <span class="fw-semibold small">
+            <i class="bi bi-person-plus me-1"></i> Crear persona y sumarla
+          </span>
+        </div>
+        <div class="card-body">
+          <form [formGroup]="createForm" (ngSubmit)="createAndAdd()" novalidate>
+            <div class="mb-2">
+              <label for="cName" class="form-label small fw-medium">Nombre y apellido</label>
+              <input id="cName" type="text" class="form-control" formControlName="name" />
+            </div>
+            <div class="row g-2 mb-2">
+              <div class="col-6">
+                <label for="cUser" class="form-label small fw-medium">Usuario</label>
+                <input
+                  id="cUser"
+                  type="text"
+                  class="form-control font-monospace"
+                  formControlName="username"
+                  autocomplete="off"
+                />
+              </div>
+              <div class="col-6">
+                <label for="cPass" class="form-label small fw-medium">Contraseña</label>
+                <input
+                  id="cPass"
+                  type="password"
+                  class="form-control"
+                  formControlName="password"
+                  autocomplete="new-password"
+                />
+              </div>
+            </div>
+            <div class="mb-3">
+              <label for="cRole" class="form-label small fw-medium">Rol</label>
+              <select id="cRole" class="form-select" formControlName="role">
+                @for (role of roles; track role) {
+                  <option [ngValue]="role">{{ role }}</option>
+                }
+              </select>
+              <!-- MONITOR está sujeto al cupo de la cuenta: el 400 se muestra tal cual. -->
+              <div class="form-text">
+                El OWNER no se crea por acá: nace con la cuenta y es único.
+              </div>
+            </div>
+            <button
+              type="submit"
+              class="btn btn-brand w-100"
+              [disabled]="saving() || createForm.invalid"
+            >
+              @if (saving()) {
+                <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+                Sumando…
+              } @else {
+                Crear y sumar
+              }
+            </button>
+          </form>
+        </div>
+      </div>
+
+      <!-- Sumar del padrón: solo CPS (el padrón completo es suyo). -->
+      @if (auth.isCps()) {
+        <div class="card border">
+          <div class="card-header bg-white border-bottom">
+            <span class="fw-semibold small">
+              <i class="bi bi-person-check me-1"></i> Sumar persona existente
+            </span>
+          </div>
+          <div class="card-body">
+            <form [formGroup]="form" (ngSubmit)="addMember()" novalidate>
+              <div class="mb-3">
+                <label for="userId" class="form-label small fw-medium">Persona</label>
+                <select id="userId" class="form-select" formControlName="userId">
+                  <option [ngValue]="null">Elegí una persona…</option>
+                  @for (user of candidates(); track user.id) {
+                    <option [ngValue]="user.id">{{ user.name }} ({{ user.username }})</option>
+                  }
+                </select>
+              </div>
+
+              <div class="mb-3">
+                <label for="role" class="form-label small fw-medium">Rol</label>
+                <select id="role" class="form-select" formControlName="role">
+                  @for (role of roles; track role) {
+                    <option [ngValue]="role">{{ role }}</option>
+                  }
+                </select>
+              </div>
+
+              <button
+                type="submit"
+                class="btn btn-outline-brand w-100"
+                [disabled]="saving() || form.invalid"
+              >
+                Sumar a la cuenta
+              </button>
+            </form>
+
+            <p class="text-muted small mb-0 mt-3 border-top pt-3">
+              <i class="bi bi-info-circle me-1"></i>
+              El acceso lo da la <strong>membresía</strong>, no el usuario. Técnicos y monitores se
+              pueden acotar por barrio con asignaciones de personal.
+            </p>
+          </div>
+        </div>
+      }
+    </div>
+  </div>
+}

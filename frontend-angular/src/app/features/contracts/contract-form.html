@@ -1,0 +1,104 @@
+<div class="d-flex align-items-center mb-3">
+  <a routerLink="/contratos" class="btn btn-sm btn-outline-secondary me-2" title="Volver">
+    <i class="bi bi-arrow-left"></i>
+  </a>
+  <h2 class="h5 fw-bold mb-0">Nuevo contrato</h2>
+</div>
+
+<div class="row">
+  <div class="col-12 col-lg-7">
+    <div class="card border">
+      <div class="card-body">
+        <form [formGroup]="form" (ngSubmit)="submit()" novalidate>
+          <div class="mb-3">
+            <label for="accountId" class="form-label small fw-medium">Organización</label>
+            <select id="accountId" class="form-select" formControlName="accountId">
+              <option [ngValue]="null">Elegí una organización…</option>
+              @for (account of selectableAccounts(); track account.id) {
+                <option [ngValue]="account.id">
+                  {{ account.name }}
+                  ({{ account.subtype === 'MUNICIPAL' ? 'Municipalidad' : 'Comunidad' }})
+                </option>
+              }
+            </select>
+          </div>
+
+          <div class="mb-3">
+            <label for="neighborhoodId" class="form-label small fw-medium">Barrio que cubre</label>
+            <!-- Solo los barrios DE esa organización: el contrato es org → barrio. -->
+            <select id="neighborhoodId" class="form-select" formControlName="neighborhoodId">
+              <option [ngValue]="null">Elegí un barrio…</option>
+              @for (barrio of selectableBarrios(); track barrio.id) {
+                <option [ngValue]="barrio.id">{{ barrio.name }}</option>
+              }
+            </select>
+            <div class="form-text">
+              El contrato es <strong>comercial puro</strong>: une la organización con su barrio. Los
+              cupos (familiares, controles) van aparte, en la cuenta y en el barrio.
+            </div>
+          </div>
+
+          <div class="row g-3 mb-3">
+            <div class="col-12 col-sm-4">
+              <label for="price" class="form-label small fw-medium">Precio</label>
+              <input
+                id="price"
+                type="number"
+                step="0.01"
+                min="0"
+                class="form-control"
+                formControlName="price"
+                placeholder="150000.50"
+              />
+              <!-- El precio se CONGELA al firmar, como en una factura. -->
+              <div class="form-text">Se congela al firmar.</div>
+            </div>
+
+            <div class="col-12 col-sm-4">
+              <label for="startDate" class="form-label small fw-medium">Desde</label>
+              <input id="startDate" type="date" class="form-control" formControlName="startDate" />
+            </div>
+
+            <div class="col-12 col-sm-4">
+              <label for="endDate" class="form-label small fw-medium">
+                Hasta <span class="text-muted fw-normal">(opcional)</span>
+              </label>
+              <input id="endDate" type="date" class="form-control" formControlName="endDate" />
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <label for="description" class="form-label small fw-medium">
+              Nota <span class="text-muted fw-normal">(opcional)</span>
+            </label>
+            <input
+              id="description"
+              type="text"
+              class="form-control"
+              formControlName="description"
+            />
+          </div>
+
+          @if (error()) {
+            <!-- 409 → ese barrio ya tiene un contrato ACTIVE. Mensaje tal cual. -->
+            <div class="alert bg-brand-soft text-brand border-0 py-2 small" role="alert">
+              <i class="bi bi-exclamation-triangle-fill me-1"></i> {{ error() }}
+            </div>
+          }
+
+          <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-brand" [disabled]="saving() || form.invalid">
+              @if (saving()) {
+                <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+                Firmando…
+              } @else {
+                Firmar contrato
+              }
+            </button>
+            <a routerLink="/contratos" class="btn btn-outline-secondary">Cancelar</a>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>

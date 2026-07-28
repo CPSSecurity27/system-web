@@ -1,0 +1,223 @@
+@if (loading()) {
+  <div class="text-center text-muted py-5">
+    <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+    Cargando…
+  </div>
+} @else {
+  <div class="d-flex align-items-center mb-3">
+    <a routerLink="/viviendas" class="btn btn-sm btn-outline-secondary me-2" title="Volver">
+      <i class="bi bi-arrow-left"></i>
+    </a>
+    <div>
+      <h2 class="h5 fw-bold mb-0">{{ home()?.name ?? 'Vivienda #' + id }}</h2>
+      <p class="text-muted small mb-0">
+        Miembros del hogar
+        @if (home()?.address) {
+          · {{ home()?.address }}
+        }
+        @if (home()?.contactPhone) {
+          · <i class="bi bi-telephone me-1"></i>{{ home()?.contactPhone }}
+        }
+      </p>
+    </div>
+  </div>
+
+  @if (error()) {
+    <!-- Acá caen el 400 comercial del cupo de familiares y el 409 del titular. -->
+    <div class="alert bg-brand-soft text-brand border-0" role="alert">
+      <i class="bi bi-exclamation-triangle-fill me-2"></i>{{ error() }}
+    </div>
+  }
+
+  <div class="row g-3">
+    <div class="col-12 col-lg-7">
+      <div class="card border">
+        <div
+          class="card-header bg-white border-bottom d-flex align-items-center justify-content-between"
+        >
+          <span class="fw-semibold small"><i class="bi bi-people me-1"></i> Miembros</span>
+          <span class="badge text-bg-light border">{{ members().length }}</span>
+        </div>
+
+        <div class="table-responsive">
+          <table class="table table-hover align-middle mb-0">
+            <thead>
+              <tr class="small text-muted">
+                <th scope="col">Vecino</th>
+                <th scope="col">DNI</th>
+                <th scope="col">Teléfono</th>
+                <th scope="col">Rol</th>
+                <th scope="col">Estado</th>
+                <th scope="col" class="text-end"></th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (member of members(); track member.id) {
+                <tr>
+                  <td class="fw-medium small">{{ member.user.name }}</td>
+                  <td class="small text-muted font-monospace">{{ member.user.dni ?? '—' }}</td>
+                  <td class="small text-muted">{{ member.user.telephone ?? '—' }}</td>
+                  <td>
+                    @if (member.role === 'TITULAR') {
+                      <span class="badge bg-brand-soft text-brand border">TITULAR</span>
+                    } @else {
+                      <span class="badge text-bg-light border">FAMILIAR</span>
+                    }
+                  </td>
+                  <td>
+                    @if (member.status === 'ACTIVE') {
+                      <span class="badge bg-success-soft text-success border">Activo</span>
+                    } @else {
+                      <span class="badge bg-warning-soft text-warning border">
+                        {{ member.status }}
+                      </span>
+                    }
+                  </td>
+                  <td class="text-end text-nowrap">
+                    @if (member.role === 'FAMILIAR' && auth.isManager()) {
+                      <!-- Transferir la titularidad: el saliente queda FAMILIAR. -->
+                      <button
+                        type="button"
+                        class="btn btn-sm btn-outline-secondary me-1"
+                        title="Hacer titular"
+                        [disabled]="saving() || member.status !== 'ACTIVE'"
+                        (click)="makeTitular(member)"
+                      >
+                        <i class="bi bi-award"></i>
+                      </button>
+                    }
+                    <button
+                      type="button"
+                      class="btn btn-sm btn-outline-secondary me-1"
+                      [title]="member.status === 'ACTIVE' ? 'Suspender' : 'Reactivar'"
+                      [disabled]="saving()"
+                      (click)="toggleSuspension(member)"
+                    >
+                      <i
+                        class="bi"
+                        [class]="member.status === 'ACTIVE' ? 'bi-pause' : 'bi-play'"
+                      ></i>
+                    </button>
+                    @if (member.role === 'TITULAR') {
+                      <!-- Al titular no se lo borra: se transfiere. No ofrecer la puerta. -->
+                      <i
+                        class="bi bi-lock text-muted"
+                        title="El titular no se borra: se transfiere"
+                      ></i>
+                    } @else {
+                      <button
+                        type="button"
+                        class="btn btn-sm btn-outline-danger"
+                        title="Quitar del hogar"
+                        [disabled]="saving()"
+                        (click)="removeMember(member)"
+                      >
+                        <i class="bi bi-person-dash"></i>
+                      </button>
+                    }
+                  </td>
+                </tr>
+              } @empty {
+                <tr>
+                  <td colspan="6" class="text-muted small text-center py-4">
+                    Esta vivienda todavía no tiene miembros. Empezá por el titular.
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-12 col-lg-5">
+      <div class="card border">
+        <div class="card-header bg-white border-bottom">
+          <span class="fw-semibold small">
+            <i class="bi bi-person-plus me-1"></i> Sumar vecino
+          </span>
+        </div>
+        <div class="card-body">
+          <form [formGroup]="form" (ngSubmit)="addMember()" novalidate>
+            <div class="mb-2">
+              <label for="mName" class="form-label small fw-medium">Nombre y apellido</label>
+              <input id="mName" type="text" class="form-control" formControlName="name" />
+            </div>
+
+            <div class="mb-2">
+              <label for="mEmail" class="form-label small fw-medium">Email</label>
+              <input
+                id="mEmail"
+                type="email"
+                class="form-control"
+                formControlName="email"
+                placeholder="vecino@ejemplo.com"
+              />
+              @if (form.controls.email.touched && form.controls.email.invalid) {
+                <div class="form-text text-brand">Ingresá un email válido.</div>
+              }
+              <div class="form-text">
+                Le llega un mail para activar la cuenta y elegir su contraseña.
+              </div>
+            </div>
+
+            <div class="row g-2 mb-2">
+              <div class="col-6">
+                <label for="mDni" class="form-label small fw-medium">
+                  DNI <span class="text-muted fw-normal">(opcional)</span>
+                </label>
+                <input
+                  id="mDni"
+                  type="text"
+                  inputmode="numeric"
+                  class="form-control font-monospace"
+                  formControlName="dni"
+                  placeholder="30123456"
+                />
+                @if (form.controls.dni.touched && form.controls.dni.invalid) {
+                  <div class="form-text text-brand">7 a 9 dígitos, sin puntos.</div>
+                }
+              </div>
+              <div class="col-6">
+                <label for="mTel" class="form-label small fw-medium">
+                  Teléfono <span class="text-muted fw-normal">(opcional)</span>
+                </label>
+                <input id="mTel" type="tel" class="form-control" formControlName="telephone" />
+              </div>
+            </div>
+
+            <div class="mb-3">
+              <label for="mRole" class="form-label small fw-medium">Rol en el hogar</label>
+              <select id="mRole" class="form-select" formControlName="role">
+                <option value="TITULAR" [disabled]="hasTitular()">
+                  TITULAR {{ hasTitular() ? '(ya hay uno)' : '' }}
+                </option>
+                <option value="FAMILIAR">FAMILIAR</option>
+              </select>
+              <!-- El cupo de FAMILIARES lo fija el barrio; el 400 trae mensaje comercial. -->
+              <div class="form-text">
+                Un titular por hogar. Los familiares descuentan del cupo del barrio.
+              </div>
+            </div>
+
+            <button type="submit" class="btn btn-brand w-100" [disabled]="saving() || form.invalid">
+              @if (saving()) {
+                <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+                Sumando…
+              } @else {
+                Sumar al hogar
+              }
+            </button>
+          </form>
+
+          <!-- El vecino nace SIN contraseña: la fija al activar la cuenta por mail. -->
+          <p class="text-muted small mb-0 mt-3 border-top pt-3">
+            <i class="bi bi-info-circle me-1"></i>
+            El vecino recibe un mail para <strong>activar su cuenta</strong> y elegir su contraseña.
+            Después entra con su email o su DNI.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+}

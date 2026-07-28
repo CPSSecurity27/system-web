@@ -1,0 +1,65 @@
+<div class="d-flex align-items-center justify-content-center min-vh-100 bg-light">
+  <div class="card border-0 shadow-sm p-4 w-100" style="max-width: 400px">
+    <div class="text-center mb-4">
+      <img src="logo.png" alt="CPS Security" style="width: 64px; height: 64px" class="rounded-circle" />
+      <h1 class="h4 fw-bold mt-2 mb-0">CPS Security</h1>
+      <p class="text-muted small mb-0">Sistema de Monitoreo</p>
+    </div>
+
+    <form [formGroup]="form" (ngSubmit)="submit()" novalidate>
+      <div class="mb-3">
+        <label for="identifier" class="form-label small fw-medium">Usuario, email o DNI</label>
+        <input
+          id="identifier"
+          type="text"
+          class="form-control"
+          [class.is-invalid]="submitted() && form.controls.identifier.invalid"
+          formControlName="identifier"
+          autocomplete="username"
+          autofocus
+        />
+        @if (submitted() && form.controls.identifier.invalid) {
+          <div class="invalid-feedback">Ingresá tu usuario, email o DNI.</div>
+        }
+      </div>
+
+      <div class="mb-3">
+        <label for="password" class="form-label small fw-medium">Contraseña</label>
+        <input
+          #passwordInput
+          id="password"
+          type="password"
+          class="form-control"
+          [class.is-invalid]="submitted() && form.controls.password.invalid"
+          formControlName="password"
+          autocomplete="current-password"
+        />
+        @if (submitted() && form.controls.password.invalid) {
+          <div class="invalid-feedback">Ingresá tu contraseña.</div>
+        }
+      </div>
+
+      @if (error()) {
+        <div class="alert bg-brand-soft text-brand border-0 py-2 small" role="alert">
+          <i class="bi bi-exclamation-triangle-fill me-1"></i> {{ error() }}
+        </div>
+      }
+
+      <button type="submit" class="btn btn-brand w-100" [disabled]="loading()">
+        @if (loading()) {
+          <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+          Ingresando…
+        } @else {
+          Ingresar
+        }
+      </button>
+
+      <a
+        routerLink="/forgot-password"
+        class="btn btn-link w-100 text-muted small text-decoration-none mt-2"
+      >
+        Olvidé mi contraseña
+      </a>
+    </form>
+  </div>
+</div>

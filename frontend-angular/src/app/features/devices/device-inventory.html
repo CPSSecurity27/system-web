@@ -1,0 +1,240 @@
+<div class="d-flex align-items-center mb-3">
+  <a routerLink="/alarmas" class="btn btn-sm btn-outline-secondary me-2" title="Volver">
+    <i class="bi bi-arrow-left"></i>
+  </a>
+  <div>
+    <h2 class="h5 fw-bold mb-0">
+      <i class="bi bi-box-seam text-brand me-2"></i>Stock e instalación
+    </h2>
+    <p class="text-muted small mb-0">Fábrica → stock de la organización → instalada en un barrio</p>
+  </div>
+</div>
+
+@if (message()) {
+  <div class="alert bg-success-soft border-0 py-2 small">
+    <i class="bi bi-check-circle me-1"></i>{{ message() }}
+  </div>
+}
+@if (error()) {
+  <div class="alert bg-brand-soft text-brand border-0 py-2 small" role="alert">
+    <i class="bi bi-exclamation-triangle-fill me-1"></i>{{ error() }}
+  </div>
+}
+
+@if (loading()) {
+  <div class="text-center text-muted py-5">
+    <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+    Cargando stock…
+  </div>
+} @else {
+  <div class="row g-3">
+    <div class="col-12 col-lg-7">
+      <div class="card border">
+        <div
+          class="card-header bg-white border-bottom d-flex align-items-center justify-content-between"
+        >
+          <span class="fw-semibold small"><i class="bi bi-boxes me-1"></i> Equipos en stock</span>
+          <span class="badge text-bg-light border">{{ stock().length }}</span>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-hover align-middle mb-0">
+            <thead>
+              <tr class="small text-muted">
+                <th scope="col">Serial</th>
+                <th scope="col">Código de reclamo</th>
+                @if (auth.isCps()) {
+                  <th scope="col">Stock de</th>
+                }
+                <th scope="col">Probado</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (device of stock(); track device.id) {
+                <tr>
+                  <td class="small font-monospace fw-medium">{{ device.serial }}</td>
+                  <td class="small font-monospace">
+                    <!-- El claim code es de UN SOLO USO: se quema al instalar. -->
+                    {{ device.claimCode ?? '—' }}
+                  </td>
+                  @if (auth.isCps()) {
+                    <td class="small text-muted">{{ orgName(device.organizationId) }}</td>
+                  }
+                  <td>
+                    @if (device.tested) {
+                      <i class="bi bi-check-circle-fill text-success" title="Probado"></i>
+                    } @else {
+                      <i class="bi bi-dash-circle text-muted" title="Sin probar"></i>
+                    }
+                  </td>
+                </tr>
+              } @empty {
+                <tr>
+                  <td colspan="4" class="text-muted small text-center py-4">
+                    No hay equipos en stock.
+                    @if (auth.isCps()) {
+                      <a routerLink="/alarmas/nueva">Fabricar uno</a>.
+                    }
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Entrega del lote: SOLO CPS mueve stock de fábrica a una organización. -->
+      @if (auth.isCps()) {
+        <div class="card border mt-3">
+          <div class="card-header bg-white border-bottom">
+            <span class="fw-semibold small">
+              <i class="bi bi-truck me-1"></i> Entregar equipo a una organización
+            </span>
+          </div>
+          <div class="card-body">
+            <form [formGroup]="deliverForm" (ngSubmit)="deliver()" novalidate>
+              <div class="row g-3 align-items-end">
+                <div class="col-12 col-sm-5">
+                  <label for="dDevice" class="form-label small fw-medium">Equipo</label>
+                  <select
+                    id="dDevice"
+                    class="form-select form-select-sm"
+                    formControlName="deviceId"
+                  >
+                    <option [ngValue]="null">Elegí un equipo…</option>
+                    @for (device of stock(); track device.id) {
+                      <option [ngValue]="device.id">
+                        {{ device.serial }} ({{ orgName(device.organizationId) }})
+                      </option>
+                    }
+                  </select>
+                </div>
+                <div class="col-12 col-sm-5">
+                  <label for="dOrg" class="form-label small fw-medium">Al stock de</label>
+                  <select
+                    id="dOrg"
+                    class="form-select form-select-sm"
+                    formControlName="organizationId"
+                  >
+                    <option [ngValue]="null">Elegí la organización…</option>
+                    @for (org of organizations(); track org.id) {
+                      <option [ngValue]="org.id">{{ org.name }}</option>
+                    }
+                  </select>
+                </div>
+                <div class="col-12 col-sm-2">
+                  <button
+                    type="submit"
+                    class="btn btn-sm btn-brand w-100"
+                    [disabled]="saving() || deliverForm.invalid"
+                  >
+                    Entregar
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      }
+    </div>
+
+    <div class="col-12 col-lg-5">
+      <!-- El CLAIM: la instalación real. Serial + código, contra un barrio propio. -->
+      <div class="card border">
+        <div class="card-header bg-white border-bottom">
+          <span class="fw-semibold small">
+            <i class="bi bi-tools me-1"></i> Instalar equipo (reclamo)
+          </span>
+        </div>
+        <div class="card-body">
+          <form [formGroup]="claimForm" (ngSubmit)="claim()" novalidate>
+            <div class="row g-2 mb-2">
+              <div class="col-6">
+                <label for="cSerial" class="form-label small fw-medium">Serial</label>
+                <input
+                  id="cSerial"
+                  type="text"
+                  class="form-control font-monospace"
+                  formControlName="serial"
+                  autocomplete="off"
+                />
+              </div>
+              <div class="col-6">
+                <label for="cCode" class="form-label small fw-medium">Código de reclamo</label>
+                <input
+                  id="cCode"
+                  type="text"
+                  class="form-control font-monospace"
+                  formControlName="claimCode"
+                  autocomplete="off"
+                />
+              </div>
+            </div>
+
+            <div class="mb-2">
+              <label for="cBarrio" class="form-label small fw-medium">Barrio destino</label>
+              <select id="cBarrio" class="form-select" formControlName="neighborhoodId">
+                <option [ngValue]="null">Elegí un barrio…</option>
+                @for (barrio of barrios(); track barrio.id) {
+                  <option [ngValue]="barrio.id">{{ barrio.name }}</option>
+                }
+              </select>
+            </div>
+
+            <div class="mb-3">
+              <label for="cName" class="form-label small fw-medium">
+                Nombre del poste <span class="text-muted fw-normal">(opcional)</span>
+              </label>
+              <input
+                id="cName"
+                type="text"
+                class="form-control"
+                formControlName="name"
+                placeholder="Esquina Norte"
+              />
+            </div>
+
+            <div class="mb-3">
+              <span class="form-label small fw-medium d-block">
+                Ubicación del poste <span class="text-muted fw-normal">(opcional)</span>
+              </span>
+              <!-- Nadie tipea coordenadas: se clickea el mapa y listo. -->
+              <app-map [clickable]="true" (positionChange)="setPosition($event)" />
+              @if (latitude() !== null) {
+                <p class="small mb-0 mt-2">
+                  <i class="bi bi-check-circle text-success me-1"></i>
+                  <span class="font-monospace">{{ latitude() }}, {{ longitude() }}</span>
+                  <button
+                    type="button"
+                    class="btn btn-link btn-sm p-0 ms-2 align-baseline"
+                    (click)="clearPosition()"
+                  >
+                    Quitar
+                  </button>
+                </p>
+              }
+            </div>
+
+            <button
+              type="submit"
+              class="btn btn-brand w-100"
+              [disabled]="saving() || claimForm.invalid"
+            >
+              @if (saving()) {
+                <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+                Instalando…
+              } @else {
+                Reclamar e instalar
+              }
+            </button>
+          </form>
+
+          <p class="text-muted small mb-0 mt-3 border-top pt-3">
+            <i class="bi bi-shield-lock me-1"></i>
+            El código es de <strong>un solo uso</strong> y solo funciona sobre tu propio stock (o el
+            de fábrica, si sos CPS). Con código equivocado o stock ajeno, se rechaza.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+}

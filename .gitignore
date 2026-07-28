@@ -1,0 +1,38 @@
+# Dependencias
+node_modules/
+
+# Compilados / caché de build
+dist/
+build/
+out-tsc/
+.angular/
+
+# Variables de entorno (NUNCA subir secretos)
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-error.log*
+
+# Tests
+coverage/
+.nyc_output/
+
+# Editores e IDEs
+.idea/
+.settings/
+*.sublime-workspace
+.history/
+
+# Claude Code (config local por máquina)
+.claude/settings.local.json
+.claude/*.local.json
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
