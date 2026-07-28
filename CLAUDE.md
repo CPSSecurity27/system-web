@@ -43,7 +43,9 @@ que comparte SOLO la base de datos con la web. Aún no se diseñó: no meterse a
   propósito — ver `backend-nestjs/docs/migraciones.md`). Las entidades describen.
 - **Permisos**: el rol dice QUÉ, la membresía/alcance dice DÓNDE. Todo endpoint con
   `:id` valida alcance además de rol (checklist en `backend-nestjs/docs/seguridad.md`).
-- **Sin git**: el usuario decidió no usar versionamiento por ahora. No inicializar.
+- **Git**: el repo vive en `CPSSecurity27/system-web` (rama `main`). Ojo: el otro
+  repo, `CPSSecurity27/gateway-to-device`, es el servicio de alarmas (Python) — no
+  mezclar. Nunca commitear `.env`, `node_modules/` ni `dist/`.
 - **Antes de ejecutar tareas grandes**: proponer enfoque, objetar y acordar con el
   usuario; trabajar por fases con checkpoints.
 
