@@ -26,12 +26,17 @@ que comparte SOLO la base de datos con la web. Aún no se diseñó: no meterse a
 1. **La alarma es del BARRIO** (infraestructura pública), nunca de la vivienda. El
    hogar tiene controles remotos y, a lo sumo, una alarma *preferida*.
 2. **El control es del HOGAR**; el portador es un dato aparte y reasignable.
-3. **Todo cliente es una ORGANIZATION** (muni MUNICIPAL o consorcio PRIVATE) con un
-   **OWNER institucional** (no persona — rotación de personal) y contrato por barrio.
-   No existen cuentas HOME ni contratos por vivienda: los vecinos entran por `home_member`.
-4. **Los cupos son tarifa y SOLO CPS los modifica** (max_neighborhoods,
-   max_monitor_users, max_family_members, remote_controls_enabled), siempre con
-   `audit_log`. Se imponen al crear; reducirlos aplica grandfathering. **Los eventos
+3. **Todo cliente es una ORGANIZATION** con un **OWNER institucional** (no persona —
+   rotación de personal) y contrato por barrio. No existen cuentas HOME ni contratos
+   por vivienda: los vecinos entran por `home_member`. Dos ejes **independientes**:
+   `account.subtype` (MUNICIPAL = varios barrios / COMMUNITY = uno) dice la ESCALA;
+   `neighborhood.managed_by` (ORGANIZATION / CPS) dice QUIÉN OPERA **cada barrio**, y
+   es una decisión comercial que se toma barrio por barrio. Nunca derivar uno del otro.
+4. **Los cupos son tarifa y SOLO CPS los modifica** (max_neighborhoods, max_admin_users,
+   max_technician_users, max_monitor_users, max_family_members, remote_controls_enabled),
+   siempre con `audit_log`. Se imponen al crear; reducirlos aplica grandfathering. En los
+   cupos de personal, **0 = ese rol no existe en la cuenta**. La tabla `plan` es una
+   PLANTILLA que se copia al vender, nunca una fuente que se lea en vivo. **Los eventos
    son ilimitados.**
 5. **Postgres guarda qué ES y qué PASÓ; el estado vivo va en `device_state`** y lo
    escribe únicamente el servicio de alarmas (un solo escritor por tabla).

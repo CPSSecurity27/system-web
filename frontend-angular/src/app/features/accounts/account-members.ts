@@ -12,6 +12,17 @@ import { apiErrorMessage } from '../../core/http/api-error';
 import { Account, Member, User } from '../../core/models/api.models';
 import { Neighborhood } from '../../core/models/neighborhood';
 
+/**
+ * Miembros y cupos de una cuenta. Se monta en DOS rutas:
+ *
+ *   /clientes/:id      -> la ficha de un cliente (la de siempre)
+ *   /empresa/personal  -> el personal de CPS, sin `:id` en la URL
+ *
+ * Es el mismo trabajo sobre la misma tabla, así que es el mismo componente:
+ * duplicarlo para la sección de Mi Empresa habría dejado dos pantallas que
+ * hay que acordarse de tocar juntas. Lo único que cambia es de dónde sale el
+ * id — de la ruta, o de la sesión cuando la ruta no lo trae (CPS es una sola).
+ */
 @Component({
   selector: 'app-account-members',
   imports: [ReactiveFormsModule, RouterLink],
@@ -25,7 +36,10 @@ export class AccountMembers {
   private readonly fb = inject(FormBuilder);
   protected readonly auth = inject(AuthService);
 
-  protected readonly id = Number(this.route.snapshot.paramMap.get('id'));
+  private readonly routeId = this.route.snapshot.paramMap.get('id');
+  protected readonly id = this.routeId ? Number(this.routeId) : (this.auth.companyAccountId() ?? 0);
+  /** Sin `:id` en la ruta estamos en Mi Empresa: cambia el volver y los títulos. */
+  protected readonly isCompanyView = this.routeId === null;
 
   protected readonly account = signal<Account | null>(null);
   protected readonly members = signal<Member[]>([]);
@@ -38,9 +52,43 @@ export class AccountMembers {
 
   /**
    * OWNER no se ofrece: es el usuario institucional, único, y nace con la
-   * cuenta. MONITOR puede rebotar por cupo (400) — se muestra el mensaje.
+   * cuenta. Los otros tres están sujetos a CUPO; si el cupo es 0 la cuenta
+   * directamente no tiene ese rol y no se ofrece (ver availableRoles).
    */
   protected readonly roles: UserRole[] = ['ADMIN', 'TECHNICIAN', 'MONITOR'];
+
+  /** Cupo contratado para un rol. null = no aplica (COMPANY: CPS no se cobra cupos). */
+  protected roleQuota(role: UserRole): number | null {
+    const account = this.account();
+    if (!account) return null;
+    switch (role) {
+      case 'ADMIN':
+        return account.maxAdminUsers;
+      case 'TECHNICIAN':
+        return account.maxTechnicianUsers;
+      case 'MONITOR':
+        return account.maxMonitorUsers;
+      default:
+        return null;
+    }
+  }
+
+  protected roleUsed(role: UserRole): number {
+    return this.members().filter((m) => m.role === role).length;
+  }
+
+  /**
+   * Los roles que esta cuenta PUEDE tener. Cupo 0 = el plan no incluye ese
+   * rol, así que ni se ofrece: el backend lo rechazaría con un 400 y ofrecer
+   * una opción que siempre falla es peor que no ofrecerla.
+   *
+   * Cupo AGOTADO es distinto: el rol sigue en la lista (la cuenta lo tiene
+   * contratado) y el 400 explica que hay que ampliar. Eso es información útil;
+   * esconder la opción escondería el motivo.
+   */
+  protected readonly availableRoles = computed(() =>
+    this.roles.filter((role) => this.roleQuota(role) !== 0),
+  );
 
   /** Ya miembros: no tiene sentido ofrecerlos de nuevo. */
   protected readonly candidates = computed(() => {
@@ -63,10 +111,15 @@ export class AccountMembers {
     role: ['ADMIN' as UserRole, Validators.required],
   });
 
-  /** Cupos: solo CPS. Son la tarifa. No existe "sin límite" (2026-07-23). */
+  /**
+   * Cupos: solo CPS. Son la tarifa. Barrios no admite "sin límite" ni 0; los
+   * de personal SÍ admiten 0, que quiere decir "esta cuenta no tiene ese rol".
+   */
   protected readonly quotasForm = this.fb.group({
     maxNeighborhoods: [null as number | null, [Validators.required, Validators.min(1)]],
-    maxMonitorUsers: [null as number | null, [Validators.required, Validators.min(1)]],
+    maxAdminUsers: [null as number | null, [Validators.required, Validators.min(0)]],
+    maxTechnicianUsers: [null as number | null, [Validators.required, Validators.min(0)]],
+    maxMonitorUsers: [null as number | null, [Validators.required, Validators.min(0)]],
   });
 
   /**
@@ -95,11 +148,13 @@ export class AccountMembers {
         this.members.set(members);
         this.quotasForm.reset({
           maxNeighborhoods: account.maxNeighborhoods,
+          maxAdminUsers: account.maxAdminUsers,
+          maxTechnicianUsers: account.maxTechnicianUsers,
           maxMonitorUsers: account.maxMonitorUsers,
         });
-        // Una comunidad PRIVATE es dueña de un único barrio: el backend lo
+        // Una organización comunitaria gestiona un único barrio: el backend lo
         // rechaza si se intenta cambiar, así que ni se ofrece editarlo.
-        if (account.subtype === 'PRIVATE') {
+        if (account.subtype === 'COMMUNITY') {
           this.quotasForm.controls.maxNeighborhoods.disable();
         } else {
           this.quotasForm.controls.maxNeighborhoods.enable();
@@ -285,10 +340,12 @@ export class AccountMembers {
     this.error.set(null);
     this.quotasMessage.set(null);
 
-    // El form ya validó que no son null (Validators.required + min(1)).
+    // El form ya validó que no son null (Validators.required + min).
     this.accounts
       .updateQuotas(this.id, {
         maxNeighborhoods: value.maxNeighborhoods!,
+        maxAdminUsers: value.maxAdminUsers!,
+        maxTechnicianUsers: value.maxTechnicianUsers!,
         maxMonitorUsers: value.maxMonitorUsers!,
       })
       .subscribe({

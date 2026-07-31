@@ -48,11 +48,22 @@ export class AuthService {
   readonly isTechnician = computed(() =>
     (this.user()?.memberships ?? []).some((m) => m.role === 'TECHNICIAN'),
   );
-  /** Comunidad/consorcio PRIVATE: dueña de UN solo barrio (el negocio lo fuerza). */
-  readonly isPrivateOrg = computed(() =>
+  /** Organización comunitaria: gestiona UN solo barrio (el negocio lo fuerza). */
+  readonly isCommunityOrg = computed(() =>
     (this.user()?.memberships ?? []).some(
-      (m) => m.accountType === 'ORGANIZATION' && m.subtype === 'PRIVATE',
+      (m) => m.accountType === 'ORGANIZATION' && m.subtype === 'COMMUNITY',
     ),
+  );
+  /**
+   * El id de la cuenta COMPANY (CPS), o null si el usuario no es de CPS.
+   *
+   * Existe para que la sección "Mi Empresa" pueda reusar las pantallas de
+   * cuenta sin un `:id` en la URL: CPS es una sola (índice único en la base),
+   * así que su id se deduce de la sesión en vez de andar paseándolo por rutas.
+   */
+  readonly companyAccountId = computed(
+    () =>
+      (this.user()?.memberships ?? []).find((m) => m.accountType === 'COMPANY')?.accountId ?? null,
   );
   /** Vecino: al menos una membresía de hogar. TITULAR administra la suya. */
   readonly isVecino = computed(() => (this.user()?.homeMemberships ?? []).length > 0);

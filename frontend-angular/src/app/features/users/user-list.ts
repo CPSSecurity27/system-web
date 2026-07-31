@@ -73,7 +73,9 @@ const PAGE_SIZE = 25;
                 <td class="small">
                   @if (user.account) {
                     {{ user.account.name }}
-                    <span class="badge bg-light text-muted border ms-1">{{ user.account.role }}</span>
+                    <span class="badge bg-light text-muted border ms-1">{{
+                      user.account.role
+                    }}</span>
                   } @else {
                     <span class="text-muted">Sin cuenta</span>
                   }

@@ -94,8 +94,9 @@ import { apiErrorMessage } from '../../core/http/api-error';
             -->
             <p class="text-muted small mb-0 mt-3 border-top pt-3">
               <i class="bi bi-info-circle me-1"></i>
-              Crear la persona <strong>no le da acceso a nada</strong>. Después hay que sumarla a
-              una <a routerLink="/cuentas">cuenta</a> con un rol.
+              Crear la persona <strong>no le da acceso a nada</strong>. Después hay que sumarla a un
+              <a routerLink="/clientes">cliente</a> (o al
+              <a routerLink="/empresa/personal">personal de CPS</a>) con un rol.
             </p>
           </div>
         </div>

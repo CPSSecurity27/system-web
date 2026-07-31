@@ -1,0 +1,43 @@
+<div class="mb-3">
+  <h2 class="h5 fw-bold mb-0"><i class="bi bi-boxes text-brand me-2"></i>Inventario</h2>
+  <!--
+    Se dice explícito que el destino NO se decide acá: es la confusión natural
+    de una pantalla que se llama "inventario", y la que motivó separarla.
+  -->
+  <p class="text-muted small mb-0">
+    Fábrica: el ingreso de equipos al sistema. La entrega a una organización y la instalación en un
+    barrio son pasos posteriores y se hacen en otra pantalla.
+  </p>
+</div>
+
+<!--
+  Sub-pestañas de la sección. Hoy son dos familias de equipos; el foco está en
+  alarmas (controles todavía usa el alta vieja, ver ruta).
+
+  routerLinkActive marca la pestaña abierta. Sin `exact`: /inventario/alarmas
+  tiene que quedar activa también cuando estás en su hija /fabricar.
+-->
+<ul class="nav nav-tabs mb-4">
+  <li class="nav-item">
+    <a
+      class="nav-link"
+      routerLink="/inventario/alarmas"
+      routerLinkActive="active"
+      title="Ingreso de alarmas al sistema"
+    >
+      <i class="bi bi-broadcast me-1"></i> Alarmas
+    </a>
+  </li>
+  <li class="nav-item">
+    <a
+      class="nav-link"
+      routerLink="/inventario/controles"
+      routerLinkActive="active"
+      title="Alta de controles remotos"
+    >
+      <i class="bi bi-key me-1"></i> Controles
+    </a>
+  </li>
+</ul>
+
+<router-outlet />

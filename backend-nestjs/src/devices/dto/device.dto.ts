@@ -8,7 +8,6 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
-  Matches,
   Min,
 } from 'class-validator';
 import {
@@ -19,9 +18,15 @@ import {
 } from '../../common/enums';
 
 /**
- * Alta: SOLO CPS. Sin neighborhoodId el equipo nace en INVENTORY (fábrica o
- * stock de una organización) con claim code generado; con neighborhoodId es
- * CPS instalando directo.
+ * Alta de fábrica: SOLO CPS. Los dos datos obligatorios —`mac` y `boardNumber`—
+ * se LEEN del equipo físico en la estación de flasheo; no se inventan.
+ *
+ * El `serial` NO está: en una alarma comunitaria se deriva de la MAC
+ * (`AV-<12 hex>`) y es también el usuario MQTT y el `<id>` del tópico.
+ *
+ * Sin neighborhoodId el equipo nace en INVENTORY (fábrica o stock de una
+ * organización) con claim code generado; con neighborhoodId es CPS instalando
+ * directo.
  */
 export class CreateDeviceDto {
   /** Etiqueta humana. En stock puede faltar; se pone al instalar. */
@@ -31,19 +36,25 @@ export class CreateDeviceDto {
   name?: string;
 
   /**
-   * Identidad física del equipo. De acá se DERIVA la identidad en el canal de
-   * tiempo real, así que se restringe el formato.
+   * MAC STA del equipo, tal como la devuelve `esptool read_mac`. Se acepta con
+   * o sin separadores y en cualquier caja; el backend la normaliza y valida.
    */
   @IsString()
-  @Matches(/^[A-Za-z0-9_-]{3,64}$/, {
-    message:
-      'El serial solo admite letras, números, guiones y guión bajo (3-64)',
-  })
-  serial!: string;
+  @IsNotEmpty({ message: 'Falta la MAC del equipo' })
+  mac!: string;
+
+  /**
+   * El número impreso en la placa, completo: `ALOY0043`. El modelo va adentro
+   * del string —un solo campo, no dos— y el backend resuelve el prefijo contra
+   * el catálogo de modelos.
+   */
+  @IsString()
+  @IsNotEmpty({ message: 'Falta el número de placa (por ejemplo ALOY0043)' })
+  boardNumber!: string;
 
   @IsOptional()
   @IsEnum(DeviceType, { message: 'Tipo de dispositivo inválido' })
-  type: DeviceType = DeviceType.ALARM_PANEL;
+  type: DeviceType = DeviceType.COMMUNITY_ALARM;
 
   /** Stock de una organización (entrega del lote). Incompatible con neighborhoodId. */
   @IsOptional()
@@ -72,10 +83,6 @@ export class CreateDeviceDto {
   @IsOptional()
   @IsString()
   iccid?: string;
-
-  @IsOptional()
-  @IsString()
-  mac?: string;
 
   @IsOptional()
   @IsLatitude({ message: 'Latitud inválida' })
@@ -152,6 +159,32 @@ export class UpdateDeviceDto {
   @IsOptional()
   @IsDateString({}, { message: 'Fecha de instalación inválida' })
   installedAt?: string;
+}
+
+/**
+ * Marcar o desmarcar hitos de puesta en marcha (solo CPS, desde la fábrica).
+ *
+ * `true` sella el hito con la hora del servidor; `false` lo borra (se cargó el
+ * equipo equivocado, y sin poder deshacerlo la única salida sería un UPDATE a
+ * mano en la base). La fecha NO se acepta del cliente: un hito con fecha
+ * elegida por quien lo carga deja de ser evidencia de nada.
+ *
+ * Los otros dos hitos no están acá a propósito: `createdAt` es el alta y
+ * `provisionedAt` lo escribe el provisioning cuando registra la credencial.
+ */
+export class UpdateDeviceMilestonesDto {
+  @IsOptional()
+  @IsBoolean()
+  labeled?: boolean;
+
+  /**
+   * Override MANUAL de la primera conexión. Lo normal es que lo informe el
+   * servicio de alarmas (regla 5); esto existe porque el GtD todavía no
+   * escribe, y queda registrado como manual y auditado.
+   */
+  @IsOptional()
+  @IsBoolean()
+  connected?: boolean;
 }
 
 export class CreateMaintenanceDto {

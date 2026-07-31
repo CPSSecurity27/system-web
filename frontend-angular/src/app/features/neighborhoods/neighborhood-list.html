@@ -1,19 +1,21 @@
 <div class="d-flex align-items-center justify-content-between mb-3">
   <div>
     <h2 class="h5 fw-bold mb-0">
-      <i class="bi bi-houses-fill text-brand me-2"></i>{{ auth.isPrivateOrg() ? 'Barrio' : 'Barrios' }}
+      <i class="bi bi-houses-fill text-brand me-2"></i
+      >{{ auth.isCommunityOrg() ? 'Barrio' : 'Barrios' }}
     </h2>
     <p class="text-muted small mb-0">
-      {{ auth.isPrivateOrg() ? 'Barrio' : 'Barrios' }} bajo monitoreo
+      {{ auth.isCommunityOrg() ? 'Barrio' : 'Barrios' }} bajo monitoreo
     </p>
   </div>
 
   <!--
     v2: CPS o la organización MUNICIPAL (autogestión, contra su cupo). Un
-    consorcio PRIVATE no gestiona su barrio — lo crea y administra CPS — así
-    que ni siquiera ve el botón. El vecino solo mira.
+    organización COMMUNITY gestiona un único barrio y ese barrio nace con la
+    cuenta, así que su cupo ya está usado: el botón solo la llevaría a un 400.
+    El vecino solo mira.
   -->
-  @if (auth.isManager() && !auth.isPrivateOrg()) {
+  @if (auth.isManager() && !auth.isCommunityOrg()) {
     <a routerLink="/barrios/nuevo" class="btn btn-brand btn-sm">
       <i class="bi bi-plus-lg me-1"></i> Nuevo barrio
     </a>
@@ -34,7 +36,7 @@
 } @else if (items().length === 0) {
   <div class="text-center text-muted py-5 bg-light rounded">
     <i class="bi bi-houses d-block mb-2" style="font-size: 2rem"></i>
-    {{ auth.isPrivateOrg() ? 'CPS todavía no cargó tu barrio.' : 'No hay barrios para mostrar.' }}
+    {{ auth.isCommunityOrg() ? 'CPS todavía no cargó tu barrio.' : 'No hay barrios para mostrar.' }}
   </div>
 } @else {
   <div class="row g-3">

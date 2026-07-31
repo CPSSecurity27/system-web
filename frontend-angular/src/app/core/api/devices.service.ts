@@ -3,14 +3,20 @@ import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 
 import { environment } from '../../../environments/environment';
-import { Device, DeviceState, DeviceType, Maintenance } from '../models/api.models';
+import { BoardModel, Device, DeviceState, DeviceType, Maintenance } from '../models/api.models';
 
 /**
  * Alta = FÁBRICA (solo CPS). Sin neighborhoodId el equipo nace en INVENTORY
  * con claim code; con organizationId nace directo en el stock de esa org.
+ *
+ * NO lleva `serial`: se deriva de la MAC del lado del backend. Los dos datos
+ * obligatorios se LEEN de la placa en la estación de flasheo.
  */
 export interface CreateDevice {
-  serial: string;
+  /** Como la devuelve `esptool read_mac`. Con o sin ":" da igual. */
+  mac: string;
+  /** El número impreso en la placa, completo: `ALOY0043`. */
+  boardNumber: string;
   name?: string;
   type?: DeviceType;
   organizationId?: number;
@@ -57,9 +63,29 @@ export class DevicesService {
     return this.http.get<DeviceState | null>(`${this.api}/devices/${id}/state`);
   }
 
-  /** Solo CPS (fabricación). El serial repetido da 409. */
+  /** Modelos de placa: el desplegable / la referencia de prefijos válidos. */
+  boardModels(): Observable<BoardModel[]> {
+    return this.http.get<BoardModel[]>(`${this.api}/devices/board-models`);
+  }
+
+  /** Solo CPS (fabricación). MAC o número de placa repetidos dan 409. */
   create(device: CreateDevice): Observable<Device> {
     return this.http.post<Device>(`${this.api}/devices`, device);
+  }
+
+  /**
+   * Hitos de fábrica (solo CPS). `true` sella el hito con la hora del
+   * servidor, `false` lo borra. La fecha nunca la manda el cliente.
+   *
+   * Marcar la primera conexión a mano queda registrado como MANUAL y auditado:
+   * lo normal es que lo informe el servicio de alarmas, y esto es la muleta
+   * hasta que exista.
+   */
+  updateMilestones(
+    id: number,
+    milestones: { labeled?: boolean; connected?: boolean },
+  ): Observable<Device> {
+    return this.http.patch<Device>(`${this.api}/devices/${id}/milestones`, milestones);
   }
 
   /** El técnico (CPS o de la org dueña del stock) vincula el equipo a SU barrio. */

@@ -17,6 +17,7 @@ import {
 import {
   AccountType,
   EntityStatus,
+  ManagedBy,
   OrgSubtype,
   UserRole,
 } from '../../common/enums';
@@ -59,31 +60,54 @@ export class CreateAccountDto {
   @IsEnum(AccountType, { message: 'Tipo de cuenta inválido' })
   type!: AccountType;
 
-  /** MUNICIPAL o PRIVATE. Obligatorio para ORGANIZATION (la base lo impone). */
-  @IsEnum(OrgSubtype, { message: 'Subtipo inválido (MUNICIPAL o PRIVATE)' })
+  /** MUNICIPAL o COMMUNITY. Obligatorio para ORGANIZATION (la base lo impone). */
+  @IsEnum(OrgSubtype, { message: 'Subtipo inválido (MUNICIPAL o COMMUNITY)' })
   subtype!: OrgSubtype;
 
   /**
-   * CUPO (tarifa), obligatorio: no existe "sin límite" (2026-07-23) — toda
-   * organización paga por una cantidad concreta de barrios. Después solo se
-   * toca por /quotas. Si subtype es PRIVATE, el servicio lo fija en 1 sin
-   * excepciones (una comunidad privada es dueña de un único barrio) y rechaza
-   * cualquier otro valor explícito.
+   * El plan del que se COPIAN los cupos. Opcional: sin plan hay que mandar los
+   * cuatro a mano (el servicio lo exige y dice cuáles faltan). Con plan, cada
+   * cupo explícito de abajo lo pisa — es el caso real de vender un plan con un
+   * ajuste puntual sin inventar un plan nuevo.
    */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  planId?: number;
+
+  /**
+   * CUPO (tarifa): no existe "sin límite" (2026-07-23) — toda organización
+   * paga por una cantidad concreta de barrios. Después solo se toca por
+   * /quotas. Si subtype es COMMUNITY, el servicio exige 1 sin excepciones.
+   */
+  @ValidateIf((_, value) => value !== undefined)
   @IsInt()
   @Min(1, {
     message:
       'El cupo de barrios tiene que ser al menos 1: no existe "sin límite"',
   })
-  maxNeighborhoods!: number;
+  maxNeighborhoods?: number;
 
-  /** Igual que arriba: obligatorio, sin "sin límite". */
+  /**
+   * Cupos de PERSONAL. Acá el 0 SÍ vale y quiere decir algo preciso: "esta
+   * cuenta no tiene ese rol". Con eso, una comunitaria sin técnicos propios
+   * (el campo lo hace CPS) se configura con el mismo mecanismo que todo lo
+   * demás, en vez de con una regla especial escrita en otro lado.
+   */
+  @ValidateIf((_, value) => value !== undefined)
   @IsInt()
-  @Min(1, {
-    message:
-      'El cupo de monitores tiene que ser al menos 1: no existe "sin límite"',
-  })
-  maxMonitorUsers!: number;
+  @Min(0, { message: 'El cupo de administradores no puede ser negativo' })
+  maxAdminUsers?: number;
+
+  @ValidateIf((_, value) => value !== undefined)
+  @IsInt()
+  @Min(0, { message: 'El cupo de técnicos no puede ser negativo' })
+  maxTechnicianUsers?: number;
+
+  @ValidateIf((_, value) => value !== undefined)
+  @IsInt()
+  @Min(0, { message: 'El cupo de monitores no puede ser negativo' })
+  maxMonitorUsers?: number;
 }
 
 export class OnboardCommunityNeighborhoodDto {
@@ -105,12 +129,12 @@ export class OnboardCommunityNeighborhoodDto {
 }
 
 /**
- * Alta atómica de una comunidad PRIVATE: cuenta + su único barrio + OWNER
+ * Alta atómica de una organización COMMUNITY: cuenta + su único barrio + OWNER
  * institucional + membresía, en una sola transacción (AccountsService
  * #onboardCommunity). Solo CPS (controller). No pide `subtype` ni
- * `maxNeighborhoods`: una comunidad SIEMPRE es PRIVATE con cupo 1 — pedirlo
- * sería abrir la puerta a un valor inconsistente que el servicio de todos
- * modos va a pisar.
+ * `maxNeighborhoods`: una comunitaria SIEMPRE es COMMUNITY con cupo 1 —
+ * pedirlo sería abrir la puerta a un valor inconsistente que el servicio de
+ * todos modos va a pisar.
  */
 export class OnboardCommunityDto {
   /** Nombre de la cuenta (la comunidad/consorcio) Y del usuario institucional OWNER. */
@@ -118,12 +142,39 @@ export class OnboardCommunityDto {
   @IsNotEmpty({ message: 'El nombre es obligatorio' })
   name!: string;
 
-  @IsInt()
-  @Min(1, {
-    message:
-      'El cupo de monitores tiene que ser al menos 1: no existe "sin límite"',
+  /**
+   * La MODALIDAD DE VENTA, obligatoria: quién opera el barrio.
+   *   CPS          -> llave en mano: CPS carga viviendas, vecinos y equipos.
+   *   ORGANIZATION -> autogestión: la comunidad opera su barrio.
+   * Sin default a propósito: es una decisión comercial y adivinarla dejaría a
+   * un cliente sin poder tocar su propio barrio (o al revés) sin que nadie lo
+   * haya decidido.
+   */
+  @IsEnum(ManagedBy, {
+    message: 'Modalidad de gestión inválida (CPS u ORGANIZATION)',
   })
-  maxMonitorUsers!: number;
+  managedBy!: ManagedBy;
+
+  /** Igual que en CreateAccountDto: los cupos salen de acá o de los campos de abajo. */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  planId?: number;
+
+  @ValidateIf((_, value) => value !== undefined)
+  @IsInt()
+  @Min(0, { message: 'El cupo de administradores no puede ser negativo' })
+  maxAdminUsers?: number;
+
+  @ValidateIf((_, value) => value !== undefined)
+  @IsInt()
+  @Min(0, { message: 'El cupo de técnicos no puede ser negativo' })
+  maxTechnicianUsers?: number;
+
+  @ValidateIf((_, value) => value !== undefined)
+  @IsInt()
+  @Min(0, { message: 'El cupo de monitores no puede ser negativo' })
+  maxMonitorUsers?: number;
 
   @IsString()
   @MinLength(3, { message: 'El usuario debe tener al menos 3 caracteres' })
@@ -153,12 +204,20 @@ export class UpdateQuotasDto {
   })
   maxNeighborhoods?: number;
 
+  /** Los de personal admiten 0 = "esta cuenta no tiene ese rol". */
   @ValidateIf((_, value) => value !== undefined)
   @IsInt()
-  @Min(1, {
-    message:
-      'El cupo de monitores tiene que ser al menos 1: no existe "sin límite"',
-  })
+  @Min(0, { message: 'El cupo de administradores no puede ser negativo' })
+  maxAdminUsers?: number;
+
+  @ValidateIf((_, value) => value !== undefined)
+  @IsInt()
+  @Min(0, { message: 'El cupo de técnicos no puede ser negativo' })
+  maxTechnicianUsers?: number;
+
+  @ValidateIf((_, value) => value !== undefined)
+  @IsInt()
+  @Min(0, { message: 'El cupo de monitores no puede ser negativo' })
   maxMonitorUsers?: number;
 }
 

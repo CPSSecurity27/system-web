@@ -23,11 +23,34 @@
         (click)="toggleSidebar()"
         [title]="collapsed() ? 'Expandir menú' : 'Contraer menú'"
       >
-        <i class="bi" [class.bi-chevron-left]="!collapsed()" [class.bi-chevron-right]="collapsed()"></i>
+        <i
+          class="bi"
+          [class.bi-chevron-left]="!collapsed()"
+          [class.bi-chevron-right]="collapsed()"
+        ></i>
       </button>
     </div>
 
+    <!--
+      La navegación se agrupa por PREGUNTA, no por tipo de objeto:
+
+        MONITOREO   qué está pasando ahora
+        TERRITORIO  qué hay funcionando, dónde y de quién
+        INVENTARIO  qué equipos entraron al sistema (fábrica)
+        CPS         lo comercial y el padrón
+
+      Por eso "Alarmas" aparece dos veces y no es un descuido: en Territorio
+      son los postes instalados que hay que monitorear, y en Inventario es el
+      alta del equipo en fábrica. Distinta pregunta, distinta audiencia.
+    -->
     <div class="list-group list-group-flush p-2">
+      <span
+        class="text-muted small px-3 pt-2 text-uppercase fw-semibold sidebar-section-label"
+        style="font-size: 0.7rem"
+      >
+        Monitoreo
+      </span>
+
       <a
         class="list-group-item list-group-item-action border-0 rounded text-dark"
         routerLink="/"
@@ -48,19 +71,27 @@
         <i class="bi bi-bell me-2"></i> <span>Eventos</span>
       </a>
 
+      <hr class="my-2" />
+      <span
+        class="text-muted small px-3 text-uppercase fw-semibold sidebar-section-label"
+        style="font-size: 0.7rem"
+      >
+        Territorio
+      </span>
+
       <!--
         v2: el vecino también ve SU barrio (le llega por homeMemberships).
-        Una comunidad PRIVATE es dueña de UN solo barrio (lo fuerza el negocio):
-        el plural quedaría mal, así que el label singulariza para esa cuenta.
+        Una organización COMMUNITY gestiona UN solo barrio (lo fuerza el
+        negocio): el plural quedaría mal, así que el label singulariza ahí.
       -->
       <a
         class="list-group-item list-group-item-action border-0 rounded text-dark"
         routerLink="/barrios"
         routerLinkActive="active-link"
-        [title]="auth.isPrivateOrg() ? 'Barrio' : 'Barrios'"
+        [title]="auth.isCommunityOrg() ? 'Barrio' : 'Barrios'"
       >
         <i class="bi bi-houses me-2"></i>
-        <span>{{ auth.isPrivateOrg() ? 'Barrio' : 'Barrios' }}</span>
+        <span>{{ auth.isCommunityOrg() ? 'Barrio' : 'Barrios' }}</span>
       </a>
 
       <a
@@ -90,8 +121,49 @@
         <i class="bi bi-key me-2"></i> <span>Controles</span>
       </a>
 
+      <!--
+        Inventario es la FÁBRICA: por dónde los equipos entran al sistema.
+        Solo CPS — una organización recibe equipos, no los produce. Su destino
+        (a qué org, a qué barrio) se decide en otra pantalla, no acá.
+      -->
+      @if (auth.isCps()) {
+        <hr class="my-2" />
+        <span
+          class="text-muted small px-3 text-uppercase fw-semibold sidebar-section-label"
+          style="font-size: 0.7rem"
+        >
+          Inventario
+        </span>
+
+        <a
+          class="list-group-item list-group-item-action border-0 rounded text-dark"
+          routerLink="/inventario/alarmas"
+          routerLinkActive="active-link"
+          [title]="'Ingreso de alarmas al sistema'"
+        >
+          <i class="bi bi-cpu me-2"></i> <span>Alarmas</span>
+        </a>
+
+        <a
+          class="list-group-item list-group-item-action border-0 rounded text-dark"
+          routerLink="/inventario/controles"
+          routerLinkActive="active-link"
+          [title]="'Ingreso de controles al sistema'"
+        >
+          <i class="bi bi-key-fill me-2"></i> <span>Controles</span>
+        </a>
+      }
+
       <!-- Contratos: comercial puro; el vecino no tiene nada que ver acá. -->
       @if (auth.isManager()) {
+        <hr class="my-2" />
+        <span
+          class="text-muted small px-3 text-uppercase fw-semibold sidebar-section-label"
+          style="font-size: 0.7rem"
+        >
+          Administración
+        </span>
+
         <a
           class="list-group-item list-group-item-action border-0 rounded text-dark"
           routerLink="/contratos"
@@ -102,20 +174,23 @@
         </a>
       }
 
-      <!-- Cuentas y padrón de usuarios: exclusivo de CPS -->
+      <!-- Clientes y padrón de usuarios: exclusivo de CPS -->
       @if (auth.isCps()) {
         <hr class="my-2" />
-        <span class="text-muted small px-3 text-uppercase fw-semibold sidebar-section-label" style="font-size: 0.7rem">
-          CPS Security
+        <span
+          class="text-muted small px-3 text-uppercase fw-semibold sidebar-section-label"
+          style="font-size: 0.7rem"
+        >
+          Clientes
         </span>
 
         <a
           class="list-group-item list-group-item-action border-0 rounded text-dark"
-          routerLink="/cuentas"
+          routerLink="/clientes"
           routerLinkActive="active-link"
-          [title]="'Cuentas'"
+          [title]="'Clientes'"
         >
-          <i class="bi bi-briefcase me-2"></i> <span>Cuentas</span>
+          <i class="bi bi-briefcase me-2"></i> <span>Clientes</span>
         </a>
 
         <a
@@ -125,6 +200,44 @@
           [title]="'Usuarios'"
         >
           <i class="bi bi-people me-2"></i> <span>Usuarios</span>
+        </a>
+
+        <!--
+          MI EMPRESA — nuestro negocio, separado del de los clientes.
+
+          CPS salió de la lista de clientes (2026-07-30) porque no lo es: no
+          firma contratos, no tiene cupos y no es dueña de barrios. Su ficha
+          y su catálogo comercial viven acá, y acá van a ir después
+          facturación y configuración.
+
+          Inventario NO se mudó adentro a propósito: también es solo-CPS, pero
+          es una tarea diaria de la estación de flasheo y enterrarla bajo una
+          sección administrativa sería fricción todos los días.
+        -->
+        <hr class="my-2" />
+        <span
+          class="text-muted small px-3 text-uppercase fw-semibold sidebar-section-label"
+          style="font-size: 0.7rem"
+        >
+          Mi Empresa
+        </span>
+
+        <a
+          class="list-group-item list-group-item-action border-0 rounded text-dark"
+          routerLink="/empresa/personal"
+          routerLinkActive="active-link"
+          [title]="'Personal de CPS'"
+        >
+          <i class="bi bi-person-badge me-2"></i> <span>Personal</span>
+        </a>
+
+        <a
+          class="list-group-item list-group-item-action border-0 rounded text-dark"
+          routerLink="/empresa/planes"
+          routerLinkActive="active-link"
+          [title]="'Planes comerciales'"
+        >
+          <i class="bi bi-tags me-2"></i> <span>Planes</span>
         </a>
       }
     </div>

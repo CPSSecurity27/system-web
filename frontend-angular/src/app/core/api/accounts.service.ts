@@ -3,28 +3,51 @@ import { Injectable, inject } from '@angular/core';
 import { Observable, map } from 'rxjs';
 
 import { environment } from '../../../environments/environment';
-import { UserRole } from '../auth/auth.models';
-import { Account, Member, OrgSubtype, Paginated, StaffAssignment } from '../models/api.models';
+import { AccountType, UserRole } from '../auth/auth.models';
+import {
+  Account,
+  ManagedBy,
+  Member,
+  OrgSubtype,
+  Paginated,
+  StaffAssignment,
+} from '../models/api.models';
 
 export interface CreateAccount {
   name: string;
   type: 'ORGANIZATION';
   subtype: OrgSubtype;
-  /** CUPOS = tarifa, obligatorios: no existe "sin límite". Después solo se tocan por /quotas. */
-  maxNeighborhoods: number;
-  maxMonitorUsers: number;
+  /** El plan del que se COPIAN los cupos. Sin plan, hay que mandarlos todos. */
+  planId?: number;
+  /** CUPOS = tarifa. Con plan son opcionales (lo pisan); sin plan, obligatorios. */
+  maxNeighborhoods?: number;
+  /** Los de personal admiten 0 = "esta cuenta no tiene ese rol". */
+  maxAdminUsers?: number;
+  maxTechnicianUsers?: number;
+  maxMonitorUsers?: number;
 }
 
 export interface UpdateAccountQuotas {
-  /** Si vienen, tienen que ser >= 1 (no existe "sin límite"); ausente = no tocar. */
+  /** Ausente = no tocar ese cupo. Barrios >= 1; los de personal admiten 0. */
   maxNeighborhoods?: number;
+  maxAdminUsers?: number;
+  maxTechnicianUsers?: number;
   maxMonitorUsers?: number;
 }
 
 export interface OnboardCommunity {
   /** Nombre de la cuenta (la comunidad/consorcio) Y del usuario institucional OWNER. */
   name: string;
-  maxMonitorUsers: number;
+  /**
+   * La MODALIDAD DE VENTA del barrio, obligatoria:
+   *   CPS          -> llave en mano (CPS carga viviendas, vecinos y equipos)
+   *   ORGANIZATION -> autogestión (la comunidad opera su barrio)
+   */
+  managedBy: ManagedBy;
+  planId?: number;
+  maxAdminUsers?: number;
+  maxTechnicianUsers?: number;
+  maxMonitorUsers?: number;
   ownerUsername: string;
   neighborhood: {
     name: string;
@@ -49,20 +72,32 @@ export class AccountsService {
   private readonly api = environment.apiUrl;
 
   /**
-   * Para COMBOS (contratos, entregas de stock): hasta 100, aplanado.
-   * Para la pantalla de cuentas usá `page()`, que pagina de verdad.
+   * Para COMBOS de "¿de qué cliente?" (contratos, entregas de stock, dueño de
+   * un barrio): hasta 100, aplanado. SIEMPRE filtrado a ORGANIZATION — CPS es
+   * quien presta el servicio, no un cliente: no firma contratos, no es dueña
+   * de barrios y no se entrega stock a sí misma. Ofrecerla en esos combos solo
+   * daba a elegir una opción que el backend rechaza.
    */
   list(): Observable<Account[]> {
     return this.http
-      .get<Paginated<Account>>(`${this.api}/accounts`, { params: { limit: 100 } })
+      .get<Paginated<Account>>(`${this.api}/accounts`, {
+        params: { limit: 100, type: 'ORGANIZATION' },
+      })
       .pipe(map((page) => page.items));
   }
 
-  /** Cuentas paginadas (CPS ve todas; una organización, las suyas). */
-  page(query: { limit?: number; offset?: number } = {}): Observable<Paginated<Account>> {
+  /**
+   * Cuentas paginadas (CPS ve todas; una organización, las suyas).
+   * `type` recorta por tipo: la pantalla de Clientes manda ORGANIZATION para
+   * que CPS no aparezca ahí — su ficha vive en Mi Empresa.
+   */
+  page(
+    query: { limit?: number; offset?: number; type?: AccountType } = {},
+  ): Observable<Paginated<Account>> {
     const params: Record<string, string | number> = {};
     if (query.limit !== undefined) params['limit'] = query.limit;
     if (query.offset !== undefined) params['offset'] = query.offset;
+    if (query.type !== undefined) params['type'] = query.type;
     return this.http.get<Paginated<Account>>(`${this.api}/accounts`, { params });
   }
 
@@ -76,11 +111,11 @@ export class AccountsService {
   }
 
   /**
-   * Alta atómica de una comunidad PRIVATE: cuenta + su único barrio + OWNER
-   * institucional (clave temporal) + membresía, todo en una transacción — o
-   * nada, si algo falla no queda una cuenta a medio crear. Para MUNICIPAL
+   * Alta atómica de una organización COMMUNITY: cuenta + su único barrio +
+   * OWNER institucional (clave temporal) + membresía, todo en una transacción
+   * — o nada, si algo falla no queda una cuenta a medio crear. Para MUNICIPAL
    * seguí usando create() + UsersService.create() + addMember() por
-   * separado: se autogestiona y no necesita el barrio en el mismo paso.
+   * separado: tiene varios barrios y los carga después.
    */
   onboardCommunity(dto: OnboardCommunity): Observable<OnboardCommunityResult> {
     return this.http.post<OnboardCommunityResult>(`${this.api}/accounts/onboard-community`, dto);

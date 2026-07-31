@@ -45,8 +45,41 @@ export interface Account {
   type: AccountType;
   subtype: OrgSubtype | null;
   status: EntityStatus;
+  /**
+   * De qué plan salieron los cupos al crear la cuenta. Etiqueta HISTÓRICA:
+   * los cupos vigentes son los de abajo, nunca los del plan (que se pudo
+   * haber reconfigurado después).
+   */
+  planId: number | null;
+  /** CUPOS = tarifa. null solo en COMPANY, donde no aplican. */
   maxNeighborhoods: number | null;
+  maxAdminUsers: number | null;
+  /** 0 = la cuenta no tiene técnicos propios (el trabajo de campo lo hace CPS). */
+  maxTechnicianUsers: number | null;
   maxMonitorUsers: number | null;
+}
+
+/**
+ * El catálogo comercial (solo CPS). Es una PLANTILLA: al crear una cuenta sus
+ * cupos se COPIAN, así que editar un plan no le cambia nada a quien ya lo
+ * compró — para eso está PATCH /accounts/:id/quotas, cuenta por cuenta y
+ * auditado.
+ */
+export interface Plan {
+  id: number;
+  code: string;
+  name: string;
+  description: string | null;
+  appliesTo: OrgSubtype;
+  /** Precio de LISTA; el que se cobra es el del contrato. Llega como string (NUMERIC). */
+  priceReference: string | null;
+  active: boolean;
+  maxNeighborhoods: number;
+  maxAdminUsers: number;
+  maxTechnicianUsers: number;
+  maxMonitorUsers: number;
+  maxFamilyMembers: number;
+  remoteControlsEnabled: boolean;
 }
 
 export interface Member {
@@ -102,17 +135,72 @@ export interface HomeMember {
  * Ciclo de vida v2: nace en INVENTORY (fábrica CPS o stock de una organización,
  * neighborhoodId null) y se instala por CLAIM (serial + código de un solo uso).
  */
-export type DeviceType = 'ALARM_PANEL' | 'SIREN' | 'REPEATER' | 'SENSOR';
+export type DeviceType = 'COMMUNITY_ALARM' | 'SIREN' | 'REPEATER' | 'SENSOR';
 export type DeviceStatus =
   'INVENTORY' | 'INSTALLED' | 'OPERATIONAL' | 'MAINTENANCE' | 'OUT_OF_SERVICE' | 'RETIRED';
+
+/** Modelo de placa. El `code` es SOLO el prefijo del número impreso: 'ALOY'. */
+export interface BoardModel {
+  id: number;
+  code: string;
+  name: string;
+  /** false = discontinuado: no se fabrica más, los equipos viejos siguen. */
+  active: boolean;
+  notes: string | null;
+}
+
+/**
+ * Lo que le falta al equipo para poder conectarse al broker MQTT.
+ *
+ * Hoy es un LOG, no una acción: la credencial se deriva de la MAC con un salt de
+ * producción que todavía no está del lado servidor, así que la web muestra el
+ * comando pendiente en vez de fingir que el equipo quedó listo.
+ */
+export interface DeviceProvisioning {
+  /** Usuario MQTT = client_id = `<id>` del tópico. Los tres son el mismo string. */
+  mqttUsername: string;
+  topics: string[];
+  brokerRegistered: boolean;
+  provisionedAt: string | null;
+  pendingCommand: string | null;
+}
+
+/**
+ * Etapa de puesta en marcha. La DERIVA el backend del último hito alcanzado:
+ * no es una columna, así que no puede contradecir a las fechas.
+ */
+export type DeviceStage = 'CREATED' | 'PROVISIONED' | 'LABELED' | 'CONNECTED';
+
+/** OBSERVED = lo vio el broker; MANUAL = lo marcó CPS a mano (auditado). */
+export type DeviceMilestoneSource = 'OBSERVED' | 'MANUAL';
+
+/**
+ * Los cuatro hitos con su fecha. Se muestran por separado y no solo como la
+ * etapa: que un equipo esté "etiquetado" dice menos que ver que se etiquetó
+ * pero todavía no se provisionó.
+ */
+export interface DeviceMilestones {
+  createdAt: string;
+  provisionedAt: string | null;
+  labeledAt: string | null;
+  firstConnectionAt: string | null;
+  firstConnectionSource: DeviceMilestoneSource | null;
+}
 
 export interface Device {
   id: number;
   /** En stock puede no tener nombre todavía: se pone al instalar. */
   name: string | null;
+  /** Se DERIVA de la MAC (`AV-<12 hex>`): no se elige ni se manda al crear. */
   serial: string;
   type: DeviceType;
   status: DeviceStatus;
+  /** MAC STA: 12 hex en mayúsculas, sin separadores. */
+  mac: string | null;
+  /** `ALOY0043` — lo compone el backend; en la base viven modelo y número aparte. */
+  boardNumber: string | null;
+  boardModelId: number | null;
+  boardSeq: number | null;
   /** Solo mientras está en INVENTORY. Se necesita para el claim. */
   claimCode: string | null;
   /** Stock de una organización (entrega del lote). null = fábrica CPS. */
@@ -122,6 +210,13 @@ export interface Device {
   latitude: number | null;
   longitude: number | null;
   installedAt: string | null;
+  /** Último hito alcanzado en la puesta en marcha. Derivada, no almacenada. */
+  stage: DeviceStage;
+  milestones: DeviceMilestones;
+  /** null en los tipos que no hablan MQTT. */
+  provisioning: DeviceProvisioning | null;
+  /** Cosas raras que no impidieron el alta. Vacío salvo al fabricar. */
+  warnings: string[];
 }
 
 /**

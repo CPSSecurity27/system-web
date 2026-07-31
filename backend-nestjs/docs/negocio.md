@@ -6,42 +6,71 @@
 (postes en la vía pública). Una vivienda no "tiene" una alarma: tiene controles
 remotos que disparan las del barrio, y a lo sumo una alarma *preferida*.
 
-## Las dos líneas de negocio (mismo molde, una perilla)
+## Dos ejes, no dos líneas (2026-07-30)
 
-| | PÚBLICO (municipalidad) | PRIVADO (consorcio/comunidad) |
+| Eje | Dónde vive | Qué responde |
 |---|---|---|
-| Cuenta | ORGANIZATION `MUNICIPAL` | ORGANIZATION `PRIVATE` |
-| Quién opera | la muni se autogestiona (`managed_by = ORGANIZATION`) | CPS (`managed_by = CPS`) |
-| Quién paga | solo la muni | la comunidad entera (el consorcio) |
-| OWNER | se entrega a la institución | puede quedar en custodia de CPS |
+| **Escala** | `account.subtype` | MUNICIPAL = varios barrios; COMMUNITY = uno solo (cupo fijo en 1) |
+| **Modalidad** | `neighborhood.managed_by` | ORGANIZATION = la opera el cliente; CPS = llave en mano |
 
-**Onboarding (idéntico en ambos):** CPS crea la cuenta + su OWNER institucional +
-el contrato del barrio. **Transferir una comunidad** (privada → municipal o
-viceversa) = `POST /neighborhoods/:id/transfer` (solo CPS, auditado): cambia
-cliente y/o gestor; hogares, vecinos, equipos e historial quedan intactos.
+La modalidad es **por barrio** y se elige al vender. No se deriva del subtipo: si lo
+hiciera serían imposibles la comunitaria autogestionada y la municipal que le terceriza
+un barrio a CPS, que son dos ventas reales. El subtipo se llamaba `PRIVATE` y hacía las
+dos cosas a la vez; ese era el bug de diseño.
+
+**Onboarding:** MUNICIPAL = `POST /accounts` + `POST /users` + `POST
+/accounts/:id/members` (carga sus barrios después). COMMUNITY = `POST
+/accounts/onboard-community`, atómico: cuenta + su único barrio + OWNER + membresía en
+una transacción, con `managedBy` obligatorio en el body.
+
+**Transferir una comunidad** = `POST /neighborhoods/:id/transfer` (solo CPS, auditado):
+cambia el cliente; `managed_by` se **preserva** salvo que se mande explícito. Hogares,
+vecinos, equipos e historial quedan intactos.
 
 ## Quién puede qué
 
 | | crear barrio | crear vivienda | crear vecinos | crear personal | firmar contrato | cupos |
 |---|---|---|---|---|---|---|
 | CPS (COMPANY OWNER/ADMIN) | ✅ cualquiera | ✅ | ✅ | ✅ | ✅ | ✅ **solo CPS** |
-| Muni (ORG OWNER/ADMIN) | ✅ *los suyos, hasta su cupo* | ✅ en sus barrios | ✅ | ✅ (MONITOR sujeto a cupo) | ❌ | ❌ (los ve) |
+| ORG OWNER/ADMIN | ✅ *los suyos, hasta su cupo* | ✅ en los barrios que **gestiona** | ✅ ídem | ✅ (sujeto al cupo del rol) | ❌ | ❌ (los ve) |
 | Titular (home_member) | ❌ | ❌ | ✅ *familiares de SU casa, hasta el cupo* | ❌ | ❌ | ❌ |
+
+**"Gestiona" ≠ "ve".** En un barrio con `managed_by = CPS`, la organización dueña lo ve
+entero —lo paga, necesita sus eventos y su estado— pero no lo edita, ni carga viviendas,
+ni vecinos. Lo impone `ScopeService.managesNeighborhood()`, en un solo lugar para todos
+los módulos. El TITULAR queda al margen: su casa la administra él, la opere quien la opere.
 
 Los contratos los firma **solo CPS**: es la empresa la que contrata con el cliente.
 
 ## Cupos: la tarifa flexible
 
 Todos los "máximos" son parte de la tarifa y **solo CPS los modifica**, siempre con
-`audit_log` (valor viejo → nuevo): `max_neighborhoods` y `max_monitor_users` en la
-cuenta, `max_family_members` y `remote_controls_enabled` en el barrio.
+`audit_log` (valor viejo → nuevo):
 
-- Se imponen **al crear**: nunca se supera un cupo con un alta.
+| Cupo | Nivel |
+|---|---|
+| `max_neighborhoods` | cuenta |
+| `max_admin_users`, `max_technician_users`, `max_monitor_users` | cuenta |
+| `max_family_members`, `remote_controls_enabled` | barrio |
+
+- Se imponen **al crear** (y al promover de rol): nunca se supera un cupo con un alta.
 - **Reducir no destruye** (grandfathering): lo existente queda; se bloquean altas.
+- **En los cupos de personal, 0 = "esta cuenta no tiene ese rol"**, y el mensaje de error
+  lo dice distinto que el de cupo agotado: uno se amplía llamando a CPS, el otro hay que
+  contratarlo. Es el mecanismo que expresa "la comunitaria no tiene técnicos propios"
+  sin una matriz de roles-por-tipo aparte. El OWNER no tiene cupo: es único por índice.
 - **Los eventos son ilimitados**: una alarma jamás se rechaza por tarifa.
 
 El negocio del cupo: la muni quiere el barrio 11 y compró 10 → llama a CPS, se
 ajusta la tarifa, CPS sube el cupo, la muni sigue sola.
+
+## Planes: el catálogo, que es una plantilla
+
+`plan` (solo CPS, `/api/plans`) define qué cupos otorga cada producto. Al crear una
+cuenta los cupos se **copian**; `account.plan_id` queda como etiqueta histórica y
+**nunca** se lee para resolver un cupo. Editar un plan no le cambia nada a quien ya lo
+compró — si lo hiciera, un cambio bajaría el cupo de cien clientes de golpe, sin
+auditoría y sin grandfathering. Un plan no se borra: se discontinúa (`active: false`).
 
 ## Aislamiento de datos
 

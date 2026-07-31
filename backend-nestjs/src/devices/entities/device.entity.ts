@@ -10,9 +10,14 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import { DeviceStatus, DeviceType } from '../../common/enums';
+import {
+  DeviceMilestoneSource,
+  DeviceStatus,
+  DeviceType,
+} from '../../common/enums';
 import { Account } from '../../accounts/entities/account.entity';
 import { Neighborhood } from '../../neighborhoods/entities/neighborhood.entity';
+import { BoardModel } from './board-model.entity';
 import { DeviceMaintenance } from './device-maintenance.entity';
 
 /**
@@ -43,6 +48,23 @@ import { DeviceMaintenance } from './device-maintenance.entity';
   'chk_device_stock_owner',
   "status = 'INVENTORY' OR organization_id IS NULL",
 )
+@Check('chk_device_mac_format', "mac IS NULL OR mac ~ '^[0-9A-F]{12}$'")
+@Check(
+  'chk_device_board_seq',
+  'board_seq IS NULL OR (board_seq BETWEEN 1 AND 9999)',
+)
+@Check(
+  'chk_device_first_connection',
+  '(first_connection_at IS NULL AND first_connection_source IS NULL) OR (first_connection_at IS NOT NULL AND first_connection_source IS NOT NULL)',
+)
+@Check(
+  'chk_device_first_connection_by',
+  "first_connection_source IS DISTINCT FROM 'MANUAL' OR first_connection_by IS NOT NULL",
+)
+@Check(
+  'chk_device_identity',
+  "type <> 'COMMUNITY_ALARM' OR (mac IS NOT NULL AND serial = 'AV-' || mac AND board_model_id IS NOT NULL AND board_seq IS NOT NULL)",
+)
 export class Device {
   @PrimaryGeneratedColumn()
   id!: number;
@@ -52,8 +74,10 @@ export class Device {
   name!: string | null;
 
   /**
-   * Identidad física del equipo, UNIQUE, no se cambia jamás.
-   * La identidad en el canal de tiempo real se DERIVA de acá.
+   * Identidad física del equipo, UNIQUE, no se cambia jamás. En una alarma
+   * comunitaria NO se elige: es `'AV-' || mac`, y el CHECK chk_device_identity
+   * lo impone. Ese string ES el usuario MQTT y el `<id>` del tópico
+   * (`av/AV-A842E38FCA6C/status`), o sea el JOIN con el servicio de alarmas.
    */
   @Column({ type: 'text', unique: true })
   serial!: string;
@@ -62,7 +86,7 @@ export class Device {
     type: 'enum',
     enum: DeviceType,
     enumName: 'device_type',
-    default: DeviceType.ALARM_PANEL,
+    default: DeviceType.COMMUNITY_ALARM,
   })
   type!: DeviceType;
 
@@ -90,8 +114,81 @@ export class Device {
   @Column({ type: 'text', nullable: true })
   iccid!: string | null;
 
+  /**
+   * MAC STA del eFuse: 12 hex en MAYÚSCULAS y SIN separadores. Es el dato que
+   * el operador lee con `esptool read_mac` en la estación de flasheo y la única
+   * identidad realmente única e inmutable del equipo. Un solo formato canónico
+   * o el UNIQUE no sirve de nada.
+   */
   @Column({ type: 'text', nullable: true })
   mac!: string | null;
+
+  /** Modelo de placa (catálogo). El prefijo del número impreso: ALOY. */
+  @Column({ name: 'board_model_id', type: 'int', nullable: true })
+  boardModelId!: number | null;
+
+  @ManyToOne(() => BoardModel, { onDelete: 'RESTRICT', nullable: true })
+  @JoinColumn({
+    name: 'board_model_id',
+    foreignKeyConstraintName: 'device_board_model_id_fkey',
+  })
+  boardModel!: BoardModel | null;
+
+  /**
+   * El número impreso en la placa, sin el prefijo: 43 para "ALOY0043". Viene de
+   * fábrica, no lo asigna CPS. El string completo se COMPONE (ver `boardNumber`
+   * en el serializer); guardarlo aparte sería otra copia que puede divergir.
+   */
+  @Column({ name: 'board_seq', type: 'int', nullable: true })
+  boardSeq!: number | null;
+
+  /**
+   * Cuándo se cargó la credencial MQTT de este equipo en el broker. NULL = está
+   * dado de alta en el inventario pero TODAVÍA NO puede conectarse.
+   *
+   * Hoy nadie la escribe: la derivación HMAC está bloqueada por el `SALT_MQTT`
+   * de producción, así que el alta solo muestra el comando pendiente. La columna
+   * nace igual para no migrar filas después, y para poder preguntar en cualquier
+   * momento qué equipos quedaron a medio provisionar.
+   */
+  @Column({ name: 'mqtt_provisioned_at', type: 'timestamptz', nullable: true })
+  mqttProvisionedAt!: Date | null;
+
+  @Column({ name: 'mqtt_provisioned_by', type: 'int', nullable: true })
+  mqttProvisionedBy!: number | null;
+
+  /**
+   * Cuándo se imprimió y pegó la etiqueta del equipo. Es el tercer hito de la
+   * puesta en marcha; la ETAPA no se guarda, se deriva del último alcanzado
+   * (ver `deviceStage` en el serializer).
+   */
+  @Column({ name: 'labeled_at', type: 'timestamptz', nullable: true })
+  labeledAt!: Date | null;
+
+  @Column({ name: 'labeled_by', type: 'int', nullable: true })
+  labeledBy!: number | null;
+
+  /**
+   * Primera vez que el equipo apareció en el broker. Es un hecho OBSERVADO:
+   * por la regla 5 del dominio lo escribe el servicio de alarmas, no la web.
+   * Mientras el GtD no exista, CPS puede marcarlo a mano — y en ese caso
+   * `firstConnectionSource` queda en MANUAL y el override va a `audit_log`.
+   * Un dato medido y uno cargado a dedo no valen lo mismo.
+   */
+  @Column({ name: 'first_connection_at', type: 'timestamptz', nullable: true })
+  firstConnectionAt!: Date | null;
+
+  @Column({
+    name: 'first_connection_source',
+    type: 'enum',
+    enum: DeviceMilestoneSource,
+    enumName: 'device_milestone_source',
+    nullable: true,
+  })
+  firstConnectionSource!: DeviceMilestoneSource | null;
+
+  @Column({ name: 'first_connection_by', type: 'int', nullable: true })
+  firstConnectionBy!: number | null;
 
   /** Dueño del stock mientras está en INVENTORY. NULL = fábrica CPS. */
   @Column({ name: 'organization_id', type: 'int', nullable: true })

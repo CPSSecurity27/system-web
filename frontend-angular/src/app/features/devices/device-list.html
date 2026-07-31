@@ -8,15 +8,13 @@
   </div>
 
   <div class="d-flex gap-2">
-    <!-- Stock/claim: CPS y organizaciones. Fábrica: solo CPS. -->
+    <!--
+      Entrega e instalación: CPS y organizaciones. El alta de equipos NO está
+      acá — es fábrica, vive en Inventario y solo la ve CPS.
+    -->
     @if (auth.isManager()) {
       <a routerLink="/alarmas/stock" class="btn btn-outline-brand btn-sm">
-        <i class="bi bi-box-seam me-1"></i> Stock e instalación
-      </a>
-    }
-    @if (auth.isCps()) {
-      <a routerLink="/alarmas/nueva" class="btn btn-brand btn-sm">
-        <i class="bi bi-plus-lg me-1"></i> Fabricar equipo
+        <i class="bi bi-truck me-1"></i> Entrega e instalación
       </a>
     }
   </div>

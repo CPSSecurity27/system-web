@@ -4,8 +4,14 @@
  * reconoce por sus membresías de HOGAR (`homeMemberships`).
  */
 export type AccountType = 'COMPANY' | 'ORGANIZATION';
-/** Solo ORGANIZATION. MUNICIPAL o PRIVATE: fija quién gestiona los barrios por defecto. */
-export type OrgSubtype = 'MUNICIPAL' | 'PRIVATE';
+/**
+ * Solo ORGANIZATION. La ESCALA del cliente y nada más:
+ *   MUNICIPAL -> varios barrios (hasta su cupo)
+ *   COMMUNITY -> uno solo (cupo fijo en 1)
+ * QUIÉN OPERA cada barrio es otra cosa y vive en `Neighborhood.managedBy`.
+ * (Se llamaba PRIVATE hasta 2026-07-30.)
+ */
+export type OrgSubtype = 'MUNICIPAL' | 'COMMUNITY';
 export type UserRole = 'OWNER' | 'ADMIN' | 'TECHNICIAN' | 'MONITOR';
 export type HomeMemberRole = 'TITULAR' | 'FAMILIAR';
 
@@ -23,7 +29,7 @@ export interface Membership {
   membershipId: number;
   accountId: number;
   accountType: AccountType;
-  /** Solo ORGANIZATION. Ej: una comunidad PRIVATE es dueña de UN solo barrio. */
+  /** Solo ORGANIZATION. Ej: una organización COMMUNITY gestiona UN solo barrio. */
   subtype: OrgSubtype | null;
   role: UserRole;
 }

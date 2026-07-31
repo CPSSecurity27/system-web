@@ -13,7 +13,6 @@ import { AuditService } from '../common/audit.service';
 import {
   AccountType,
   EntityStatus,
-  ManagedBy,
   OrgSubtype,
   UserKind,
   UserRole,
@@ -33,7 +32,61 @@ import {
 } from './dto/account.dto';
 import { AccountUser } from './entities/account-user.entity';
 import { Account } from './entities/account.entity';
+import { Plan } from './entities/plan.entity';
 import { StaffAssignment } from './entities/staff-assignment.entity';
+
+/** Los cuatro cupos de una organización, siempre juntos. */
+export interface AccountQuotas {
+  maxNeighborhoods: number;
+  maxAdminUsers: number;
+  maxTechnicianUsers: number;
+  maxMonitorUsers: number;
+}
+
+const QUOTA_FIELDS = [
+  'maxNeighborhoods',
+  'maxAdminUsers',
+  'maxTechnicianUsers',
+  'maxMonitorUsers',
+] as const satisfies readonly (keyof AccountQuotas)[];
+
+/** Para los mensajes de cupo, en el idioma del que los lee. */
+const ROLE_LABELS: Record<UserRole, string> = {
+  [UserRole.OWNER]: 'usuarios institucionales',
+  [UserRole.ADMIN]: 'administradores',
+  [UserRole.TECHNICIAN]: 'técnicos',
+  [UserRole.MONITOR]: 'usuarios de monitoreo',
+};
+
+/**
+ * El cupo que le corresponde a un rol, o null si no le aplica ninguno.
+ *
+ * Null en dos casos: el OWNER (es único por índice de la base, no por tarifa —
+ * cobrarle un cupo a la soberanía de la cuenta no tendría sentido) y cualquier
+ * rol en la cuenta COMPANY, que no tiene cupos porque CPS no se cobra a sí misma.
+ */
+function quotaForRole(account: Account, role: UserRole): number | null {
+  switch (role) {
+    case UserRole.ADMIN:
+      return account.maxAdminUsers;
+    case UserRole.TECHNICIAN:
+      return account.maxTechnicianUsers;
+    case UserRole.MONITOR:
+      return account.maxMonitorUsers;
+    case UserRole.OWNER:
+      return null;
+  }
+}
+
+/** La foto de los cuatro cupos, para el audit_log. */
+function pickQuotas(account: Account): Partial<AccountQuotas> {
+  return {
+    maxNeighborhoods: account.maxNeighborhoods ?? undefined,
+    maxAdminUsers: account.maxAdminUsers ?? undefined,
+    maxTechnicianUsers: account.maxTechnicianUsers ?? undefined,
+    maxMonitorUsers: account.maxMonitorUsers ?? undefined,
+  };
+}
 
 /** Lo que deja el alta atómica de una comunidad: la cuenta + la clave temporal del OWNER (una sola vez). */
 export interface OnboardCommunityResult {
@@ -61,12 +114,16 @@ const PG_FK_VIOLATION = '23503';
  *  - El usuario con rol OWNER debe ser kind = INSTITUTIONAL, y viceversa un
  *    INSTITUTIONAL solo puede ser OWNER.
  *  - El OWNER no se degrada ni se borra por API: es la soberanía de la cuenta.
- *  - Cupo max_monitor_users al crear/promover una membresía MONITOR.
+ *  - Cupo POR ROL (ADMIN / TECHNICIAN / MONITOR) al crear o promover una
+ *    membresía. El cupo 0 significa "este rol no existe en esta cuenta": así
+ *    "una comunitaria no tiene técnicos propios" se expresa con el mismo
+ *    mecanismo que "puede tener 5 monitores", sin una matriz aparte.
  *  - Los CUPOS los modifica SOLO CPS, siempre con auditoría (valor viejo -> nuevo).
- *  - Una cuenta PRIVATE (comunidad) es dueña de UN SOLO barrio: max_neighborhoods
- *    queda fijo en 1, siempre (ver negocio-redisenado.md §2.2/2.3). Si crece y
- *    necesita más barrios, la solución es pasarla a autogestión (MUNICIPAL) —
- *    no ampliarle el cupo siendo PRIVATE.
+ *  - Una cuenta COMMUNITY es dueña de UN SOLO barrio: max_neighborhoods queda
+ *    fijo en 1, siempre (ver negocio-redisenado.md §2.2/2.3). Si crece y
+ *    necesita más barrios, la solución es pasarla a MUNICIPAL — no ampliarle
+ *    el cupo siendo COMMUNITY. Ojo: eso es independiente de QUIÉN OPERA sus
+ *    barrios, que se decide por barrio en `neighborhood.managed_by`.
  *
  * Lo que la base SÍ garantiza y por eso acá no se re-implementa:
  *  - Una sola cuenta COMPANY (índice único parcial).
@@ -84,6 +141,7 @@ export class AccountsService {
     private readonly assignments: Repository<StaffAssignment>,
     @InjectRepository(Locality)
     private readonly localities: Repository<Locality>,
+    @InjectRepository(Plan) private readonly plans: Repository<Plan>,
     private readonly audit: AuditService,
     private readonly passwords: PasswordService,
   ) {}
@@ -97,16 +155,11 @@ export class AccountsService {
       );
     }
 
-    // Una comunidad PRIVATE tiene un único barrio: el cupo no es negociable
-    // como el resto de la tarifa. Si mandaron un valor distinto de 1, es un
-    // malentendido de quien completa el alta y se lo decimos, en vez de
-    // pisarlo en silencio.
-    if (dto.subtype === OrgSubtype.PRIVATE && dto.maxNeighborhoods !== 1) {
-      throw new BadRequestException(
-        'Una cuenta PRIVATE (comunidad) tiene un único barrio: el cupo de barrios es siempre 1. ' +
-          'Para más de un barrio, la cuenta tiene que ser MUNICIPAL.',
-      );
-    }
+    const quotas = await this.resolveQuotas(dto);
+    this.assertCommunityHasOneNeighborhood(
+      dto.subtype,
+      quotas.maxNeighborhoods,
+    );
 
     const account = await this.accounts.save(
       this.accounts.create({
@@ -114,8 +167,8 @@ export class AccountsService {
         type: dto.type,
         subtype: dto.subtype,
         status: EntityStatus.ACTIVE,
-        maxNeighborhoods: dto.maxNeighborhoods,
-        maxMonitorUsers: dto.maxMonitorUsers,
+        planId: dto.planId ?? null,
+        ...quotas,
         createdBy,
       }),
     );
@@ -126,24 +179,32 @@ export class AccountsService {
       entityType: 'account',
       entityId: account.id,
       accountId: account.id,
-      newValue: { name: account.name, subtype: account.subtype },
+      newValue: {
+        name: account.name,
+        subtype: account.subtype,
+        planId: account.planId,
+        ...quotas,
+      },
     });
 
     return account;
   }
 
   /**
-   * Alta atómica de una comunidad PRIVATE: cuenta + su único barrio + OWNER
-   * institucional (clave temporal) + membresía, en UNA transacción.
+   * Alta atómica de una organización COMMUNITY: cuenta + su único barrio +
+   * OWNER institucional (clave temporal) + membresía, en UNA transacción.
    *
-   * Por qué existe aparte de create(): una comunidad privada no gestiona su
-   * barrio (NeighborhoodsService lo rechaza si lo intenta) — lo crea CPS, y
-   * la cuenta no tiene sentido de negocio sin él. Encadenar 4 POST separados
-   * desde el front dejaría, ante cualquier falla a mitad de camino, una
-   * cuenta a medio crear que nadie puede completar por su cuenta. Todo o nada.
+   * Por qué existe aparte de create(): la cuenta no tiene sentido de negocio
+   * sin su barrio — es lo único que gestiona. Encadenar 4 POST separados desde
+   * el front dejaría, ante cualquier falla a mitad de camino, una cuenta a
+   * medio crear que nadie puede completar por su cuenta. Todo o nada.
    *
-   * SOLO CPS (controller). Siempre PRIVATE, siempre cupo 1 barrio: no se
+   * SOLO CPS (controller). Siempre COMMUNITY, siempre cupo 1 barrio: no se
    * piden esos campos, para no abrir la puerta a un valor inconsistente.
+   *
+   * Lo que SÍ se pide es `managedBy`: si el barrio lo opera CPS (llave en
+   * mano) o la propia comunidad (autogestión). Es la decisión comercial del
+   * momento de la venta y desde 2026-07-30 no se deriva más del subtipo.
    */
   async onboardCommunity(
     dto: OnboardCommunityDto,
@@ -157,6 +218,15 @@ export class AccountsService {
         `No existe la localidad ${dto.neighborhood.localityId}`,
       );
     }
+
+    // Mismo camino que create(): plan (copiado) o cupos a mano. El de barrios
+    // se ignora — una comunitaria es 1, y acá ni siquiera se pregunta.
+    const quotas = await this.resolveQuotas({
+      ...dto,
+      type: AccountType.ORGANIZATION,
+      subtype: OrgSubtype.COMMUNITY,
+      maxNeighborhoods: 1,
+    });
 
     // Chequeo previo, fuera de la transacción: sin esto, un username repetido
     // revienta el INSERT a mitad de la transacción y el que complete el alta
@@ -180,11 +250,12 @@ export class AccountsService {
           manager.create(Account, {
             name: dto.name,
             type: AccountType.ORGANIZATION,
-            subtype: OrgSubtype.PRIVATE,
+            subtype: OrgSubtype.COMMUNITY,
             status: EntityStatus.ACTIVE,
-            // Invariante de negocio, no negociable (ver create()): PRIVATE = 1.
+            planId: dto.planId ?? null,
+            ...quotas,
+            // Invariante de negocio, no negociable (ver create()): COMMUNITY = 1.
             maxNeighborhoods: 1,
-            maxMonitorUsers: dto.maxMonitorUsers,
             createdBy: actor.id,
           }),
         );
@@ -198,8 +269,10 @@ export class AccountsService {
             status: EntityStatus.ACTIVE,
             organizationId: account.id,
             organizationType: AccountType.ORGANIZATION,
-            // Una comunidad PRIVATE siempre la opera CPS (negocio-redisenado.md §2.2).
-            managedBy: ManagedBy.CPS,
+            // La modalidad de venta, explícita. Llave en mano (CPS) o
+            // autogestión (ORGANIZATION): las dos son ventas legítimas y el
+            // que carga el alta es el que sabe cuál se firmó.
+            managedBy: dto.managedBy,
             createdBy: actor.id,
           }),
         );
@@ -286,36 +359,26 @@ export class AccountsService {
       throw new BadRequestException('La cuenta COMPANY no tiene cupos');
     }
 
-    // La misma invariante que en create(): PRIVATE es un único barrio, sin
-    // excepciones ni siquiera para CPS. Para más de uno, la cuenta deja de
-    // ser PRIVATE.
-    if (
-      account.subtype === OrgSubtype.PRIVATE &&
-      dto.maxNeighborhoods !== undefined &&
-      dto.maxNeighborhoods !== 1
-    ) {
-      throw new BadRequestException(
-        'Una cuenta PRIVATE (comunidad) tiene un único barrio: el cupo de barrios es siempre 1. ' +
-          'Para más de un barrio, la cuenta tiene que ser MUNICIPAL.',
-      );
-    }
+    // La misma invariante que en create(): la COMMUNITY es un único barrio,
+    // sin excepciones ni siquiera para CPS.
+    this.assertCommunityHasOneNeighborhood(
+      account.subtype,
+      dto.maxNeighborhoods ?? account.maxNeighborhoods!,
+    );
 
-    const oldValue = {
-      maxNeighborhoods: account.maxNeighborhoods,
-      maxMonitorUsers: account.maxMonitorUsers,
+    const oldValue = pickQuotas(account);
+    // Ausente = no tocar ese cupo (PATCH parcial). Se escriben los cuatro
+    // igual para que el audit_log guarde la foto completa: un "antes" a medias
+    // no sirve para reconstruir qué tenía contratado el cliente ese día.
+    const newValue: AccountQuotas = {
+      maxNeighborhoods: dto.maxNeighborhoods ?? oldValue.maxNeighborhoods!,
+      maxAdminUsers: dto.maxAdminUsers ?? oldValue.maxAdminUsers!,
+      maxTechnicianUsers:
+        dto.maxTechnicianUsers ?? oldValue.maxTechnicianUsers!,
+      maxMonitorUsers: dto.maxMonitorUsers ?? oldValue.maxMonitorUsers!,
     };
 
-    await this.accounts.update(accountId, {
-      maxNeighborhoods:
-        dto.maxNeighborhoods !== undefined
-          ? dto.maxNeighborhoods
-          : account.maxNeighborhoods,
-      maxMonitorUsers:
-        dto.maxMonitorUsers !== undefined
-          ? dto.maxMonitorUsers
-          : account.maxMonitorUsers,
-      updatedBy: actor.id,
-    });
+    await this.accounts.update(accountId, { ...newValue, updatedBy: actor.id });
 
     const updated = await this.getAccount(accountId);
 
@@ -326,10 +389,7 @@ export class AccountsService {
       entityId: accountId,
       accountId,
       oldValue,
-      newValue: {
-        maxNeighborhoods: updated.maxNeighborhoods,
-        maxMonitorUsers: updated.maxMonitorUsers,
-      },
+      newValue: pickQuotas(updated),
     });
 
     return updated;
@@ -413,9 +473,7 @@ export class AccountsService {
       throw new ConflictException('El usuario ya pertenece a esta cuenta');
     }
 
-    if (dto.role === UserRole.MONITOR) {
-      await this.assertMonitorRoomLeft(account);
-    }
+    await this.assertRoleRoomLeft(account, dto.role);
 
     try {
       const membership = await this.memberships.save(
@@ -466,8 +524,10 @@ export class AccountsService {
       );
     }
 
-    if (dto.role === UserRole.MONITOR && membership.role !== UserRole.MONITOR) {
-      await this.assertMonitorRoomLeft(account);
+    // Solo si CAMBIA de rol: revalidar el cupo de un rol que ya tenía haría
+    // que un PATCH sin cambios falle en una cuenta que está justo en el límite.
+    if (dto.role !== membership.role) {
+      await this.assertRoleRoomLeft(account, dto.role);
     }
 
     const oldRole = membership.role;
@@ -630,23 +690,104 @@ export class AccountsService {
   }
 
   /**
-   * CUPO max_monitor_users (§5.2 del diseño): se impone AL CREAR. NULL = sin
-   * límite. Si CPS bajó el cupo por debajo de lo existente, no se suspende a
-   * nadie (grandfathering): solo se bloquean altas nuevas como esta.
+   * CUPO POR ROL (§5.2 del diseño): se impone AL CREAR o AL PROMOVER. Si CPS
+   * bajó el cupo por debajo de lo existente, no se suspende a nadie
+   * (grandfathering): solo se bloquean altas nuevas como esta.
+   *
+   * Cupo 0 no es "cupo agotado", es "este rol no existe en esta cuenta", y el
+   * mensaje lo dice distinto: al que le falta cupo hay que ofrecerle ampliarlo,
+   * al que no tiene el rol hay que explicarle por qué.
    */
-  private async assertMonitorRoomLeft(account: Account): Promise<void> {
-    if (account.maxMonitorUsers === null) return;
+  private async assertRoleRoomLeft(
+    account: Account,
+    role: UserRole,
+  ): Promise<void> {
+    const cupo = quotaForRole(account, role);
+    // null = sin cupo aplicable: el OWNER (único por índice, no por tarifa) y
+    // la cuenta COMPANY (CPS no se cobra a sí misma).
+    if (cupo === null) return;
 
-    const monitores = await this.memberships.count({
-      where: { accountId: account.id, role: UserRole.MONITOR },
+    const actuales = await this.memberships.count({
+      where: { accountId: account.id, role },
     });
+    if (actuales < cupo) return;
 
-    if (monitores >= account.maxMonitorUsers) {
+    const etiqueta = ROLE_LABELS[role];
+    if (cupo === 0) {
       throw new BadRequestException(
-        `El cupo contratado permite ${account.maxMonitorUsers} usuario(s) de monitoreo ` +
-          `y ya hay ${monitores}. Para ampliarlo, contactá a CPS.`,
+        `El plan de esta cuenta no incluye ${etiqueta}. Para habilitarlos, contactá a CPS.`,
       );
     }
+    throw new BadRequestException(
+      `El cupo contratado permite ${cupo} ${etiqueta} y ya hay ${actuales}. ` +
+        'Para ampliarlo, contactá a CPS.',
+    );
+  }
+
+  /**
+   * De dónde salen los cupos de una cuenta nueva: del PLAN (copiados) o a
+   * mano. El plan es una plantilla — se copia y se olvida. Ver Plan: leerlo en
+   * vivo rompería el grandfathering y la trazabilidad de la regla 4.
+   *
+   * Si vienen las dos cosas, el valor explícito gana: es el caso real de
+   * vender un plan con un ajuste puntual sin tener que crear un plan nuevo.
+   */
+  private async resolveQuotas(dto: CreateAccountDto): Promise<AccountQuotas> {
+    if (dto.planId === undefined) {
+      const faltantes = QUOTA_FIELDS.filter((f) => dto[f] === undefined);
+      if (faltantes.length > 0) {
+        throw new BadRequestException(
+          `Sin plan hay que indicar todos los cupos a mano. Faltan: ${faltantes.join(', ')}`,
+        );
+      }
+      return {
+        maxNeighborhoods: dto.maxNeighborhoods!,
+        maxAdminUsers: dto.maxAdminUsers!,
+        maxTechnicianUsers: dto.maxTechnicianUsers!,
+        maxMonitorUsers: dto.maxMonitorUsers!,
+      };
+    }
+
+    const plan = await this.plans.findOne({ where: { id: dto.planId } });
+    if (!plan) throw new NotFoundException(`No existe el plan ${dto.planId}`);
+    if (!plan.active) {
+      throw new BadRequestException(
+        `El plan "${plan.name}" está discontinuado: no se puede vender uno nuevo con él`,
+      );
+    }
+    if (plan.appliesTo !== dto.subtype) {
+      throw new BadRequestException(
+        `El plan "${plan.name}" es para organizaciones ${plan.appliesTo}, no ${dto.subtype}`,
+      );
+    }
+
+    return {
+      maxNeighborhoods: dto.maxNeighborhoods ?? plan.maxNeighborhoods,
+      maxAdminUsers: dto.maxAdminUsers ?? plan.maxAdminUsers,
+      maxTechnicianUsers: dto.maxTechnicianUsers ?? plan.maxTechnicianUsers,
+      maxMonitorUsers: dto.maxMonitorUsers ?? plan.maxMonitorUsers,
+    };
+  }
+
+  /**
+   * Una COMMUNITY es dueña de un único barrio: el cupo no es negociable como
+   * el resto de la tarifa. Si mandaron otro valor es un malentendido de quien
+   * completa el alta y se lo decimos, en vez de pisarlo en silencio.
+   *
+   * OJO: esto es sobre CUÁNTOS barrios tiene, no sobre quién los opera. Una
+   * comunitaria autogestionada sigue teniendo un solo barrio.
+   */
+  private assertCommunityHasOneNeighborhood(
+    subtype: OrgSubtype | null | undefined,
+    maxNeighborhoods: number,
+  ): void {
+    if (subtype !== OrgSubtype.COMMUNITY) return;
+    if (maxNeighborhoods === 1) return;
+
+    throw new BadRequestException(
+      'Una organización comunitaria gestiona un único barrio: el cupo de barrios es siempre 1. ' +
+        'Para más de un barrio, la cuenta tiene que ser MUNICIPAL.',
+    );
   }
 
   /**

@@ -85,10 +85,20 @@ Los datos siguen llegando **ya filtrados por el backend**: el front no filtra na
 **Onboarding de un cliente (solo CPS):**
 
 ```
-POST /accounts { name, type:'ORGANIZATION', subtype:'MUNICIPAL'|'PRIVATE',
-                 maxNeighborhoods?, maxMonitorUsers? }
+GET  /plans?active=true                              <- catálogo, para el combo del alta
+
+MUNICIPAL (carga sus barrios después):
+POST /accounts { name, type:'ORGANIZATION', subtype:'MUNICIPAL', planId?,
+                 maxNeighborhoods?, maxAdminUsers?, maxTechnicianUsers?, maxMonitorUsers? }
 POST /users    { name, kind:'INSTITUTIONAL', username, password }    <- el OWNER
 POST /accounts/:id/members { userId, role:'OWNER' }
+
+COMMUNITY (todo junto, atómico — la cuenta no existe sin su barrio):
+POST /accounts/onboard-community { name, managedBy:'CPS'|'ORGANIZATION', ownerUsername,
+                                   planId?, maxAdminUsers?, maxTechnicianUsers?,
+                                   maxMonitorUsers?, neighborhood:{ name, localityId, … } }
+  -> devuelve temporaryPassword UNA sola vez
+
 GET  /accounts/:id/members/:userId/assignments        <- barrios de un TECH/MONITOR
 PUT  /accounts/:id/members/:userId/assignments        <- { neighborhoodIds } reemplaza
                                                          el conjunto; [] = toda su org
@@ -96,15 +106,28 @@ POST /neighborhoods { name, localityId, organizationId, managedBy? } <- o lo cre
 POST /contracts { accountId, neighborhoodId, price, startDate, endDate?, description? }
 ```
 
+- **`planId` es opcional.** Con plan, los cupos ausentes salen de él (COPIADOS); los que
+  mandes explícitos lo pisan. Sin plan, hay que mandar los cuatro o da 400 diciendo
+  cuáles faltan. La UI recomendada: elegir plan → precargar los inputs → dejar editar.
 - **Los contratos ya NO llevan `homeId` ni `maxFamilyMembers`**: son organización →
   barrio, comercial puro. Los topes son CUPOS (abajo).
 - El OWNER es **institucional y único** por cuenta: usuario sin DNI, no se degrada
   ni borra desde la UI (mostrar deshabilitado).
 
-**Cupos (pantalla solo-CPS):** `PATCH /accounts/:id/quotas` y
+**Cupos (pantalla solo-CPS):** `PATCH /accounts/:id/quotas`
+(`maxNeighborhoods`, `maxAdminUsers`, `maxTechnicianUsers`, `maxMonitorUsers`) y
 `PATCH /neighborhoods/:id/quotas` (`maxFamilyMembers`, `remoteControlsEnabled`).
 El 400 de cupo excedido trae mensaje claro ("Para ampliarlo, contactá a CPS") —
 mostrarlo tal cual: es el mecanismo comercial, no un error.
+
+**Cupo 0 en un rol** = la cuenta no tiene ese rol. La UI **no lo ofrece** al sumar
+gente (el backend daría 400 siempre). Distinto del cupo AGOTADO, que sí se sigue
+ofreciendo: ahí el 400 explica que hay que ampliarlo, y esconderlo escondería el motivo.
+
+**`managed_by = CPS`** (barrio llave en mano): la organización dueña lo VE pero no lo
+gestiona. Sus altas de vivienda/vecino y la edición del barrio dan **403** con un
+mensaje que lo explica. En esos barrios, la UI del cliente debe mostrar todo en modo
+lectura. El TITULAR de un hogar NO está afectado: sigue administrando a sus familiares.
 
 **Vivienda y vecinos (ya no hay cuentas HOME):**
 

@@ -5,17 +5,31 @@
   </div>
 } @else {
   <div class="d-flex align-items-center mb-3">
-    <a routerLink="/cuentas" class="btn btn-sm btn-outline-secondary me-2" title="Volver">
-      <i class="bi bi-arrow-left"></i>
-    </a>
+    <!-- Mi Empresa no tiene lista de la que venir: el volver la llevaría a la
+         de clientes, que es justo el lugar donde CPS ya no está. -->
+    @if (!isCompanyView) {
+      <a routerLink="/clientes" class="btn btn-sm btn-outline-secondary me-2" title="Volver">
+        <i class="bi bi-arrow-left"></i>
+      </a>
+    }
     <div>
-      <h2 class="h5 fw-bold mb-0">{{ account()?.name ?? 'Cuenta #' + id }}</h2>
+      <h2 class="h5 fw-bold mb-0">
+        @if (isCompanyView) {
+          Personal de {{ account()?.name ?? 'CPS Security' }}
+        } @else {
+          {{ account()?.name ?? 'Cliente #' + id }}
+        }
+      </h2>
       <p class="text-muted small mb-0">
-        Miembros y cupos de la cuenta
+        @if (isCompanyView) {
+          Quién trabaja en CPS y con qué rol
+        } @else {
+          Miembros y cupos del cliente
+        }
         @if (account()?.subtype === 'MUNICIPAL') {
-          <span class="badge text-bg-light border ms-1">Municipalidad</span>
-        } @else if (account()?.subtype === 'PRIVATE') {
-          <span class="badge text-bg-light border ms-1">Comunidad</span>
+          <span class="badge text-bg-light border ms-1">Municipal</span>
+        } @else if (account()?.subtype === 'COMMUNITY') {
+          <span class="badge text-bg-light border ms-1">Comunitaria</span>
         }
       </p>
     </div>
@@ -161,17 +175,19 @@
         </div>
       </div>
 
-      <!-- CUPOS: la tarifa. Solo CPS los ve editables; el cambio queda auditado. -->
-      @if (auth.isCps()) {
+      <!-- CUPOS: la tarifa. Solo CPS los ve editables; el cambio queda auditado.
+           La cuenta COMPANY no tiene cupos (CPS no se cobra a sí misma): la
+           tarjeta ni aparece en Mi Empresa. -->
+      @if (auth.isCps() && account()?.type !== 'COMPANY') {
         <div class="card border mt-3">
           <div class="card-header bg-white border-bottom">
             <span class="fw-semibold small"><i class="bi bi-sliders me-1"></i> Cupos (tarifa)</span>
           </div>
           <div class="card-body">
             <form [formGroup]="quotasForm" (ngSubmit)="saveQuotas()" novalidate>
-              <div class="row g-3 align-items-end">
-                <div class="col-12 col-sm-4">
-                  <label for="qNeigh" class="form-label small fw-medium">Barrios máx.</label>
+              <div class="row g-3">
+                <div class="col-6 col-sm-3">
+                  <label for="qNeigh" class="form-label small fw-medium">Barrios</label>
                   <input
                     id="qNeigh"
                     type="number"
@@ -182,11 +198,11 @@
                       quotasForm.controls.maxNeighborhoods.invalid
                     "
                     formControlName="maxNeighborhoods"
-                    placeholder="Ej: 5"
                   />
-                  @if (account()?.subtype === 'PRIVATE') {
+                  @if (account()?.subtype === 'COMMUNITY') {
                     <div class="form-text mt-1">
-                      <i class="bi bi-lock-fill me-1"></i>Fijo en 1: es una comunidad privada.
+                      <i class="bi bi-lock-fill me-1"></i>Fijo en 1: es una organización
+                      comunitaria.
                     </div>
                   } @else if (
                     quotasForm.controls.maxNeighborhoods.touched &&
@@ -195,28 +211,56 @@
                     <div class="invalid-feedback">Obligatorio, al menos 1.</div>
                   }
                 </div>
-                <div class="col-12 col-sm-4">
-                  <label for="qMon" class="form-label small fw-medium">Monitores máx.</label>
+
+                <div class="col-6 col-sm-3">
+                  <label for="qAdmin" class="form-label small fw-medium">Admins</label>
+                  <input
+                    id="qAdmin"
+                    type="number"
+                    min="0"
+                    class="form-control form-control-sm"
+                    [class.is-invalid]="
+                      quotasForm.controls.maxAdminUsers.touched &&
+                      quotasForm.controls.maxAdminUsers.invalid
+                    "
+                    formControlName="maxAdminUsers"
+                  />
+                  <div class="form-text mt-1">Usa {{ roleUsed('ADMIN') }}</div>
+                </div>
+
+                <div class="col-6 col-sm-3">
+                  <label for="qTech" class="form-label small fw-medium">Técnicos</label>
+                  <input
+                    id="qTech"
+                    type="number"
+                    min="0"
+                    class="form-control form-control-sm"
+                    [class.is-invalid]="
+                      quotasForm.controls.maxTechnicianUsers.touched &&
+                      quotasForm.controls.maxTechnicianUsers.invalid
+                    "
+                    formControlName="maxTechnicianUsers"
+                  />
+                  <div class="form-text mt-1">Usa {{ roleUsed('TECHNICIAN') }}</div>
+                </div>
+
+                <div class="col-6 col-sm-3">
+                  <label for="qMon" class="form-label small fw-medium">Monitores</label>
                   <input
                     id="qMon"
                     type="number"
-                    min="1"
+                    min="0"
                     class="form-control form-control-sm"
                     [class.is-invalid]="
                       quotasForm.controls.maxMonitorUsers.touched &&
                       quotasForm.controls.maxMonitorUsers.invalid
                     "
                     formControlName="maxMonitorUsers"
-                    placeholder="Ej: 2"
                   />
-                  @if (
-                    quotasForm.controls.maxMonitorUsers.touched &&
-                    quotasForm.controls.maxMonitorUsers.invalid
-                  ) {
-                    <div class="invalid-feedback">Obligatorio, al menos 1.</div>
-                  }
+                  <div class="form-text mt-1">Usa {{ roleUsed('MONITOR') }}</div>
                 </div>
-                <div class="col-12 col-sm-4">
+
+                <div class="col-12">
                   <button
                     type="submit"
                     class="btn btn-sm btn-brand"
@@ -234,11 +278,12 @@
                   <i class="bi bi-check-circle me-1"></i>{{ quotasMessage() }}
                 </p>
               }
-              <!-- Reducir un cupo NO suspende a nadie: grandfathering. No existe "sin límite". -->
+              <!-- Reducir un cupo NO suspende a nadie: grandfathering. -->
               <p class="text-muted small mb-0 mt-2">
                 <i class="bi bi-info-circle me-1"></i>
-                Bajar un cupo no suspende lo ya creado: solo bloquea altas nuevas. Todo cupo tiene que
-                ser al menos 1.
+                Bajar un cupo no suspende lo ya creado: solo bloquea altas nuevas. En los cupos de
+                personal, <strong>0 significa que la cuenta no tiene ese rol</strong> y deja de
+                ofrecerse al sumar gente.
               </p>
             </form>
           </div>
@@ -284,12 +329,19 @@
             </div>
             <div class="mb-3">
               <label for="cRole" class="form-label small fw-medium">Rol</label>
+              <!-- Solo los roles que la cuenta TIENE contratados: cupo 0 = no
+                   existe acá, y ofrecerlo daría siempre un 400. -->
               <select id="cRole" class="form-select" formControlName="role">
-                @for (role of roles; track role) {
-                  <option [ngValue]="role">{{ role }}</option>
+                @for (role of availableRoles(); track role) {
+                  <option [ngValue]="role">
+                    {{ role }}
+                    @if (roleQuota(role) !== null) {
+                      ({{ roleUsed(role) }}/{{ roleQuota(role) }})
+                    }
+                  </option>
                 }
               </select>
-              <!-- MONITOR está sujeto al cupo de la cuenta: el 400 se muestra tal cual. -->
+              <!-- El cupo AGOTADO sí se ofrece: el 400 explica que hay que ampliarlo. -->
               <div class="form-text">
                 El OWNER no se crea por acá: nace con la cuenta y es único.
               </div>
@@ -333,8 +385,13 @@
               <div class="mb-3">
                 <label for="role" class="form-label small fw-medium">Rol</label>
                 <select id="role" class="form-select" formControlName="role">
-                  @for (role of roles; track role) {
-                    <option [ngValue]="role">{{ role }}</option>
+                  @for (role of availableRoles(); track role) {
+                    <option [ngValue]="role">
+                      {{ role }}
+                      @if (roleQuota(role) !== null) {
+                        ({{ roleUsed(role) }}/{{ roleQuota(role) }})
+                      }
+                    </option>
                   }
                 </select>
               </div>

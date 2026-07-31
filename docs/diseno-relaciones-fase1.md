@@ -44,15 +44,22 @@ CPS que además es vecino: una fila en `account_user` y una en `home_member`).
 
 ### 3.1 `account` — solo quien administra o contrata
 
-| type | subtype | quién es | gestión de sus barrios |
+| type | subtype | quién es | cuántos barrios |
 |---|---|---|---|
-| COMPANY | — | CPS Security (única) | global |
-| ORGANIZATION | MUNICIPAL | municipalidad | **se autogestiona** |
-| ORGANIZATION | PRIVATE | consorcio / junta vecinal / barrio cerrado | **la gestiona CPS** |
+| COMPANY | — | CPS Security (única) | ninguno propio; alcance global |
+| ORGANIZATION | MUNICIPAL | municipalidad | varios, hasta `max_neighborhoods` |
+| ORGANIZATION | COMMUNITY | consorcio / junta vecinal / barrio cerrado | **uno solo** (cupo fijo en 1) |
+
+> **Corrección (2026-07-30).** El subtipo se llamaba `PRIVATE` y, además de la escala,
+> decidía **quién opera** los barrios (MUNICIPAL se autogestionaba, PRIVATE la operaba
+> CPS). Eso fusionaba dos ejes que el negocio necesita separados y hacía imposibles dos
+> ventas reales: la comunitaria autogestionada y la municipal que terceriza un barrio.
+> Ahora el subtipo dice **solo la escala**, y `neighborhood.managed_by` dice quién opera
+> **cada barrio**, como decisión comercial explícita del momento de la venta.
 
 - **Desaparece `account` tipo HOME** (§3.3). Toda comunidad tiene exactamente una
   organización cliente (muni o consorcio) — el modelo queda uniforme.
-- `subtype` es informativo + fija el **default** de gestión; la gestión efectiva vive por
+- `subtype` es la escala; la gestión efectiva vive por
   barrio (`neighborhood.managed_by`, §4), lo que permite excepciones y transferencias.
 
 ### 3.2 `account_user` — roles del panel
@@ -112,9 +119,11 @@ account ORGANIZATION/MUNICIPAL "Municipalidad de San Pedro"
 ├── TECHNICIAN → técnicos de campo municipales (acotables por barrio, §3.4)
 └── MONITOR    → operadores del centro de monitoreo municipal (acotables por barrio)
 
-account ORGANIZATION/PRIVATE "Consorcio Barrio Los Lapachos"
-├── OWNER      → usuario institucional "consorcio_lapachos" (poco uso: CPS gestiona)
+account ORGANIZATION/COMMUNITY "Consorcio Barrio Los Lapachos"
+├── OWNER      → usuario institucional "consorcio_lapachos"
+├── ADMIN      → solo si se vendió autogestionada (managed_by = ORGANIZATION)
 └── MONITOR    → guardia/encargado local, solo su barrio (M6)
+    (típicamente max_technician_users = 0: el campo lo hace CPS)
 
 App de vecinos (sin cuenta: home_member por hogar)
 ├── TITULAR    → 1 por hogar, login DNI + OTP
@@ -241,11 +250,14 @@ cambia entre esquemas es `managed_by` (quién opera después).
 5. La muni, con su OWNER, crea sus ADMINs; los ADMINs crean barrios, hogares, vecinos y
    personal. CPS ya no interviene en la operación (solo equipos y config avanzada).
 
-**PRIVADO — venta a una comunidad / barrio:**
+**COMUNITARIO — venta a una comunidad / barrio:**
 
-1. CPS crea `account` ORGANIZATION/PRIVATE ("Consorcio Barrio Los Lapachos").
-2. CPS crea el OWNER institucional (`consorcio_lapachos`).
-3. CPS firma el contrato del barrio y lo crea con `managed_by = CPS`.
+1. CPS crea `account` ORGANIZATION/COMMUNITY ("Consorcio Barrio Los Lapachos"), su único
+   barrio y su OWNER institucional **en una sola transacción** (`POST
+   /accounts/onboard-community`): la cuenta no tiene sentido sin el barrio.
+2. En ese mismo paso se elige la MODALIDAD: `managed_by = CPS` (llave en mano) o
+   `ORGANIZATION` (autogestión). Es una decisión comercial, ya no se deriva del subtipo.
+3. CPS firma el contrato del barrio.
 4. **La diferencia:** las credenciales del OWNER pueden entregarse al representante de
    la comunidad **o quedar en custodia de CPS** si la comunidad no tiene estructura
    formal (un grupo de vecinos sin consorcio). La cuenta existe igual: es la contraparte
@@ -277,19 +289,26 @@ puede rechazar una activación por tarifa).
 - Los cupos se imponen **al crear** (nunca se supera un cupo con un alta) y las
   reducciones aplican **grandfathering** (§11): lo existente queda, las altas nuevas se
   bloquean hasta estar bajo el cupo. Coherente en todos los niveles.
-- El modelo queda extensible: si mañana se vende "máximo de técnicos" o "máximo de
-  hogares por barrio", es una columna más con la misma regla (solo CPS + audit + alta
-  bloqueada). No hace falta tabla de cupos genérica por ahora — columnas explícitas son
-  más legibles y con CHECKs más simples.
-- **Excepción reforzada (2026-07-22):** una cuenta PRIVATE (comunidad, ej. "Comunidad
-  La Merced") es dueña de UN SOLO barrio — no es un cupo negociable como los demás, es
-  la definición de la línea de negocio (§2.2/2.3 de `negocio-redisenado.md`). El
-  backend fija `max_neighborhoods = 1` al crearla y rechaza cualquier intento de
-  cambiarlo (alta con otro valor explícito, o `/quotas` después) mientras la cuenta
-  siga siendo PRIVATE. Para más de un barrio, la solución es pasarla a autogestión
-  (MUNICIPAL) — nunca ampliarle el cupo siendo PRIVATE. Solo en `accounts.service.ts`
-  (create + updateQuotas), sin CHECK en Postgres: mismo patrón que el resto de los
-  cupos, que tampoco lo tienen.
+- El modelo queda extensible: si mañana se vende "máximo de hogares por barrio", es una
+  columna más con la misma regla (solo CPS + audit + alta bloqueada). No hace falta tabla
+  de cupos genérica — columnas explícitas son más legibles y con CHECKs más simples.
+- **Confirmado en la práctica (2026-07-30):** se vendieron "máximo de administradores" y
+  "máximo de técnicos" y fueron exactamente eso, dos columnas más. Con un hallazgo: el
+  **cupo 0** resuelve gratis la pregunta "¿qué roles admite cada tipo de cuenta?" —
+  `max_technician_users = 0` dice "esta cuenta no tiene técnicos" con el mismo mecanismo
+  que los limita. Una matriz de roles-por-tipo aparte habría sido un segundo lugar donde
+  vive la misma regla, libre de contradecir al primero.
+- **Excepción reforzada (2026-07-22, revisada el 2026-07-30):** una cuenta COMMUNITY es
+  dueña de UN SOLO barrio — no es un cupo negociable como los demás, es la definición de
+  la línea de negocio (§2.2/2.3 de `negocio-redisenado.md`). El backend fija
+  `max_neighborhoods = 1` al crearla y rechaza cualquier intento de cambiarlo (alta con
+  otro valor explícito, o `/quotas` después) mientras siga siendo COMMUNITY. Para más de
+  un barrio, la solución es pasarla a MUNICIPAL. Vive en `accounts.service.ts` (create +
+  updateQuotas) y, para los planes, también como CHECK en Postgres
+  (`chk_plan_community_single_neighborhood`): ahí sí conviene, porque un plan imposible
+  tiene que rebotar al definirlo y no recién al intentar venderlo.
+  **Ojo:** esto es sobre CUÁNTOS barrios tiene, no sobre quién los opera. Una comunitaria
+  autogestionada sigue teniendo un solo barrio.
 - **`max_neighborhoods` y `max_monitor_users` ya no admiten "sin límite" (2026-07-23):**
   toda ORGANIZATION tiene que declarar un número concreto (mínimo 1) al crearse, y
   `/quotas` rechaza bajarlo a 0 o volverlo a `null`. Antes `NULL` significaba "sin
@@ -309,11 +328,15 @@ puede rechazar una activación por tarifa).
 ### 6.1 `device` — la alarma comunitaria, ahora con ciclo de vida completo
 
 ```
-device: serial UNIQUE, type (ALARM_PANEL | SIREN | REPEATER | SENSOR),
+device: serial UNIQUE (= 'AV-' || mac), type (COMMUNITY_ALARM | SIREN | REPEATER | SENSOR),
         status (INVENTORY | INSTALLED | OPERATIONAL | MAINTENANCE | OUT_OF_SERVICE | RETIRED),
         claim_code?, manufactured_at?, tested?, hardware (imei/iccid/mac),
+        board_model_id + board_seq (el número impreso: ALOY0043),
+        mqtt_provisioned_at/by (credencial cargada en el broker),
         organization_id? (solo en INVENTORY: de quién es el stock; NULL = fábrica CPS),
         neighborhood_id NULLABLE, latitude/longitude, installed_at, timestamps
+
+board_model: code UNIQUE (solo el prefijo: 'ALOY'), name, active, notes
 ```
 
 - **Inventario (D4), misma cadena de custodia que los controles (§6.2):**
@@ -324,7 +347,15 @@ device: serial UNIQUE, type (ALARM_PANEL | SIREN | REPEATER | SENSOR),
   reclama el equipo ingresando serial + claim_code → el device queda vinculado a SU barrio
   y pasa a INSTALLED/OPERATIONAL. Así la muni se autogestiona la instalación sin que CPS
   pierda control del stock: solo se puede reclamar lo que CPS fabricó.
-- `type` extensible desde el día 1 (PDF §10.1); hoy solo se usa ALARM_PANEL.
+- **Identidad desde la MAC (2026-07-28):** el alta de fábrica pide la MAC
+  (`esptool read_mac`) y el número impreso en la placa (`ALOY0043`); el `serial`
+  **se deriva** (`AV-<12 hex>`) y un CHECK lo ata a la MAC. Ese string es también
+  el usuario MQTT y el `<id>` del tópico del servicio de alarmas, y de que sean
+  el mismo depende que la ACL del broker no crezca con la flota.
+- `type` extensible desde el día 1 (PDF §10.1); hoy solo se usa COMMUNITY_ALARM
+  (antes se llamaba ALARM_PANEL — se renombró porque "panel" es la cajita en la
+  pared de una casa, justo lo que la regla 1 dice que esto no es). Los otros
+  tipos se rechazan con 400 en el alta hasta que exista uno real.
 - Configuración avanzada (parámetros internos, credenciales del canal): **solo CPS**.
 - Estado vivo (online, heartbeat, disparada): **nunca en Postgres** → §8.
 
@@ -584,7 +615,8 @@ erDiagram
 
 | Área | Cambio |
 |---|---|
-| `account` | eliminar tipo HOME; agregar `subtype` (MUNICIPAL/PRIVATE) para ORGANIZATION; + cupos `max_neighborhoods`, `max_monitor_users` (solo CPS) |
+| `account` | eliminar tipo HOME; agregar `subtype` (MUNICIPAL/COMMUNITY) para ORGANIZATION; + cupos `max_neighborhoods`, `max_admin_users`, `max_technician_users`, `max_monitor_users` (solo CPS); + `plan_id` (etiqueta histórica) |
+| `plan` | tabla nueva (2026-07-30): catálogo comercial, PLANTILLA que se copia al vender |
 | roles | agregar OWNER y MONITOR; actualizar CHECK de matriz |
 | `neighborhood` | + `organization_id` NOT NULL, `managed_by`, `max_family_members`, `remote_controls_enabled` |
 | `service_contract` | eliminar `home_id` y CHECK dual; mover límites al barrio; solo ORGANIZATION firma |

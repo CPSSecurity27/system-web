@@ -19,7 +19,18 @@ ajuste de tarifa.
 
 ## 2. Las dos líneas de negocio
 
-El sistema es uno solo; lo que cambia es **quién opera** después de la venta.
+El sistema es uno solo. Hay **dos ejes independientes**, y confundirlos fue el error que
+se corrigió el 2026-07-30:
+
+| Eje | Dónde vive | Qué responde |
+|---|---|---|
+| **Escala** | `account.subtype` = MUNICIPAL / COMMUNITY | ¿gestiona varios barrios o uno solo? |
+| **Modalidad** | `neighborhood.managed_by` = ORGANIZATION / CPS | ¿quién opera *este* barrio? |
+
+El segundo es **por barrio**, y ahí está la gracia: una comunitaria se vende llave en
+mano o autogestionada, y una municipal puede tercerizarle un barrio a CPS teniendo los
+otros nueve propios. Antes la modalidad se derivaba del subtipo, lo que hacía imposibles
+esos dos casos y ataba una decisión comercial a una clase de cliente.
 
 ### 2.1 PÚBLICO — venta a municipalidades (autogestión total)
 
@@ -40,34 +51,60 @@ CPS le vende el sistema a una municipalidad y **le entrega las llaves**:
 la muni sigue sola. Lo mismo con monitores y familiares por hogar. La autonomía del
 cliente y el modelo de ingresos de CPS quedan alineados sin fricción.
 
-### 2.2 PRIVADO — venta a comunidades / barrios (CPS opera todo)
+### 2.2 COMUNITARIO — venta a comunidades / barrios (un solo barrio)
 
 CPS le vende el servicio a una comunidad (consorcio, junta vecinal, grupo de vecinos):
 
-1. CPS crea la cuenta de la organización ("Consorcio Barrio Los Lapachos"), su OWNER
-   institucional y el contrato del barrio.
+1. CPS crea, **en un solo acto atómico**, la cuenta de la organización ("Consorcio Barrio
+   Los Lapachos"), su único barrio y su OWNER institucional. La cuenta no tiene sentido
+   de negocio sin el barrio, así que no existen por separado.
 2. Las credenciales del OWNER se entregan al representante de la comunidad **o quedan
    en custodia de CPS** si el grupo no tiene estructura formal. La cuenta existe igual:
    es la contraparte del contrato.
-3. **CPS gestiona todo**: el barrio, los hogares, los vecinos, los equipos, los
-   controles. La comunidad recibe el servicio.
-4. Opcional de venta: si la comunidad tiene un guardia o encargado, se le crea un
-   usuario MONITOR limitado a su barrio (dentro del cupo `max_monitor_users`) para que
-   vea el estado de las alarmas y atienda eventos.
+3. **En el alta se elige la modalidad** (`managed_by` del barrio), que es una decisión
+   comercial y no una consecuencia de ser comunitaria:
+   - **Llave en mano** (`CPS`): CPS gestiona el barrio, los hogares, los vecinos, los
+     equipos y los controles. La comunidad **ve todo** —lo paga, necesita ver sus
+     eventos y el estado de sus alarmas— pero no edita nada.
+   - **Autogestión** (`ORGANIZATION`): sus administradores operan el barrio, igual que
+     una municipal, solo que con un barrio y no con diez.
+4. En cualquiera de las dos, si la comunidad tiene un guardia o encargado se le crea un
+   usuario MONITOR limitado a su barrio (dentro del cupo `max_monitor_users`).
+
+Lo que **no** cambia con la modalidad: la comunitaria tiene un solo barrio, siempre
+(`max_neighborhoods = 1`, invariante que ni CPS puede levantar). Para más de uno, la
+cuenta tiene que pasar a MUNICIPAL.
+
+Lo que típicamente **sí** viene con la venta comunitaria: `max_technician_users = 0`.
+El trabajo de campo lo hace CPS, y ese 0 es lo que lo dice — no hay una regla escrita
+en otro lado que prohíba los técnicos, hay un cupo en cero.
 
 ### 2.3 El puente entre las dos líneas
 
 Como ambos esquemas usan el mismo molde (cuenta + OWNER + contrato + barrio), los dos
 movimientos comerciales futuros son triviales:
 
-- **Comunidad privada pasa a un municipio** (el caso clásico): se transfiere el barrio a
+- **Una comunitaria pasa a un municipio** (el caso clásico): se transfiere el barrio a
   la cuenta de la muni. Hogares, vecinos, equipos, controles e historial quedan intactos.
-- **Un consorcio crece y quiere autogestionarse**: se le cambia la modalidad de gestión
-  y se le entregan las credenciales de su OWNER. Nada se migra.
+  La transferencia **preserva** `managed_by` salvo que se diga otra cosa: cambiar de
+  cliente y cambiar de operador son dos decisiones distintas.
+- **Un consorcio crece y quiere autogestionarse**: se le cambia `managed_by` a
+  ORGANIZATION y se le entregan las credenciales de su OWNER. Un campo. Nada se migra.
 
 Solo CPS puede ejecutar estos movimientos, y quedan auditados.
 
-## 3. El modelo de tarifa: contrato + cupos
+## 3. El modelo de tarifa: plan + contrato + cupos
+
+**El plan** es el catálogo comercial: qué cupos otorga cada producto que vendemos
+("Municipal Base", "Comunitaria Base"). Es una **plantilla**: al crear la cuenta sus
+cupos se **copian** a la cuenta, y desde ahí son de ella. Reconfigurar un plan no le
+cambia nada a quien ya lo compró — si lo hiciera, un solo cambio bajaría el cupo de cien
+clientes de una, sin auditoría y sin grandfathering, o sea las tres reglas de abajo
+violadas al mismo tiempo. La cuenta guarda el plan del que salió como **etiqueta
+histórica** ("¿cuántos clientes hay en cada plan?"), nunca como origen de lectura.
+
+Un plan no se borra: se **discontinúa**. Deja de ofrecerse en el alta y los clientes
+vendidos con él conservan la etiqueta de con qué se vendieron.
 
 **El contrato** fija lo comercial y se congela al firmar (precio, fechas, estado), como
 una factura: si mañana cambia la tarifa, los contratos viejos no cambian solos. Un solo
@@ -78,6 +115,8 @@ contrato activo por barrio; el historial de contratos vencidos se conserva.
 | Cupo | Qué limita | Nivel |
 |---|---|---|
 | `max_neighborhoods` | cuántos barrios puede crear la organización | organización |
+| `max_admin_users` | cuántos administradores puede tener | organización |
+| `max_technician_users` | cuántos técnicos de campo propios puede tener | organización |
 | `max_monitor_users` | cuántos operadores de monitoreo puede tener | organización |
 | `max_family_members` | cuántos familiares por hogar | barrio |
 | `remote_controls_enabled` | si el barrio usa controles remotos | barrio |
@@ -86,6 +125,11 @@ Reglas de los cupos (uniformes, sin excepciones):
 
 - **Solo CPS los modifica.** El cliente los ve, no los toca. Son la tarifa.
 - **Se imponen al crear:** nunca se supera un cupo con un alta.
+- **En los cupos de personal, 0 significa "esta cuenta no tiene ese rol"**, y no "el
+  cupo está agotado". Los dos casos dan mensajes distintos porque son problemas
+  distintos: uno se amplía llamando a CPS, el otro hay que contratarlo. Este es el
+  mecanismo que expresa "la comunitaria no tiene técnicos propios" — un número, no una
+  regla especial escondida en el código.
 - **Reducir un cupo no destruye nada** (grandfathering): lo existente queda, las altas
   nuevas se bloquean hasta estar bajo el cupo. Nadie pierde el servicio por un cambio
   de tarifa.
@@ -206,8 +250,10 @@ por completo del diseño.
 1. La alarma es del barrio; el control es del hogar; el portador es un dato reasignable.
 2. Todo cliente es una organización con un OWNER institucional y un contrato por barrio.
 3. Los máximos son tarifa: solo CPS los cambia, con auditoría y sin destruir lo existente.
+   El plan es la plantilla de la que se copian; nunca la fuente que se lee.
 4. Los eventos son ilimitados, siempre.
-5. La muni se autogestiona hasta su cupo; el privado lo gestiona CPS. Mismo sistema.
+5. El subtipo dice CUÁNTOS barrios (municipal varios, comunitaria uno); `managed_by` dice
+   QUIÉN OPERA cada uno. Son dos decisiones separadas y las dos son vendibles.
 6. Los equipos solo entran al servicio desde el stock de CPS, por reclamo con código.
 7. Los vecinos no pagan, no ven el panel, y acceden con DNI + verificación, un
    dispositivo por persona.

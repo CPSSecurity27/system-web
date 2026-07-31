@@ -16,16 +16,21 @@
 -- ----------------------------------------------------------------------------
 
 CREATE TYPE account_type      AS ENUM ('COMPANY', 'ORGANIZATION');
-CREATE TYPE org_subtype       AS ENUM ('MUNICIPAL', 'PRIVATE');
+-- Solo la ESCALA del cliente: MUNICIPAL = varios barrios, COMMUNITY = uno.
+-- Quién OPERA cada barrio es otra pregunta y vive en neighborhood.managed_by.
+-- (Se llamaba PRIVATE hasta 2026-07-30 — migración AccountPlansAndRoleQuotas.)
+CREATE TYPE org_subtype       AS ENUM ('MUNICIPAL', 'COMMUNITY');
 CREATE TYPE user_role         AS ENUM ('OWNER', 'ADMIN', 'TECHNICIAN', 'MONITOR');
 CREATE TYPE user_kind         AS ENUM ('PERSON', 'INSTITUTIONAL');
 CREATE TYPE entity_status     AS ENUM ('ACTIVE', 'SUSPENDED', 'CLOSED');
 CREATE TYPE managed_by_type   AS ENUM ('CPS', 'ORGANIZATION');
 CREATE TYPE home_member_role  AS ENUM ('TITULAR', 'FAMILIAR');
 CREATE TYPE contract_status   AS ENUM ('ACTIVE', 'SUSPENDED', 'EXPIRED', 'CANCELLED');
-CREATE TYPE device_type       AS ENUM ('ALARM_PANEL', 'SIREN', 'REPEATER', 'SENSOR');
+CREATE TYPE device_type       AS ENUM ('COMMUNITY_ALARM', 'SIREN', 'REPEATER', 'SENSOR');
 CREATE TYPE device_status     AS ENUM ('INVENTORY', 'INSTALLED', 'OPERATIONAL',
                                        'MAINTENANCE', 'OUT_OF_SERVICE', 'RETIRED');
+-- Cómo se supo de un hito del equipo: lo vio el broker o lo marcó una persona.
+CREATE TYPE device_milestone_source AS ENUM ('OBSERVED', 'MANUAL');
 CREATE TYPE maintenance_type  AS ENUM ('INSTALL', 'SERVICE', 'REPAIR', 'CHECK', 'REPLACE');
 CREATE TYPE maintenance_status AS ENUM ('PENDING', 'IN_PROGRESS', 'DONE', 'CANCELLED');
 CREATE TYPE remote_status     AS ENUM ('INVENTORY', 'ACTIVE', 'SUSPENDED', 'LOST',
@@ -118,8 +123,73 @@ CREATE TRIGGER trg_app_user_updated BEFORE UPDATE ON app_user
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 -- ----------------------------------------------------------------------------
--- 3. Cuentas — el cliente (o CPS) y sus cupos
+-- 3. Cuentas — el cliente (o CPS), su plan y sus cupos
 -- ----------------------------------------------------------------------------
+
+-- El catálogo comercial: qué cupos otorga cada plan que CPS vende.
+--
+-- Es una PLANTILLA, no una fuente de verdad. Al crear una cuenta los cupos se
+-- COPIAN a las columnas max_* del account, y desde ahí son de esa cuenta.
+--
+-- Por qué no un plan_id que se lea en vivo, que sería más "normalizado": la
+-- regla 4 del dominio dice que los cupos SOLO los modifica CPS, siempre con
+-- audit_log y con grandfathering. Un plan leído en vivo bajaría el cupo de
+-- cien clientes de una, sin una sola fila de auditoría y sin respetar lo ya
+-- existente — las tres cosas que esa regla prohíbe. Es la misma decisión que
+-- ya tomó service_contract al congelar el precio al firmar.
+--
+-- Es catálogo y no enum para que un plan nuevo sea un INSERT y no una
+-- migración: la oferta comercial cambia más seguido que el esquema.
+CREATE TABLE plan (
+  id                      SERIAL PRIMARY KEY,
+  code                    TEXT NOT NULL UNIQUE,   -- identificador estable: 'MUNICIPAL_BASE'
+  name                    TEXT NOT NULL,          -- el de vidriera, cambia sin avisar
+  description             TEXT,
+
+  -- A qué clase de organización aplica. Un plan municipal ofrecido a una
+  -- comunitaria (o al revés) sería un error de venta silencioso.
+  applies_to              org_subtype NOT NULL,
+
+  -- Precio de REFERENCIA (lista). El que se COBRA es el del service_contract,
+  -- congelado al firmar; este es el de la vidriera.
+  price_reference         NUMERIC(12,2),
+  active                  BOOLEAN NOT NULL DEFAULT true,  -- false = discontinuado
+
+  -- Cupos de ORGANIZACIÓN que otorga
+  max_neighborhoods       INT NOT NULL CHECK (max_neighborhoods >= 1),
+  max_admin_users         INT NOT NULL CHECK (max_admin_users >= 0),
+  max_technician_users    INT NOT NULL CHECK (max_technician_users >= 0),
+  max_monitor_users       INT NOT NULL CHECK (max_monitor_users >= 0),
+
+  -- Cupos de BARRIO que sugiere
+  max_family_members      INT NOT NULL DEFAULT 3 CHECK (max_family_members >= 0),
+  remote_controls_enabled BOOLEAN NOT NULL DEFAULT true,
+
+  created_by              INT REFERENCES app_user(id) ON DELETE SET NULL,
+  updated_by              INT REFERENCES app_user(id) ON DELETE SET NULL,
+  created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+  CONSTRAINT chk_plan_code CHECK (code ~ '^[A-Z0-9_]{2,32}$'),
+  -- La invariante de la comunitaria, también acá: sin esto se podría armar un
+  -- plan COMMUNITY de 5 barrios que recién rebota al momento de venderlo.
+  CONSTRAINT chk_plan_community_single_neighborhood CHECK (
+    applies_to <> 'COMMUNITY' OR max_neighborhoods = 1
+  )
+);
+CREATE TRIGGER trg_plan_updated BEFORE UPDATE ON plan
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+INSERT INTO plan (
+  code, name, description, applies_to,
+  max_neighborhoods, max_admin_users, max_technician_users, max_monitor_users
+) VALUES
+  ('COMUNITARIA_BASE', 'Comunitaria Base',
+   'Un barrio, gestión de CPS o propia. El trabajo de campo lo hace CPS: sin técnicos propios.',
+   'COMMUNITY', 1, 2, 0, 1),
+  ('MUNICIPAL_BASE', 'Municipal Base',
+   'Autogestión: varios barrios, personal propio de campo y de monitoreo.',
+   'MUNICIPAL', 10, 5, 5, 5);
 
 CREATE TABLE account (
   id                 SERIAL PRIMARY KEY,
@@ -128,13 +198,24 @@ CREATE TABLE account (
   subtype            org_subtype,             -- solo ORGANIZATION
   status             entity_status NOT NULL DEFAULT 'ACTIVE',
 
+  -- De qué plan salieron los cupos al crear la cuenta. REFERENCIA HISTÓRICA:
+  -- sirve para "¿cuántos clientes hay en cada plan?" y NADA más. Los cupos
+  -- vigentes son las columnas de abajo (ver tabla plan más adelante).
+  plan_id            INT REFERENCES plan(id) ON DELETE SET NULL,
+
   -- CUPOS (§5.2 del diseño): SOLO CPS los escribe (permiso de app + audit_log).
-  -- Solo tienen sentido en ORGANIZATION, y ahí son obligatorios (>= 1): no
-  -- existe "sin límite" (2026-07-23), lo valida accounts.service.ts. NULL solo
-  -- aparece en COMPANY, donde el cupo directamente no aplica (chk_subtype_by_type
-  -- más abajo lo exige).
-  max_neighborhoods  INT CHECK (max_neighborhoods >= 0),
-  max_monitor_users  INT CHECK (max_monitor_users >= 0),
+  -- Solo tienen sentido en ORGANIZATION, y ahí son OBLIGATORIOS (lo exige el
+  -- CHECK de abajo): no existe "sin límite" (2026-07-23). NULL solo aparece en
+  -- COMPANY, donde el cupo directamente no aplica: CPS no se cobra a sí misma.
+  --
+  -- Los tres cupos de PERSONAL usan el 0 con sentido: cupo 0 = ese rol NO
+  -- EXISTE en esta cuenta. Con eso, "una comunitaria no tiene técnicos propios
+  -- porque el campo lo hace CPS" se dice con el mismo mecanismo que el resto
+  -- de la tarifa, en vez de con una matriz de roles-por-tipo aparte.
+  max_neighborhoods    INT CHECK (max_neighborhoods >= 0),
+  max_admin_users      INT CHECK (max_admin_users >= 0),
+  max_technician_users INT CHECK (max_technician_users >= 0),
+  max_monitor_users    INT CHECK (max_monitor_users >= 0),
 
   created_by         INT REFERENCES app_user(id) ON DELETE SET NULL,
   updated_by         INT REFERENCES app_user(id) ON DELETE SET NULL,
@@ -143,12 +224,22 @@ CREATE TABLE account (
 
   -- Habilita las FK compuestas de neighborhood y service_contract (no borrar)
   CONSTRAINT uq_account_id_type UNIQUE (id, type),
-  -- ORGANIZATION lleva subtype; COMPANY no lleva ni subtype ni cupos
+  -- ORGANIZATION lleva subtype y los CUATRO cupos; COMPANY, ninguno de los dos
   CONSTRAINT chk_subtype_by_type CHECK (
-    (type = 'ORGANIZATION' AND subtype IS NOT NULL)
+    (type = 'ORGANIZATION'
+      AND subtype IS NOT NULL
+      AND max_neighborhoods IS NOT NULL
+      AND max_admin_users IS NOT NULL
+      AND max_technician_users IS NOT NULL
+      AND max_monitor_users IS NOT NULL)
     OR
-    (type = 'COMPANY' AND subtype IS NULL
-      AND max_neighborhoods IS NULL AND max_monitor_users IS NULL)
+    (type = 'COMPANY'
+      AND subtype IS NULL
+      AND plan_id IS NULL
+      AND max_neighborhoods IS NULL
+      AND max_admin_users IS NULL
+      AND max_technician_users IS NULL
+      AND max_monitor_users IS NULL)
   )
 );
 -- CPS es una sola: no puede existir una segunda cuenta COMPANY
@@ -193,7 +284,11 @@ CREATE TRIGGER trg_account_user_updated BEFORE UPDATE ON account_user
 -- Invariantes que van en el SERVICIO (la base no llega):
 --   * el usuario con rol OWNER debe ser kind = INSTITUTIONAL, y viceversa
 --   * un INSTITUTIONAL solo puede tener membresías OWNER
---   * cupo max_monitor_users al crear una membresía MONITOR
+--   * cupo POR ROL al crear o promover: ADMIN -> max_admin_users,
+--     TECHNICIAN -> max_technician_users, MONITOR -> max_monitor_users.
+--     Cupo 0 = ese rol no existe en la cuenta (mensaje distinto al de cupo
+--     agotado: uno se amplía, el otro hay que contratarlo). El OWNER no tiene
+--     cupo: es único por índice, no por tarifa.
 --   * toda cuenta conserva su OWNER (no se borra la última soberanía)
 
 -- ----------------------------------------------------------------------------
@@ -217,7 +312,18 @@ CREATE TABLE neighborhood (
   CONSTRAINT fk_neighborhood_org FOREIGN KEY (organization_id, organization_type)
     REFERENCES account(id, type) ON DELETE RESTRICT,
 
-  -- Quién opera: CPS (esquema privado) o la propia organización (municipal)
+  -- QUIÉN OPERA este barrio: CPS (vendido llave en mano) o su propia
+  -- organización (autogestión). Se decide barrio por barrio y es la MODALIDAD
+  -- DE VENTA, no una consecuencia del subtipo de la cuenta (2026-07-30): una
+  -- comunitaria puede autogestionarse y una municipal puede tercerizarle un
+  -- barrio a CPS teniendo los otros nueve propios. Derivarlo del subtipo hacía
+  -- imposibles los dos casos.
+  --
+  -- Con managed_by = CPS, el personal de la organización dueña VE el barrio
+  -- entero (lo paga, necesita sus eventos y su estado) pero no lo gestiona: ni
+  -- el barrio, ni sus viviendas, ni sus vecinos. Lo impone ScopeService
+  -- (managesNeighborhood), en un solo lugar para todos los módulos. El TITULAR
+  -- de un hogar queda al margen: su casa la administra él, la opere quien la opere.
   managed_by              managed_by_type NOT NULL,
 
   -- CUPOS del barrio (§5.2): SOLO CPS los escribe
@@ -300,10 +406,31 @@ CREATE TRIGGER trg_contract_updated BEFORE UPDATE ON service_contract
 -- 8. Activos — device (alarma comunitaria), su estado vivo y su bitácora
 -- ----------------------------------------------------------------------------
 
+-- Catálogo de modelos de placa. El número de cada placa viene IMPRESO de fábrica
+-- como <code><4 dígitos> (ALOY0043): acá vive el prefijo, en device.board_seq el
+-- número. Es catálogo y no enum para que un modelo nuevo sea un INSERT y no una
+-- migración, y para poder colgarle atributos de hardware cuando aparezcan.
+-- El CHECK valida la FORMA y no la familia: clavar 'ALOY' bloquearía una placa
+-- de otro proveedor sin comprar nada a cambio.
+CREATE TABLE board_model (
+  id         SERIAL PRIMARY KEY,
+  code       TEXT NOT NULL UNIQUE,      -- 'ALOY' — solo el prefijo, sin dígitos
+  name       TEXT NOT NULL,
+  active     BOOLEAN NOT NULL DEFAULT true,  -- false = discontinuado
+  notes      TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT chk_board_model_code CHECK (code ~ '^[A-Z]{2,8}$')
+);
+INSERT INTO board_model (code, name) VALUES ('ALOY', 'ALOY');
+
 CREATE TABLE device (
   id              SERIAL PRIMARY KEY,
-  serial          TEXT NOT NULL UNIQUE,     -- identidad física, no se cambia
-  type            device_type NOT NULL DEFAULT 'ALARM_PANEL',
+  -- Identidad física, no se cambia. En una COMMUNITY_ALARM no se elige: es
+  -- 'AV-' || mac, y ese string ES el usuario MQTT y el <id> del tópico
+  -- (av/AV-A842E38FCA6C/status) — el JOIN con el servicio de alarmas.
+  serial          TEXT NOT NULL UNIQUE,
+  type            device_type NOT NULL DEFAULT 'COMMUNITY_ALARM',
   status          device_status NOT NULL DEFAULT 'INVENTORY',
   name            TEXT,                     -- "Esquina Norte" (al instalar)
 
@@ -313,7 +440,31 @@ CREATE TABLE device (
   tested          BOOLEAN NOT NULL DEFAULT false,
   imei            TEXT,
   iccid           TEXT,
-  mac             TEXT,
+  mac             TEXT,                     -- MAC STA: 12 hex MAYÚSCULAS, sin ":"
+  board_model_id  INT REFERENCES board_model(id) ON DELETE RESTRICT,
+  board_seq       INT,                      -- 43 para "ALOY0043"; el string se compone
+
+  -- Cuándo se cargó la credencial MQTT en el broker. NULL = está en inventario
+  -- pero TODAVÍA NO puede conectarse. Hoy nadie la escribe: la derivación
+  -- HMAC-SHA256(SALT_MQTT, MAC) está bloqueada porque falta el salt de
+  -- producción del lado servidor (punto abierto PA4 del GtD), así que el alta
+  -- solo muestra el comando pendiente. La columna nace igual para no migrar
+  -- filas después y para poder listar los equipos a medio provisionar.
+  mqtt_provisioned_at TIMESTAMPTZ,
+  mqtt_provisioned_by INT REFERENCES app_user(id) ON DELETE SET NULL,
+
+  -- Hitos de puesta en marcha. La ETAPA del equipo se DERIVA del último hito
+  -- alcanzado (creado -> provisionado -> etiquetado -> 1ª conexión); no hay
+  -- columna de etapa porque sería un segundo lugar donde vive el mismo dato,
+  -- libre de contradecir a las fechas.
+  labeled_at      TIMESTAMPTZ,              -- etiqueta impresa y pegada
+  labeled_by      INT REFERENCES app_user(id) ON DELETE SET NULL,
+  -- La primera conexión es un hecho OBSERVADO por el broker (regla 5: el
+  -- estado vivo lo escribe el servicio de alarmas). Mientras el GtD no exista,
+  -- CPS puede marcarla a mano — y entonces queda dicho que fue a mano.
+  first_connection_at     TIMESTAMPTZ,
+  first_connection_source device_milestone_source,
+  first_connection_by     INT REFERENCES app_user(id) ON DELETE SET NULL,
 
   -- Custodia: en INVENTORY puede estar en stock de una organización
   -- (NULL = fábrica CPS). Instalado, pertenece a un barrio.
@@ -337,10 +488,43 @@ CREATE TABLE device (
   -- El stock organizacional solo existe mientras está en inventario
   CONSTRAINT chk_device_stock_owner CHECK (
     status = 'INVENTORY' OR organization_id IS NULL
+  ),
+  -- Un solo formato canónico de MAC, o el UNIQUE no sirve de nada:
+  -- 'a8:42:...' y 'A842...' serían dos filas del mismo equipo.
+  CONSTRAINT chk_device_mac_format CHECK (
+    mac IS NULL OR mac ~ '^[0-9A-F]{12}$'
+  ),
+  CONSTRAINT chk_device_board_seq CHECK (
+    board_seq IS NULL OR (board_seq BETWEEN 1 AND 9999)
+  ),
+  -- La fecha de la primera conexión y su origen viajan juntos o no viajan.
+  CONSTRAINT chk_device_first_connection CHECK (
+    (first_connection_at IS NULL AND first_connection_source IS NULL)
+    OR
+    (first_connection_at IS NOT NULL AND first_connection_source IS NOT NULL)
+  ),
+  -- Un hito OBSERVADO no tiene autor humano; uno MANUAL sí, siempre.
+  CONSTRAINT chk_device_first_connection_by CHECK (
+    first_connection_source IS DISTINCT FROM 'MANUAL'
+    OR first_connection_by IS NOT NULL
+  ),
+  -- Identidad de una alarma comunitaria. Que el serial ESTÉ atado a la MAC hace
+  -- imposible que diverjan, ni por bug ni por un UPDATE a mano.
+  CONSTRAINT chk_device_identity CHECK (
+    type <> 'COMMUNITY_ALARM'
+    OR (
+      mac IS NOT NULL
+      AND serial = 'AV-' || mac
+      AND board_model_id IS NOT NULL
+      AND board_seq IS NOT NULL
+    )
   )
 );
 CREATE UNIQUE INDEX uq_device_claim_code ON device(claim_code)
   WHERE claim_code IS NOT NULL;
+CREATE UNIQUE INDEX uq_device_mac ON device(mac) WHERE mac IS NOT NULL;
+CREATE UNIQUE INDEX uq_device_board ON device(board_model_id, board_seq)
+  WHERE board_model_id IS NOT NULL AND board_seq IS NOT NULL;
 CREATE INDEX idx_device_neighborhood ON device(neighborhood_id);
 CREATE TRIGGER trg_device_updated BEFORE UPDATE ON device
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();

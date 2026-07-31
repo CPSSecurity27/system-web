@@ -1,0 +1,323 @@
+<div class="row g-3">
+  <!-- ====================== ALTA (la estación) ====================== -->
+  <div class="col-12 col-lg-4">
+    <div class="card border">
+      <div class="card-header bg-white border-bottom">
+        <span class="fw-semibold small">
+          <i class="bi bi-cpu me-1"></i> Ingresar equipo al sistema
+        </span>
+      </div>
+      <div class="card-body">
+        <form [formGroup]="form" (ngSubmit)="submit()" novalidate>
+          <div class="mb-3">
+            <label for="mac" class="form-label small fw-medium">MAC</label>
+            <input
+              id="mac"
+              type="text"
+              class="form-control font-monospace"
+              formControlName="mac"
+              placeholder="A8:42:E3:8F:CA:6C"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <div class="form-text">
+              Como la devuelve <code>esptool read_mac</code>. Con o sin <code>:</code>, da igual.
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <label for="boardNumber" class="form-label small fw-medium">N.º de placa</label>
+            <input
+              id="boardNumber"
+              type="text"
+              class="form-control font-monospace text-uppercase"
+              formControlName="boardNumber"
+              placeholder="ALOY0043"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <!-- Un solo campo: el modelo va adentro del string impreso. -->
+            <div class="form-text">
+              El número impreso en la placa, completo.
+              @if (prefixes()) {
+                <span class="d-block">Modelos activos: {{ prefixes() }}</span>
+              }
+            </div>
+          </div>
+
+          <div class="form-check mb-3">
+            <input id="tested" type="checkbox" class="form-check-input" formControlName="tested" />
+            <label for="tested" class="form-check-label small">Probado en fábrica</label>
+          </div>
+
+          @if (error()) {
+            <div class="alert bg-brand-soft text-brand border-0 py-2 small" role="alert">
+              <i class="bi bi-exclamation-triangle-fill me-1"></i> {{ error() }}
+            </div>
+          }
+
+          <button type="submit" class="btn btn-brand w-100" [disabled]="saving() || form.invalid">
+            @if (saving()) {
+              <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+              Ingresando…
+            } @else {
+              <i class="bi bi-plus-lg me-1"></i> Ingresar equipo
+            }
+          </button>
+        </form>
+
+        <p class="text-muted small mb-0 mt-3 border-top pt-3">
+          <i class="bi bi-info-circle me-1"></i>
+          El <strong>serial</strong> no se carga: se deriva de la MAC (<span class="font-monospace"
+            >AV-&lt;12 hex&gt;</span
+          >) y es el mismo string que usa el equipo para hablar con el broker.
+        </p>
+      </div>
+    </div>
+
+    <!--
+      Resultado del alta. El claim code se muestra UNA vez: es lo único que el
+      técnico va a necesitar después para instalar el equipo.
+    -->
+    @if (created(); as device) {
+      <div class="card border border-success mt-3">
+        <div
+          class="card-header bg-white border-bottom d-flex align-items-center justify-content-between"
+        >
+          <span class="fw-semibold small text-success">
+            <i class="bi bi-check-circle-fill me-1"></i> Equipo ingresado
+          </span>
+          <button
+            type="button"
+            class="btn-close btn-sm"
+            (click)="dismiss()"
+            title="Cerrar"
+          ></button>
+        </div>
+        <div class="card-body">
+          <dl class="row small mb-2">
+            <dt class="col-5 fw-medium text-muted">Serial</dt>
+            <dd class="col-7 font-monospace mb-1">{{ device.serial }}</dd>
+            <dt class="col-5 fw-medium text-muted">N.º de placa</dt>
+            <dd class="col-7 font-monospace mb-1">{{ device.boardNumber ?? '—' }}</dd>
+          </dl>
+
+          <div class="bg-light rounded p-2 text-center mb-2">
+            <span class="d-block text-muted" style="font-size: 0.7rem">CÓDIGO DE RECLAMO</span>
+            <span class="h4 font-monospace text-brand mb-0">{{ device.claimCode ?? '—' }}</span>
+            <span class="d-block text-muted" style="font-size: 0.7rem">
+              de un solo uso — anotalo
+            </span>
+          </div>
+
+          <!-- Avisos que NO bloquearon el alta, pero que conviene mirar. -->
+          @for (warning of device.warnings; track warning) {
+            <div class="alert bg-warning-soft border-0 py-2 px-2 small mb-2">
+              <i class="bi bi-exclamation-triangle me-1"></i>{{ warning }}
+            </div>
+          }
+
+          <!--
+            Honestidad: el equipo está en el sistema pero TODAVÍA no puede
+            conectarse. Mientras la derivación de la credencial dependa del
+            SALT_MQTT que no está del lado servidor, esto es un comando a mano.
+          -->
+          @if (device.provisioning; as prov) {
+            @if (!prov.brokerRegistered) {
+              <div class="border-top pt-2">
+                <p class="small text-muted mb-1">
+                  <i class="bi bi-hdd-network me-1"></i>
+                  Falta darlo de alta en el broker. Correr en el server:
+                </p>
+                <code class="d-block bg-light rounded p-2 small text-break">
+                  {{ prov.pendingCommand }}
+                </code>
+              </div>
+            }
+          }
+        </div>
+      </div>
+    }
+  </div>
+
+  <!-- ====================== LISTADO ====================== -->
+  <div class="col-12 col-lg-8">
+    <div class="card border">
+      <div
+        class="card-header bg-white border-bottom d-flex align-items-center justify-content-between flex-wrap gap-2"
+      >
+        <span class="fw-semibold small">
+          <i class="bi bi-list-ul me-1"></i> Equipos ingresados
+          <span class="badge text-bg-light border ms-1">{{ counts().total }}</span>
+        </span>
+
+        <div class="d-flex gap-2">
+          <input
+            type="search"
+            class="form-control form-control-sm"
+            style="max-width: 200px"
+            placeholder="MAC, serial o placa…"
+            [ngModel]="search()"
+            (ngModelChange)="search.set($event)"
+            [ngModelOptions]="{ standalone: true }"
+            aria-label="Buscar equipo"
+          />
+          <select
+            class="form-select form-select-sm"
+            style="max-width: 170px"
+            [ngModel]="stage()"
+            (ngModelChange)="stage.set($event)"
+            [ngModelOptions]="{ standalone: true }"
+            aria-label="Filtrar por etapa"
+          >
+            <option value="">Todas las etapas</option>
+            <option value="CREATED">Creados ({{ counts().created }})</option>
+            <option value="PROVISIONED">Provisionados ({{ counts().provisioned }})</option>
+            <option value="LABELED">Etiquetados ({{ counts().labeled }})</option>
+            <option value="CONNECTED">Conectados ({{ counts().connected }})</option>
+          </select>
+        </div>
+      </div>
+
+      @if (loading()) {
+        <div class="text-center text-muted py-5">
+          <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+          Cargando equipos…
+        </div>
+      } @else {
+        <div class="table-responsive">
+          <table class="table table-hover align-middle mb-0">
+            <thead>
+              <tr class="small text-muted">
+                <th scope="col">Serial</th>
+                <th scope="col">MAC</th>
+                <th scope="col">Placa</th>
+                <th scope="col">Etapa</th>
+                <th scope="col">Ubicación</th>
+                <th scope="col" class="text-center">Probado</th>
+                <th scope="col" class="text-end">Hitos</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (device of filtered(); track device.id) {
+                <tr>
+                  <td class="small font-monospace fw-medium">
+                    <a
+                      [routerLink]="['/alarmas', device.id]"
+                      class="text-decoration-none text-reset"
+                    >
+                      {{ device.serial }}
+                    </a>
+                  </td>
+                  <td class="small font-monospace text-muted">{{ device.mac ?? '—' }}</td>
+                  <td class="small font-monospace">{{ device.boardNumber ?? '—' }}</td>
+                  <td>
+                    <!--
+                      Etapa de PUESTA EN MARCHA: la deriva el backend del último
+                      hito alcanzado, no es una columna que alguien pueda dejar
+                      desincronizada de las fechas.
+                    -->
+                    @switch (device.stage) {
+                      @case ('CREATED') {
+                        <span class="badge bg-light text-muted border">Creado</span>
+                      }
+                      @case ('PROVISIONED') {
+                        <span class="badge bg-brand-soft text-brand border">Provisionado</span>
+                      }
+                      @case ('LABELED') {
+                        <span class="badge bg-warning-soft text-warning border">Etiquetado</span>
+                      }
+                      @case ('CONNECTED') {
+                        <span class="badge bg-success-soft text-success border">
+                          1.ª conexión
+                          <!--
+                            Un hito marcado a mano no vale lo mismo que uno que
+                            vio el broker, y la pantalla no lo puede ocultar.
+                          -->
+                          @if (device.milestones.firstConnectionSource === 'MANUAL') {
+                            <i
+                              class="bi bi-hand-index-thumb ms-1"
+                              title="Marcada a mano por CPS, no observada por el broker"
+                            ></i>
+                          }
+                        </span>
+                      }
+                    }
+                  </td>
+                  <td class="small text-muted">
+                    @switch (custodyOf(device)) {
+                      @case ('FACTORY') {
+                        En fábrica
+                      }
+                      @case ('DELIVERED') {
+                        Entregado
+                      }
+                      @case ('INSTALLED') {
+                        Instalado
+                      }
+                    }
+                  </td>
+                  <td class="text-center">
+                    @if (device.tested) {
+                      <i class="bi bi-check-circle-fill text-success" title="Probado"></i>
+                    } @else {
+                      <i class="bi bi-dash-circle text-muted" title="Sin probar"></i>
+                    }
+                  </td>
+                  <td class="text-end text-nowrap">
+                    <!--
+                      Los dos hitos que se marcan a mano. Los otros dos no están
+                      acá porque no se tipean: "creado" es el alta y
+                      "provisionado" lo sella el registro en el broker.
+                    -->
+                    <button
+                      type="button"
+                      class="btn btn-sm py-0 px-1"
+                      [class.btn-outline-secondary]="!device.milestones.labeledAt"
+                      [class.btn-warning]="device.milestones.labeledAt"
+                      [disabled]="marking() !== null"
+                      (click)="mark(device, { labeled: !device.milestones.labeledAt })"
+                      [title]="
+                        device.milestones.labeledAt
+                          ? 'Etiquetado — click para desmarcar'
+                          : 'Marcar como etiquetado'
+                      "
+                    >
+                      <i class="bi bi-tag"></i>
+                    </button>
+
+                    <button
+                      type="button"
+                      class="btn btn-sm py-0 px-1 ms-1"
+                      [class.btn-outline-secondary]="!device.milestones.firstConnectionAt"
+                      [class.btn-success]="device.milestones.firstConnectionAt"
+                      [disabled]="marking() !== null"
+                      (click)="mark(device, { connected: !device.milestones.firstConnectionAt })"
+                      [title]="
+                        device.milestones.firstConnectionAt
+                          ? 'Primera conexión registrada — click para borrarla'
+                          : 'Marcar la primera conexión a mano (queda auditado)'
+                      "
+                    >
+                      <i class="bi bi-hdd-network"></i>
+                    </button>
+                  </td>
+                </tr>
+              } @empty {
+                <tr>
+                  <td colspan="7" class="text-muted small text-center py-4">
+                    @if (counts().total === 0) {
+                      Todavía no se ingresó ningún equipo.
+                    } @else {
+                      Ningún equipo coincide con el filtro.
+                    }
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </div>
+  </div>
+</div>

@@ -39,6 +39,11 @@ const PG_UNIQUE_VIOLATION = '23505';
  * Cupo de familiares: neighborhood.max_family_members, impuesto AL CREAR.
  * Si CPS lo bajó por debajo de lo existente: grandfathering — nadie se
  * suspende, solo se bloquean altas nuevas.
+ *
+ * Quién gestiona una vivienda depende de `neighborhood.managed_by`: en un
+ * barrio vendido llave en mano el personal de la organización dueña lo VE
+ * pero las viviendas y los vecinos los carga CPS. El titular queda al margen
+ * de esa distinción — su casa la administra él, la opere quien la opere.
  */
 @Injectable()
 export class HomesService {
@@ -100,8 +105,9 @@ export class HomesService {
     createdBy: number,
   ): Promise<Home> {
     await this.assertNeighborhoodExists(dto.neighborhoodId);
-    // No podés meter una vivienda en un barrio que no gestionás.
-    this.scopes.assertNeighborhood(scope, dto.neighborhoodId);
+    // No podés meter una vivienda en un barrio que no gestionás — y "gestionar"
+    // excluye los barrios vendidos llave en mano, que opera CPS.
+    await this.scopes.assertManagesNeighborhood(scope, dto.neighborhoodId);
 
     if (dto.defaultDeviceId) {
       await this.assertDeviceInNeighborhood(
@@ -138,12 +144,12 @@ export class HomesService {
   ): Promise<Home> {
     const scope = await this.scopes.forUser(actor);
     const home = await this.findOne(id, scope);
-    this.assertCanManageHome(actor, scope, home);
+    await this.assertCanManageHome(scope, actor, home);
 
     if (dto.neighborhoodId && dto.neighborhoodId !== home.neighborhoodId) {
       await this.assertNeighborhoodExists(dto.neighborhoodId);
-      // Mudar una casa a otro barrio exige alcanzar el barrio DESTINO también.
-      this.scopes.assertNeighborhood(scope, dto.neighborhoodId);
+      // Mudar una casa a otro barrio exige GESTIONAR el barrio DESTINO también.
+      await this.scopes.assertManagesNeighborhood(scope, dto.neighborhoodId);
     }
 
     const barrioFinal = dto.neighborhoodId ?? home.neighborhoodId;
@@ -201,7 +207,7 @@ export class HomesService {
     const scope = await this.scopes.forUser(actor);
     const home = await this.findOne(homeId, scope);
 
-    const esGestor = this.esGestor(actor, scope, home);
+    const esGestor = await this.esGestor(scope, actor, home);
     const esTitular = this.esTitularDe(actor, homeId);
     if (!esGestor && !esTitular) {
       throw new ForbiddenException(
@@ -268,10 +274,8 @@ export class HomesService {
     const scope = await this.scopes.forUser(actor);
     const home = await this.findOne(homeId, scope);
 
-    if (
-      !this.esGestor(actor, scope, home) &&
-      !this.esTitularDe(actor, homeId)
-    ) {
+    const esGestor = await this.esGestor(scope, actor, home);
+    if (!esGestor && !this.esTitularDe(actor, homeId)) {
       throw new ForbiddenException(
         'No podés gestionar miembros de esta vivienda',
       );
@@ -283,7 +287,7 @@ export class HomesService {
       status !== EntityStatus.ACTIVE
     ) {
       // Suspender al titular es una decisión del gestor, no del propio hogar.
-      if (!this.esGestor(actor, scope, home)) {
+      if (!esGestor) {
         throw new ForbiddenException(
           'Solo el gestor del barrio puede suspender al titular',
         );
@@ -315,7 +319,7 @@ export class HomesService {
     const home = await this.findOne(homeId, scope);
 
     if (
-      !this.esGestor(actor, scope, home) &&
+      !(await this.esGestor(scope, actor, home)) &&
       !this.esTitularDe(actor, homeId)
     ) {
       throw new ForbiddenException(
@@ -361,7 +365,7 @@ export class HomesService {
     const scope = await this.scopes.forUser(actor);
     const home = await this.findOne(homeId, scope);
 
-    if (!this.esGestor(actor, scope, home)) {
+    if (!(await this.esGestor(scope, actor, home))) {
       throw new ForbiddenException(
         'La titularidad la transfiere el gestor del barrio o CPS',
       );
@@ -443,19 +447,29 @@ export class HomesService {
     }
   }
 
-  /** CPS o gestor del barrio de esta vivienda. */
-  private esGestor(
-    actor: AuthenticatedUser,
+  /**
+   * CPS o gestor del barrio de esta vivienda.
+   *
+   * Desde 2026-07-30 mira `managed_by`: si el barrio está vendido llave en
+   * mano, el personal de la organización dueña lo VE pero no gestiona sus
+   * viviendas — las carga CPS. El TITULAR no pasa por acá y sigue
+   * administrando a sus familiares como siempre: la restricción es sobre el
+   * personal del panel, no sobre el vecino.
+   */
+  private async esGestor(
     scope: AccessScope,
+    actor: AuthenticatedUser,
     home: Home,
-  ): boolean {
+  ): Promise<boolean> {
     if (scope.global) return true;
     const esPanel = actor.memberships.some(
       (m) =>
         m.accountType === AccountType.COMPANY ||
         m.accountType === AccountType.ORGANIZATION,
     );
-    return esPanel && scope.neighborhoodIds.includes(home.neighborhoodId);
+    if (!esPanel) return false;
+
+    return this.scopes.managesNeighborhood(scope, home.neighborhoodId);
   }
 
   private esTitularDe(actor: AuthenticatedUser, homeId: number): boolean {
@@ -464,12 +478,12 @@ export class HomesService {
     );
   }
 
-  private assertCanManageHome(
-    actor: AuthenticatedUser,
+  private async assertCanManageHome(
     scope: AccessScope,
+    actor: AuthenticatedUser,
     home: Home,
-  ): void {
-    if (this.esGestor(actor, scope, home)) return;
+  ): Promise<void> {
+    if (await this.esGestor(scope, actor, home)) return;
     if (this.esTitularDe(actor, home.id)) return;
     throw new ForbiddenException('No podés editar esta vivienda');
   }

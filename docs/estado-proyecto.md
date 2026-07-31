@@ -17,9 +17,13 @@ El proyecto pasó por un rediseño completo del modelo en 4 fases, todas cerrada
 | 3 — Implementación backend | Migrar `backend-nestjs` al modelo v2 | **HECHO** — compila, lint y tests en verde |
 
 **Decisiones ya tomadas (no re-litigar):** alarmas solo comunitarias (del barrio);
-clientes = organizaciones MUNICIPAL/PRIVATE con OWNER institucional; sin cuentas
-HOME ni contratos por vivienda (vecinos = `home_member`); cupos = tarifa solo-CPS
-con grandfathering; eventos ilimitados (`community_mode_enabled` eliminado);
+clientes = organizaciones MUNICIPAL/COMMUNITY con OWNER institucional; el subtipo
+dice la ESCALA y `managed_by` dice QUIÉN OPERA cada barrio (dos ejes, nunca uno
+derivado del otro); sin cuentas HOME ni contratos por vivienda (vecinos =
+`home_member`); cupos = tarifa solo-CPS con grandfathering, por rol, con 0 = "ese
+rol no existe acá"; el plan es plantilla que se copia, no fuente que se lee; CPS no
+es un cliente y vive en su propia sección; eventos ilimitados
+(`community_mode_enabled` eliminado);
 Firebase eliminado por completo; servicio de alarmas como programa separado que
 comparte solo la base; controles con 4 códigos RF; sin git por decisión del usuario.
 
@@ -101,10 +105,78 @@ comparte solo la base; controles con 4 códigos RF; sin git por decisión del us
    (`home_member.titular_transfer`). En el front: botón "Hacer titular" en la
    pantalla de miembros del hogar. Probado E2E (transferencia, 400 ya-titular,
    404 no-miembro, 403 monitor, vuelta atrás).
-6. **Servicio de alarmas** (programa separado, MQTT → `device_state` + `event` + FCM):
+6. ~~**Alta de equipos desde la MAC**~~ — **HECHO (2026-07-28)**: se leyó el repo
+   del **GtD** (`github.com/CPSSecurity27/gateway-to-device`, el servicio de
+   alarmas) y se alineó la identidad del equipo con su contrato.
+   - `ALARM_PANEL` → **`COMMUNITY_ALARM`** ("panel" es la cajita de una casa,
+     justo lo que la regla 1 dice que esto no es).
+   - **`serial` ya no se elige: se deriva de la MAC** (`AV-<12 hex mayúsculas>`)
+     y un CHECK lo ata. Ese string es a la vez el usuario MQTT, el client_id y
+     el `<id>` del tópico (`av/AV-A842E38FCA6C/status`) — de eso depende que la
+     ACL del broker sea una regla `pattern av/%u/…` para toda la flota.
+   - `POST /devices` pide **MAC + número de placa** (`ALOY0043`), los dos leídos
+     del equipo físico. Normalización y validaciones en `src/devices/mac.ts`
+     (con tests): rechaza la MAC de ceros (lectura fallida de esptool), la de
+     broadcast y las multicast. Avisos que no bloquean: OUI desconocido y saltos
+     en la numeración de placas.
+   - Tabla **`board_model`** (catálogo, hoy solo `ALOY`) + `device.board_seq`.
+     El string impreso se COMPONE, no se guarda.
+   - `mqtt_provisioned_at/by` nacen vacías: la credencial MQTT se deriva con
+     `HMAC-SHA256(SALT_MQTT, MAC)` y **el salt de producción no está del lado
+     servidor** (punto abierto PA4 del GtD). Mientras tanto la web muestra el
+     bloque `provisioning` como **log**, con el comando a correr en el server.
+   - **La base hay que rehacerla**: los equipos viejos no pasan el CHECK nuevo.
+   - Detalle: `backend-nestjs/docs/activos.md`.
+7. ~~**Organización de cuentas: planes, cupos por rol y separación de CPS**~~ —
+   **HECHO (2026-07-30)**. Migración `AccountPlansAndRoleQuotas`:
+   - **`PRIVATE` → `COMMUNITY`**. El subtipo ahora dice SOLO la escala (municipal =
+     varios barrios, comunitaria = uno). Antes decidía también quién opera, lo que
+     fusionaba dos ejes y hacía imposibles dos ventas reales.
+   - **`managed_by` pasa a ser la puerta.** Quién opera un barrio se decide **por
+     barrio** y es explícito en el alta (llave en mano o autogestión); ya no se deriva
+     del subtipo. Con `managed_by = CPS`, la organización dueña VE su barrio pero no lo
+     gestiona — ni el barrio, ni sus viviendas, ni sus vecinos. Vive en un solo lugar
+     (`ScopeService.managesNeighborhood`) y el TITULAR de un hogar queda al margen.
+     La transferencia de barrio ahora PRESERVA `managed_by` salvo orden explícita.
+   - **Cupos por rol**: `max_admin_users` y `max_technician_users` junto al de monitores.
+     **Cupo 0 = ese rol no existe en la cuenta**, con mensaje distinto al de cupo
+     agotado. Con eso, "la comunitaria no tiene técnicos propios" es un número y no una
+     regla especial escondida. El CHECK de la base ahora exige los cuatro cupos en toda
+     ORGANIZATION y ninguno en COMPANY.
+   - **Tabla `plan`**: catálogo comercial. Es una PLANTILLA — al vender, los cupos se
+     COPIAN a la cuenta. `account.plan_id` queda como etiqueta histórica, nunca como
+     origen de lectura: un plan leído en vivo rompería grandfathering y auditoría.
+     Endpoints solo-CPS (`/api/plans`), sin DELETE (se discontinúa con `active: false`).
+     Dos planes semilla: `COMUNITARIA_BASE` y `MUNICIPAL_BASE`.
+   - **Frontend reorganizado**: `/cuentas` → `/clientes` (filtrada a ORGANIZATION, con
+     redirects desde las rutas viejas) y sección nueva **Mi Empresa** (`/empresa`) con
+     Personal y Planes. CPS salió de la lista de clientes porque no lo es — la base ya
+     lo decía (una sola COMPANY, sin cupos, sin contratos) y la UI era el único lugar
+     que la trataba como una cuenta más, con un "—" en cada columna. Personal reusa el
+     MISMO componente que la ficha de un cliente, resolviendo el id desde la sesión.
+   - **La base hay que rehacerla igual** (ver punto 6): el rename entra en el mismo tren.
+
+   **Queda anotado, sin hacer**: el personal de CPS no se puede acotar a nada. Las FK
+   compuestas de `staff_assignment` exigen que el barrio sea de la propia cuenta, y
+   COMPANY no tiene barrios, así que hoy cualquier MONITOR o TECHNICIAN de CPS ve la
+   flota entera de todos los clientes. Con los socios siendo empleados internos deja de
+   ser urgente, pero sigue siendo un agujero de alcance.
+8. **Puente con el GtD** — diseñado, **sin implementar**. Decidido: una sola base
+   compartida, tablas crudas del GtD en un esquema `gtd` y **contrato por
+   funciones** (`gtd.ingest_status/tele/up`, `fetch_pending_commands`, …) en vez
+   de tablas directas, para que un cambio de mapeo sea una migración nuestra y no
+   un deploy coordinado de dos servicios. Falta escribir el `.md` de contrato
+   para el equipo del GtD (ellos implementan `PgRepo`/`PgListener` en Python;
+   hoy corren con `StubRepo` en memoria).
+   Dos cosas detectadas para pedirles: el trigger `trg_panel_state_notify` de su
+   `001_init.sql` dispara un `NOTIFY` por **cada heartbeat de cada equipo**
+   (riesgo de llenar la cola de `pg_notify`, que hace fallar transacciones), y
+   `device_state` se queda corta — el panel reporta `vbat`/`vpanel`/`vfuente`,
+   que es el dato de mantenimiento más importante de un poste.
+9. **Servicio de alarmas** (programa separado, MQTT → `device_state` + `event` + FCM):
    diseñarlo recién cuando el resto esté estable.
-7. Más adelante: 2FA para OWNER, estado ACKNOWLEDGED del evento (pospuesto a
-   propósito), tests e2e del modelo v2.
+10. Más adelante: 2FA para OWNER, estado ACKNOWLEDGED del evento (pospuesto a
+    propósito), alcance del personal de CPS (ver punto 7), tests e2e del modelo v2.
 
 ## 4. Mapa de documentación
 

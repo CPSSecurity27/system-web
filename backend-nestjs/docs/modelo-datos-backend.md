@@ -10,15 +10,20 @@
 
 ## 1. El sistema en una página
 
-CPS Security vende **seguridad comunitaria monitoreada** en dos esquemas:
+CPS Security vende **seguridad comunitaria monitoreada** a organizaciones, con un
+molde único: `account` (ORGANIZATION) → contrato por barrio → `neighborhood` →
+`home` → `home_member`.
 
-- **PÚBLICO**: se le vende a una municipalidad, que se **autogestiona** (crea sus
-  barrios, hogares, vecinos y personal) hasta los **cupos** que compró.
-- **PRIVADO**: contrata un consorcio/comunidad y **CPS opera todo**.
+Lo que varía son **dos perillas independientes**:
 
-El molde es único: `account` (ORGANIZATION, subtipo MUNICIPAL o PRIVATE) → contrato
-por barrio → `neighborhood` → `home` → `home_member`. La única perilla entre
-esquemas es `neighborhood.managed_by` (CPS u ORGANIZATION).
+- `account.subtype` — la **escala**: MUNICIPAL (varios barrios, hasta su cupo) o
+  COMMUNITY (uno solo, cupo fijo en 1).
+- `neighborhood.managed_by` — **quién opera cada barrio**: ORGANIZATION
+  (autogestión) o CPS (llave en mano). Se decide barrio por barrio, al vender.
+
+Hasta 2026-07-30 la segunda se derivaba de la primera (`PRIVATE` ⇒ la opera CPS), lo
+que hacía imposibles la comunitaria autogestionada y la municipal que terceriza un
+barrio. Ahora son ortogonales.
 
 ### Las tres distinciones que definen el modelo entero
 

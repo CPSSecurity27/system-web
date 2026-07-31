@@ -1,7 +1,7 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
-import { AccountType, UserRole } from './enums';
+import { AccountType, ManagedBy, UserRole } from './enums';
 import type { AuthenticatedUser } from '../auth/auth.service';
 import { StaffAssignment } from '../accounts/entities/staff-assignment.entity';
 import { Neighborhood } from '../neighborhoods/entities/neighborhood.entity';
@@ -21,6 +21,11 @@ import { Neighborhood } from '../neighborhoods/entities/neighborhood.entity';
  *
  * Un usuario con varias membresías acumula alcance: el técnico de CPS que
  * además es vecino ya es global por el lado de COMPANY.
+ *
+ * VER y GESTIONAR son dos preguntas distintas. Lo de arriba responde la
+ * primera; para la segunda está `managesNeighborhood`, que además mira
+ * `managed_by` — un barrio vendido llave en mano lo VE su organización dueña
+ * pero lo OPERA CPS.
  */
 export interface AccessScope {
   /** true = ve todo el sistema. Solo miembros de la cuenta COMPANY. */
@@ -89,6 +94,56 @@ export class ScopeService {
     if (scope.global || scope.neighborhoodIds.includes(neighborhoodId)) return;
     // 403 y no 404: el recurso existe, simplemente no es tuyo.
     throw new ForbiddenException('No tenés acceso a este barrio');
+  }
+
+  /**
+   * ¿Este usuario GESTIONA el barrio, o solamente lo VE?
+   *
+   * Son dos preguntas distintas y hasta 2026-07-30 el código solo hacía la
+   * primera. Un barrio vendido llave en mano (`managed_by = CPS`) lo opera
+   * CPS: la organización dueña lo ve entero — es su barrio, paga por él y
+   * necesita ver sus eventos y su estado — pero no carga hogares, ni vecinos,
+   * ni lo edita. Si pudiera, habría dos operadores pisándose sobre los mismos
+   * datos y "llave en mano" sería mentira a medias.
+   *
+   * La pregunta se hace sobre el BARRIO y no sobre el subtipo de la cuenta a
+   * propósito: así una municipal puede tercerizarle un barrio a CPS teniendo
+   * los otros nueve propios, y una comunitaria puede autogestionarse el suyo.
+   * Antes esto se decidía mirando `account.subtype === PRIVATE`, que ataba la
+   * modalidad de operación a la clase de cliente y hacía imposibles los dos
+   * casos.
+   */
+  async managesNeighborhood(
+    scope: AccessScope,
+    neighborhoodId: number,
+  ): Promise<boolean> {
+    // CPS gestiona cualquier barrio, sea de quien sea. Es quien presta el servicio.
+    if (scope.global) return true;
+    if (!scope.neighborhoodIds.includes(neighborhoodId)) return false;
+
+    const neighborhood = await this.neighborhoods.findOne({
+      where: { id: neighborhoodId },
+      select: { id: true, managedBy: true },
+    });
+    if (!neighborhood) return false;
+
+    return neighborhood.managedBy !== ManagedBy.CPS;
+  }
+
+  /** Tira 403 si el usuario ve el barrio pero no lo gestiona (o ni lo ve). */
+  async assertManagesNeighborhood(
+    scope: AccessScope,
+    neighborhoodId: number,
+  ): Promise<void> {
+    // Primero el alcance, para no confundir "no es tuyo" con "no lo operás":
+    // son dos 403 con causas distintas y el mensaje tiene que decir cuál es.
+    this.assertNeighborhood(scope, neighborhoodId);
+
+    if (await this.managesNeighborhood(scope, neighborhoodId)) return;
+
+    throw new ForbiddenException(
+      'Este barrio lo opera CPS: podés verlo, pero la gestión (viviendas, vecinos, datos del barrio) la hace CPS',
+    );
   }
 
   /**

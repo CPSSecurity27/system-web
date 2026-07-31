@@ -10,20 +10,40 @@ import { In, Repository } from 'typeorm';
 import { randomBytes } from 'node:crypto';
 import type { AuthenticatedUser } from '../auth/auth.service';
 import { AuditService } from '../common/audit.service';
-import { AccountType, DeviceStatus, MaintenanceStatus } from '../common/enums';
+import {
+  AccountType,
+  DeviceMilestoneSource,
+  DeviceStatus,
+  DeviceType,
+  MaintenanceStatus,
+} from '../common/enums';
 import { AccessScope } from '../common/scope.service';
 import { Home } from '../homes/entities/home.entity';
 import { Neighborhood } from '../neighborhoods/entities/neighborhood.entity';
+import {
+  CreateBoardModelDto,
+  UpdateBoardModelDto,
+} from './dto/board-model.dto';
+import { DeviceView, toDeviceView, toDeviceViews } from './dto/device-view';
 import {
   ClaimDeviceDto,
   CreateDeviceDto,
   CreateMaintenanceDto,
   UpdateDeviceDto,
+  UpdateDeviceMilestonesDto,
   UpdateMaintenanceDto,
 } from './dto/device.dto';
+import { BoardModel } from './entities/board-model.entity';
 import { DeviceMaintenance } from './entities/device-maintenance.entity';
 import { DeviceState } from './entities/device-state.entity';
 import { Device } from './entities/device.entity';
+import {
+  deriveSerial,
+  formatBoardNumber,
+  macOui,
+  normalizeMac,
+  parseBoardNumber,
+} from './mac';
 
 /**
  * Alarmas comunitarias (v2), con ciclo de vida completo.
@@ -47,6 +67,8 @@ export class DevicesService {
     @InjectRepository(Neighborhood)
     private readonly neighborhoods: Repository<Neighborhood>,
     @InjectRepository(Home) private readonly homes: Repository<Home>,
+    @InjectRepository(BoardModel)
+    private readonly boardModels: Repository<BoardModel>,
     private readonly audit: AuditService,
   ) {}
 
@@ -54,60 +76,79 @@ export class DevicesService {
   async findAll(
     scope: AccessScope,
     neighborhoodId?: number,
-  ): Promise<Device[]> {
+  ): Promise<DeviceView[]> {
     const barrios = await this.neighborhoodsInScope(scope);
 
     if (neighborhoodId) {
       this.assertNeighborhood(scope, barrios, neighborhoodId);
-      return this.devices.find({
-        where: { neighborhoodId },
-        order: { name: 'ASC' },
-      });
+      return toDeviceViews(
+        await this.devices.find({
+          where: { neighborhoodId },
+          relations: { boardModel: true },
+          order: { name: 'ASC' },
+        }),
+      );
     }
 
     if (scope.global) {
-      return this.devices.find({
-        where: { status: In(nonInventoryStatuses()) },
-        order: { name: 'ASC' },
-      });
+      return toDeviceViews(
+        await this.devices.find({
+          where: { status: In(nonInventoryStatuses()) },
+          relations: { boardModel: true },
+          order: { name: 'ASC' },
+        }),
+      );
     }
     if (barrios.length === 0) return [];
 
-    return this.devices.find({
-      where: { neighborhoodId: In(barrios) },
-      order: { name: 'ASC' },
-    });
+    return toDeviceViews(
+      await this.devices.find({
+        where: { neighborhoodId: In(barrios) },
+        relations: { boardModel: true },
+        order: { name: 'ASC' },
+      }),
+    );
   }
 
   /**
    * El stock: CPS ve todo el inventario (fábrica + stocks de clientes); una
    * organización ve SOLO su propio stock.
    */
-  findInventory(actor: AuthenticatedUser): Promise<Device[]> {
+  async findInventory(actor: AuthenticatedUser): Promise<DeviceView[]> {
     const esCps = actor.memberships.some(
       (m) => m.accountType === AccountType.COMPANY,
     );
     if (esCps) {
-      return this.devices.find({
-        where: { status: DeviceStatus.INVENTORY },
-        order: { id: 'ASC' },
-      });
+      return toDeviceViews(
+        await this.devices.find({
+          where: { status: DeviceStatus.INVENTORY },
+          relations: { boardModel: true },
+          order: { id: 'ASC' },
+        }),
+      );
     }
 
     const orgIds = actor.memberships
       .filter((m) => m.accountType === AccountType.ORGANIZATION)
       .map((m) => m.accountId);
-    if (orgIds.length === 0) return Promise.resolve([]);
+    if (orgIds.length === 0) return [];
 
-    return this.devices.find({
-      where: { status: DeviceStatus.INVENTORY, organizationId: In(orgIds) },
-      order: { id: 'ASC' },
-    });
+    return toDeviceViews(
+      await this.devices.find({
+        where: { status: DeviceStatus.INVENTORY, organizationId: In(orgIds) },
+        relations: { boardModel: true },
+        order: { id: 'ASC' },
+      }),
+    );
   }
 
-  async findOne(id: number, scope: AccessScope): Promise<Device> {
-    const device = await this.devices.findOne({ where: { id } });
-    if (!device) throw new NotFoundException(`No existe el dispositivo ${id}`);
+  async findOne(id: number, scope: AccessScope): Promise<DeviceView> {
+    const entidad = await this.devices.findOne({
+      where: { id },
+      relations: { boardModel: true },
+    });
+    if (!entidad) throw new NotFoundException(`No existe el dispositivo ${id}`);
+    const device = toDeviceView(entidad);
 
     if (device.neighborhoodId === null) {
       // Inventario: solo CPS lo ve por acá (el stock de una org va por /inventory).
@@ -130,18 +171,33 @@ export class DevicesService {
   }
 
   /**
-   * Alta: SOLO CPS. El equipo nace en INVENTORY con claim code (o directamente
-   * instalado si viene neighborhoodId: es CPS instalando en el momento).
+   * ALTA DE FÁBRICA: SOLO CPS. El equipo nace en INVENTORY con claim code (o
+   * directamente instalado si viene neighborhoodId: es CPS instalando).
+   *
+   * Los dos datos que definen al equipo se LEEN de la placa en la estación de
+   * flasheo y no se inventan: la MAC (`esptool read_mac`) y el número impreso
+   * (ALOY0043). El serial NO se elige — se deriva de la MAC, porque ese string
+   * es también el usuario MQTT y el `<id>` del tópico con el que el equipo va a
+   * hablar con el servicio de alarmas.
    */
-  async create(dto: CreateDeviceDto, createdBy: number): Promise<Device> {
-    const yaExiste = await this.devices.findOne({
-      where: { serial: dto.serial },
-    });
-    if (yaExiste) {
-      throw new ConflictException(
-        `Ya existe un dispositivo con el serial "${dto.serial}"`,
+  async create(dto: CreateDeviceDto, createdBy: number): Promise<DeviceView> {
+    // Los otros tipos del enum están reservados y nunca se probaron: dejar
+    // entrar uno crearía un equipo sin MAC ni número, esquivando en silencio
+    // toda la regla de identidad.
+    if (dto.type !== DeviceType.COMMUNITY_ALARM) {
+      throw new BadRequestException(
+        'Por ahora solo se fabrican alarmas comunitarias. Los otros tipos de ' +
+          'equipo están reservados y todavía no tienen alta.',
       );
     }
+
+    const mac = normalizeMac(dto.mac);
+    const serial = deriveSerial(mac);
+    const { code, seq } = parseBoardNumber(dto.boardNumber);
+    const boardModel = await this.resolveBoardModel(code);
+
+    await this.assertMacLibre(mac);
+    await this.assertPlacaLibre(boardModel, seq);
 
     if (dto.neighborhoodId) {
       await this.assertNeighborhoodExists(dto.neighborhoodId);
@@ -152,10 +208,17 @@ export class DevicesService {
       );
     }
 
+    // Se juntan ANTES de guardar porque las dos consultas miran el estado
+    // previo del inventario. No bloquean el alta: avisan y el operador decide.
+    const warnings = [
+      ...(await this.avisoDeOui(mac)),
+      ...(await this.avisoDeSalto(boardModel, seq)),
+    ];
+
     const device = await this.devices.save(
       this.devices.create({
         name: dto.name ?? null,
-        serial: dto.serial,
+        serial,
         type: dto.type,
         status: dto.neighborhoodId
           ? DeviceStatus.OPERATIONAL
@@ -168,7 +231,9 @@ export class DevicesService {
         tested: dto.tested ?? false,
         imei: dto.imei ?? null,
         iccid: dto.iccid ?? null,
-        mac: dto.mac ?? null,
+        mac,
+        boardModelId: boardModel.id,
+        boardSeq: seq,
         organizationId: dto.organizationId ?? null,
         neighborhoodId: dto.neighborhoodId ?? null,
         latitude: dto.latitude ?? null,
@@ -184,10 +249,16 @@ export class DevicesService {
       entityType: 'device',
       entityId: device.id,
       neighborhoodId: device.neighborhoodId,
-      newValue: { serial: device.serial, status: device.status },
+      newValue: {
+        serial: device.serial,
+        mac,
+        boardNumber: formatBoardNumber(boardModel.code, seq),
+        status: device.status,
+      },
     });
 
-    return device;
+    device.boardModel = boardModel;
+    return toDeviceView(device, warnings);
   }
 
   /**
@@ -201,7 +272,7 @@ export class DevicesService {
     dto: ClaimDeviceDto,
     actor: AuthenticatedUser,
     scope: AccessScope,
-  ): Promise<Device> {
+  ): Promise<DeviceView> {
     const device = await this.devices.findOne({
       where: { serial: dto.serial },
     });
@@ -263,7 +334,12 @@ export class DevicesService {
       },
     });
 
-    return this.devices.findOneOrFail({ where: { id: device.id } });
+    return toDeviceView(
+      await this.devices.findOneOrFail({
+        where: { id: device.id },
+        relations: { boardModel: true },
+      }),
+    );
   }
 
   /**
@@ -276,7 +352,7 @@ export class DevicesService {
     dto: UpdateDeviceDto,
     scope: AccessScope,
     updatedBy: number,
-  ): Promise<Device> {
+  ): Promise<DeviceView> {
     const device = await this.findOne(id, scope);
 
     await this.devices.update(id, {
@@ -294,6 +370,73 @@ export class DevicesService {
         : device.installedAt,
       updatedBy,
     });
+
+    return this.findOne(id, scope);
+  }
+
+  /**
+   * Hitos de puesta en marcha: etiquetado y primera conexión (SOLO CPS).
+   *
+   * La primera conexión debería llegar del servicio de alarmas —es un hecho
+   * observado por el broker, regla 5 del dominio—, pero el GtD todavía no
+   * escribe. Hasta entonces CPS la marca a mano, y por eso el registro guarda
+   * que fue MANUAL y quién lo hizo: si más adelante aparece un equipo que
+   * "conectó" pero nunca mandó un heartbeat, se puede saber que ese dato lo
+   * puso una persona y no el broker.
+   *
+   * La fecha es siempre la del servidor. Aceptarla del cliente convertiría el
+   * hito en una opinión.
+   */
+  async updateMilestones(
+    id: number,
+    dto: UpdateDeviceMilestonesDto,
+    scope: AccessScope,
+    actorId: number,
+  ): Promise<DeviceView> {
+    if (!scope.global) {
+      throw new ForbiddenException('Solo CPS puede marcar hitos de fábrica');
+    }
+
+    const device = await this.findOne(id, scope);
+    const now = new Date();
+    const cambios: Partial<Device> = { updatedBy: actorId };
+
+    if (dto.labeled !== undefined) {
+      cambios.labeledAt = dto.labeled ? now : null;
+      cambios.labeledBy = dto.labeled ? actorId : null;
+    }
+
+    if (dto.connected !== undefined) {
+      cambios.firstConnectionAt = dto.connected ? now : null;
+      cambios.firstConnectionSource = dto.connected
+        ? DeviceMilestoneSource.MANUAL
+        : null;
+      cambios.firstConnectionBy = dto.connected ? actorId : null;
+    }
+
+    await this.devices.update(id, cambios);
+
+    // Se audita solo el override de la conexión: etiquetar es rutina de
+    // fábrica, pero afirmar a mano que un equipo conectó es sustituir una
+    // medición por un criterio humano, y eso tiene que dejar rastro.
+    if (dto.connected !== undefined) {
+      await this.audit.record({
+        actorUserId: actorId,
+        action: dto.connected
+          ? 'device.first_connection.manual'
+          : 'device.first_connection.clear',
+        entityType: 'device',
+        entityId: id,
+        oldValue: {
+          firstConnectionAt: device.firstConnectionAt,
+          firstConnectionSource: device.firstConnectionSource,
+        },
+        newValue: {
+          firstConnectionAt: cambios.firstConnectionAt,
+          firstConnectionSource: cambios.firstConnectionSource,
+        },
+      });
+    }
 
     return this.findOne(id, scope);
   }
@@ -362,6 +505,193 @@ export class DevicesService {
     });
 
     return this.maintenances.findOneOrFail({ where: { id: maintenanceId } });
+  }
+
+  // --- Catálogo de modelos de placa ------------------------------------------
+
+  /** El desplegable de la pantalla de fábrica y la pantalla de administración. */
+  findBoardModels(soloActivos = false): Promise<BoardModel[]> {
+    return this.boardModels.find({
+      where: soloActivos ? { active: true } : {},
+      order: { code: 'ASC' },
+    });
+  }
+
+  async createBoardModel(
+    dto: CreateBoardModelDto,
+    createdBy: number,
+  ): Promise<BoardModel> {
+    const code = dto.code.toUpperCase();
+
+    const yaExiste = await this.boardModels.findOne({ where: { code } });
+    if (yaExiste) {
+      throw new ConflictException(`Ya existe el modelo de placa "${code}"`);
+    }
+
+    const model = await this.boardModels.save(
+      this.boardModels.create({
+        code,
+        name: dto.name,
+        notes: dto.notes ?? null,
+      }),
+    );
+
+    await this.audit.record({
+      actorUserId: createdBy,
+      action: 'board_model.create',
+      entityType: 'board_model',
+      entityId: model.id,
+      newValue: { code: model.code, name: model.name },
+    });
+
+    return model;
+  }
+
+  /**
+   * El `code` no se toca: los equipos ya fabricados componen su número con él
+   * (`ALOY` + 0043), así que cambiarlo reescribiría su identidad impresa.
+   */
+  async updateBoardModel(
+    id: number,
+    dto: UpdateBoardModelDto,
+    updatedBy: number,
+  ): Promise<BoardModel> {
+    const model = await this.boardModels.findOne({ where: { id } });
+    if (!model)
+      throw new NotFoundException(`No existe el modelo de placa ${id}`);
+
+    await this.boardModels.update(id, {
+      name: dto.name ?? model.name,
+      active: dto.active ?? model.active,
+      notes: dto.notes !== undefined ? dto.notes : model.notes,
+    });
+
+    if (dto.active !== undefined && dto.active !== model.active) {
+      await this.audit.record({
+        actorUserId: updatedBy,
+        action: 'board_model.set_active',
+        entityType: 'board_model',
+        entityId: id,
+        oldValue: { active: model.active },
+        newValue: { active: dto.active },
+      });
+    }
+
+    return this.boardModels.findOneOrFail({ where: { id } });
+  }
+
+  // --- Helpers del alta de fábrica -------------------------------------------
+
+  /** El prefijo impreso (`ALOY`) contra el catálogo. */
+  private async resolveBoardModel(code: string): Promise<BoardModel> {
+    const model = await this.boardModels.findOne({ where: { code } });
+
+    if (!model || !model.active) {
+      const validos = (await this.findBoardModels(true)).map((m) => m.code);
+      const detalle =
+        validos.length > 0
+          ? `Los modelos habilitados son: ${validos.join(', ')}.`
+          : 'No hay ningún modelo de placa habilitado.';
+
+      throw new BadRequestException(
+        model
+          ? `El modelo de placa "${code}" está discontinuado. ${detalle}`
+          : `No existe el modelo de placa "${code}". ${detalle}`,
+      );
+    }
+
+    return model;
+  }
+
+  /**
+   * Si la MAC ya está cargada, el 409 dice DÓNDE está el otro equipo: en la
+   * estación de flasheo eso significa o una placa flasheada dos veces o un
+   * problema serio de hardware, y en los dos casos el operador necesita saber
+   * cuál es el equipo que la tiene. El endpoint es solo-CPS, no hay fuga.
+   */
+  private async assertMacLibre(mac: string): Promise<void> {
+    const existente = await this.devices.findOne({
+      where: { mac },
+      relations: { neighborhood: true, organization: true },
+    });
+    if (!existente) return;
+
+    throw new ConflictException(
+      `La MAC ya está cargada en el equipo ${existente.serial} (${this.ubicacionDe(existente)})`,
+    );
+  }
+
+  private async assertPlacaLibre(
+    model: BoardModel,
+    seq: number,
+  ): Promise<void> {
+    const existente = await this.devices.findOne({
+      where: { boardModelId: model.id, boardSeq: seq },
+      relations: { neighborhood: true, organization: true },
+    });
+    if (!existente) return;
+
+    throw new ConflictException(
+      `El número de placa ${formatBoardNumber(model.code, seq)} ya está cargado ` +
+        `en el equipo ${existente.serial} (${this.ubicacionDe(existente)})`,
+    );
+  }
+
+  /**
+   * Aviso —no bloqueo— si el fabricante del chip no coincide con ninguno de los
+   * equipos ya cargados. Se calibra solo contra el inventario real en vez de
+   * contra una lista de OUIs de Espressif: una lista siempre queda vieja, y un
+   * aviso que salta en placas legítimas enseña al operador a ignorarlos.
+   */
+  private async avisoDeOui(mac: string): Promise<string[]> {
+    const filas = await this.devices
+      .createQueryBuilder('d')
+      .select('DISTINCT substring(d.mac from 1 for 6)', 'oui')
+      .where('d.mac IS NOT NULL')
+      .getRawMany<{ oui: string }>();
+
+    const conocidos = filas.map((f) => f.oui);
+    if (conocidos.length === 0 || conocidos.includes(macOui(mac))) return [];
+
+    return [
+      `El fabricante del chip (${macOui(mac)}) no coincide con el de ningún equipo ` +
+        `ya cargado (${conocidos.join(', ')}). Si no es una placa de otro proveedor, ` +
+        'revisá que la MAC esté bien leída.',
+    ];
+  }
+
+  /**
+   * Aviso si la numeración impresa salta. Un salto suele ser una placa que se
+   * fabricó y nunca se cargó — vale la pena mirarlo antes de que se pierda.
+   */
+  private async avisoDeSalto(
+    model: BoardModel,
+    seq: number,
+  ): Promise<string[]> {
+    const fila = await this.devices
+      .createQueryBuilder('d')
+      .select('MAX(d.boardSeq)', 'max')
+      .where('d.boardModelId = :id', { id: model.id })
+      .getRawOne<{ max: number | string | null }>();
+
+    const ultimo =
+      fila?.max === null || fila?.max === undefined ? null : Number(fila.max);
+    if (ultimo === null || seq <= ultimo + 1) return [];
+
+    const faltan = seq - ultimo - 1;
+    return [
+      `El último número cargado de este modelo fue ${formatBoardNumber(model.code, ultimo)} ` +
+        `y estás cargando ${formatBoardNumber(model.code, seq)}: quedan ${faltan} ` +
+        `placa${faltan === 1 ? '' : 's'} sin registrar en el medio.`,
+    ];
+  }
+
+  /** Para los mensajes de 409: dónde está el equipo que ya usa ese dato. */
+  private ubicacionDe(device: Device): string {
+    if (device.neighborhood) return `instalado en ${device.neighborhood.name}`;
+    if (device.organization)
+      return `en el stock de ${device.organization.name}`;
+    return 'en la fábrica CPS';
   }
 
   // --- Helpers ---------------------------------------------------------------

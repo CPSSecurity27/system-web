@@ -12,7 +12,6 @@ import {
   AccountType,
   EntityStatus,
   ManagedBy,
-  OrgSubtype,
   UserRole,
 } from '../common/enums';
 import { AccessScope, ScopeService } from '../common/scope.service';
@@ -30,13 +29,20 @@ import { Neighborhood } from './entities/neighborhood.entity';
  * Barrios (v2): el molde único de las dos líneas de negocio.
  *
  * - CPS crea y edita barrios de cualquier organización.
- * - El OWNER/ADMIN de una organización MUNICIPAL crea/edita barrios PROPIOS
- *   (autogestión), hasta su cupo max_neighborhoods. Nacen operativos.
- * - Un consorcio PRIVATE NO gestiona su barrio: lo crea y administra CPS
- *   (nunca tiene más de uno, ver assertNeighborhoodRoomLeft).
+ * - El OWNER/ADMIN de una organización crea/edita sus barrios PROPIOS, hasta
+ *   su cupo max_neighborhoods. Nacen operativos.
+ * - Lo que decide si el cliente puede editar un barrio es `managed_by`, NO el
+ *   subtipo de la cuenta (2026-07-30). Un barrio `managed_by = CPS` está
+ *   vendido llave en mano: su dueño lo ve pero no lo toca. Antes esto se
+ *   decidía por `subtype === PRIVATE`, lo que hacía imposibles los dos casos
+ *   que el negocio necesita — la comunitaria autogestionada y la municipal
+ *   que terceriza un barrio.
+ * - Alta: la COMMUNITY tiene UN barrio (cupo 1, invariante) y lo crea CPS en
+ *   el onboarding atómico. Que después lo opere ella o CPS es la modalidad
+ *   que se elige al venderlo.
  * - Los CUPOS del barrio (max_family_members, remote_controls_enabled) los
  *   toca SOLO CPS: son tarifa.
- * - TRANSFERIR una comunidad (privada -> municipal o viceversa) = cambiar
+ * - TRANSFERIR una comunidad (comunitaria -> municipal o viceversa) = cambiar
  *   organization_id y/o managed_by. SOLO CPS, siempre auditado. Hogares,
  *   vecinos, equipos e historial no se tocan: esa es la gracia del diseño.
  */
@@ -134,16 +140,11 @@ export class NeighborhoodsService {
 
     const organization = await this.getOrganization(organizationId);
 
-    // Un consorcio PRIVATE no gestiona su barrio: nace y vive administrado
-    // por CPS (negocio-redisenado.md §2.2). El MUNICIPAL sí se autogestiona:
-    // puede tener varios y necesita cargar los suyos.
-    if (!esCps && organization.subtype === OrgSubtype.PRIVATE) {
-      throw new ForbiddenException(
-        'Un consorcio privado no gestiona su barrio: lo crea y administra CPS',
-      );
-    }
-
-    // CUPO max_neighborhoods: se impone AL CREAR. NULL = sin límite.
+    // Ya no hay puerta por subtipo acá: la COMMUNITY tiene cupo 1 y su barrio
+    // nace en el onboarding atómico, así que si su admin intenta crear otro
+    // el CUPO lo frena solo, con un mensaje que explica el motivo real. Un
+    // segundo chequeo por subtipo sería la misma regla dicha dos veces, y el
+    // día que difieran gana la que nadie recuerda que existe.
     await this.assertNeighborhoodRoomLeft(organization);
 
     const neighborhood = await this.neighborhoods.save(
@@ -155,13 +156,11 @@ export class NeighborhoodsService {
         status: EntityStatus.ACTIVE,
         organizationId: organization.id,
         organizationType: AccountType.ORGANIZATION,
-        // El default de gestión sale del subtipo: municipal se autogestiona,
-        // privado lo opera CPS. CPS puede pisarlo explícitamente.
-        managedBy:
-          dto.managedBy ??
-          (organization.subtype === OrgSubtype.MUNICIPAL
-            ? ManagedBy.ORGANIZATION
-            : ManagedBy.CPS),
+        // Default: lo opera su dueño. "Llave en mano" (managed_by = CPS) es
+        // una decisión comercial explícita y por eso se pide explícita: si
+        // fuera el default silencioso de algún subtipo, un cliente terminaría
+        // sin poder tocar su propio barrio sin que nadie lo haya decidido.
+        managedBy: dto.managedBy ?? ManagedBy.ORGANIZATION,
         createdBy: actor.id,
       }),
     );
@@ -191,21 +190,10 @@ export class NeighborhoodsService {
   ): Promise<Neighborhood> {
     const neighborhood = await this.findOne(id, scope);
 
-    // Mismo criterio que create(): un consorcio PRIVATE no toca su barrio, lo
-    // administra CPS. El MUNICIPAL sí puede actualizar el suyo.
-    const esCps = actor.memberships.some(
-      (m) => m.accountType === AccountType.COMPANY,
-    );
-    if (!esCps) {
-      const organization = await this.getOrganization(
-        neighborhood.organizationId,
-      );
-      if (organization.subtype === OrgSubtype.PRIVATE) {
-        throw new ForbiddenException(
-          'Un consorcio privado no gestiona su barrio: lo administra CPS',
-        );
-      }
-    }
+    // Ver no alcanza para editar: un barrio vendido llave en mano lo opera
+    // CPS. Una sola llamada resuelve las dos cosas (alcance y modalidad) y
+    // vale igual para la comunitaria y para la municipal que terceriza.
+    await this.scopes.assertManagesNeighborhood(scope, id);
 
     if (dto.localityId) await this.assertLocalityExists(dto.localityId);
 
@@ -292,11 +280,11 @@ export class NeighborhoodsService {
 
     await this.neighborhoods.update(id, {
       organizationId: target.id,
-      managedBy:
-        dto.managedBy ??
-        (target.subtype === OrgSubtype.MUNICIPAL
-          ? ManagedBy.ORGANIZATION
-          : ManagedBy.CPS),
+      // Se PRESERVA salvo que CPS diga otra cosa. Cambiar de cliente y de
+      // operador son dos decisiones separadas: derivar la segunda de la
+      // primera haría que un traspaso administrativo le saque (o le dé) la
+      // operación a alguien sin que nadie lo haya pedido.
+      managedBy: dto.managedBy ?? neighborhood.managedBy,
       updatedBy: actor.id,
     });
 

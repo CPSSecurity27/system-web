@@ -10,10 +10,24 @@ export enum AccountType {
   ORGANIZATION = 'ORGANIZATION',
 }
 
-/** Solo para ORGANIZATION. Fija el default de gestión del barrio. */
+/**
+ * Solo para ORGANIZATION. Dice la ESCALA del cliente, y nada más:
+ *   MUNICIPAL -> gestiona varios barrios (hasta su cupo)
+ *   COMMUNITY -> gestiona UNO solo (cupo fijo en 1, invariante de negocio)
+ *
+ * QUIÉN OPERA cada barrio es otra pregunta y vive en `neighborhood.managed_by`,
+ * porque se decide barrio por barrio: una comunitaria se vende llave en mano
+ * (CPS opera) o autogestionada, y una municipal puede tercerizarle un barrio a
+ * CPS teniendo los otros nueve propios. Fusionar los dos ejes en este enum
+ * haría imposible los dos casos.
+ *
+ * Se llamaba PRIVATE hasta 2026-07-30: el nombre describía la propiedad legal
+ * del barrio, que no es lo que distingue a las dos organizaciones, y chocaba
+ * con `managed_by`.
+ */
 export enum OrgSubtype {
   MUNICIPAL = 'MUNICIPAL',
-  PRIVATE = 'PRIVATE',
+  COMMUNITY = 'COMMUNITY',
 }
 
 /**
@@ -59,9 +73,17 @@ export enum ContractStatus {
   CANCELLED = 'CANCELLED',
 }
 
-/** Extensible desde el día 1 (hoy solo se usa ALARM_PANEL). */
+/**
+ * Extensible desde el día 1, pero hoy solo se usa COMMUNITY_ALARM: el poste con
+ * sirena en la vía pública. Los otros tres están reservados y el alta los
+ * RECHAZA (400) — una rama que nadie probó es donde se cuelan los bugs.
+ *
+ * Se llama COMMUNITY_ALARM y no "panel" a propósito: un panel es la cajita en la
+ * pared de una casa, que es exactamente lo que la regla 1 del dominio dice que
+ * esto NO es.
+ */
 export enum DeviceType {
-  ALARM_PANEL = 'ALARM_PANEL',
+  COMMUNITY_ALARM = 'COMMUNITY_ALARM',
   SIREN = 'SIREN',
   REPEATER = 'REPEATER',
   SENSOR = 'SENSOR',
@@ -78,6 +100,30 @@ export enum DeviceStatus {
   MAINTENANCE = 'MAINTENANCE',
   OUT_OF_SERVICE = 'OUT_OF_SERVICE',
   RETIRED = 'RETIRED',
+}
+
+/**
+ * Cómo se supo de un hito del equipo. La diferencia importa: la primera
+ * conexión la OBSERVA el broker (regla 5: el estado vivo lo escribe el
+ * servicio de alarmas), pero mientras el GtD no exista CPS necesita poder
+ * marcarla a mano. Guardar el origen evita que un dato tipeado se confunda
+ * con uno medido.
+ */
+export enum DeviceMilestoneSource {
+  OBSERVED = 'OBSERVED',
+  MANUAL = 'MANUAL',
+}
+
+/**
+ * Etapa de puesta en marcha. NO se guarda en la base: se DERIVA del último
+ * hito alcanzado (ver `deviceStage`). Tener también una columna sería un
+ * segundo lugar donde vive el mismo dato, libre de contradecir a las fechas.
+ */
+export enum DeviceStage {
+  CREATED = 'CREATED',
+  PROVISIONED = 'PROVISIONED',
+  LABELED = 'LABELED',
+  CONNECTED = 'CONNECTED',
 }
 
 export enum MaintenanceType {

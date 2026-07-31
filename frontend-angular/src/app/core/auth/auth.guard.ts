@@ -67,16 +67,18 @@ export const managerGuard: CanActivateFn = () => {
 };
 
 /**
- * Alta de barrios: CPS o la organización MUNICIPAL (autogestión). Un
- * consorcio PRIVATE no gestiona su barrio — lo crea y administra CPS — así
- * que ni con la URL directa llega al formulario (el backend igual lo
- * rechazaría, esto es solo para no aterrizar en una pantalla que va a fallar).
+ * Alta de barrios: CPS o el OWNER/ADMIN de una organización MUNICIPAL.
+ *
+ * Una organización COMMUNITY gestiona un único barrio y ese barrio nace con
+ * la cuenta (onboarding atómico), así que su cupo ya está consumido el día 1:
+ * el formulario solo la llevaría a un 400 de cupo. El backend es el que
+ * decide de verdad — esto es para no ofrecer una puerta que da a un error.
  */
 export const neighborhoodManagerGuard: CanActivateFn = () => {
   const auth = inject(AuthService);
   const router = inject(Router);
 
-  return auth.isManager() && !auth.isPrivateOrg() ? true : router.createUrlTree(['/']);
+  return auth.isManager() && !auth.isCommunityOrg() ? true : router.createUrlTree(['/']);
 };
 
 /** Para /login: si ya hay sesión, no tiene sentido volver a pedirla. */
