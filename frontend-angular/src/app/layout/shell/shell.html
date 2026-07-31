@@ -1,11 +1,8 @@
 <!-- Layout del Operador — docs/angular-ui-styles-spec.md §5 -->
 <div class="d-flex" style="min-height: 100vh">
   <!--
-    La navegación se arma con el par (tipo de cuenta, rol), NUNCA con el rol solo:
-    ADMIN en COMPANY es el admin de CPS, ADMIN en HOME es un vecino.
-
-    Esconder un link no es la protección — el backend ya rechaza con 403. Es para
-    no ofrecer puertas que dan a un error o a una pantalla vacía.
+    El menú se arma en nav.ts, no acá. Esconder un link NO es la protección:
+    el backend ya rechaza con 403. Es para no ofrecer puertas a un error.
   -->
   <aside
     class="bg-light border-end d-none d-md-block sidebar"
@@ -14,7 +11,7 @@
     <div class="sidebar-heading border-bottom px-2 py-3 d-flex align-items-center">
       <span class="sidebar-brand d-flex align-items-center">
         <img src="logo.png" alt="CPS Security" class="sidebar-logo me-2" />
-        <span class="fw-bold sidebar-brand-text">Sistema de Monitoreo</span>
+        <span class="fw-bold sidebar-brand-text">CPS Security</span>
       </span>
 
       <button
@@ -31,214 +28,35 @@
       </button>
     </div>
 
-    <!--
-      La navegación se agrupa por PREGUNTA, no por tipo de objeto:
-
-        MONITOREO   qué está pasando ahora
-        TERRITORIO  qué hay funcionando, dónde y de quién
-        INVENTARIO  qué equipos entraron al sistema (fábrica)
-        CPS         lo comercial y el padrón
-
-      Por eso "Alarmas" aparece dos veces y no es un descuido: en Territorio
-      son los postes instalados que hay que monitorear, y en Inventario es el
-      alta del equipo en fábrica. Distinta pregunta, distinta audiencia.
-    -->
     <div class="list-group list-group-flush p-2">
-      <span
-        class="text-muted small px-3 pt-2 text-uppercase fw-semibold sidebar-section-label"
-        style="font-size: 0.7rem"
-      >
-        Monitoreo
-      </span>
-
-      <a
-        class="list-group-item list-group-item-action border-0 rounded text-dark"
-        routerLink="/"
-        routerLinkActive="active-link"
-        [routerLinkActiveOptions]="{ exact: true }"
-        [title]="'Dashboard'"
-      >
-        <i class="bi bi-speedometer2 me-2"></i> <span>Dashboard</span>
-      </a>
-
-      <!-- El tablero del monitoreo: la pantalla principal del rol MONITOR. -->
-      <a
-        class="list-group-item list-group-item-action border-0 rounded text-dark"
-        routerLink="/eventos"
-        routerLinkActive="active-link"
-        [title]="'Eventos'"
-      >
-        <i class="bi bi-bell me-2"></i> <span>Eventos</span>
-      </a>
-
-      <hr class="my-2" />
-      <span
-        class="text-muted small px-3 text-uppercase fw-semibold sidebar-section-label"
-        style="font-size: 0.7rem"
-      >
-        Territorio
-      </span>
-
-      <!--
-        v2: el vecino también ve SU barrio (le llega por homeMemberships).
-        Una organización COMMUNITY gestiona UN solo barrio (lo fuerza el
-        negocio): el plural quedaría mal, así que el label singulariza ahí.
-      -->
-      <a
-        class="list-group-item list-group-item-action border-0 rounded text-dark"
-        routerLink="/barrios"
-        routerLinkActive="active-link"
-        [title]="auth.isCommunityOrg() ? 'Barrio' : 'Barrios'"
-      >
-        <i class="bi bi-houses me-2"></i>
-        <span>{{ auth.isCommunityOrg() ? 'Barrio' : 'Barrios' }}</span>
-      </a>
-
-      <a
-        class="list-group-item list-group-item-action border-0 rounded text-dark"
-        routerLink="/viviendas"
-        routerLinkActive="active-link"
-        [title]="'Viviendas'"
-      >
-        <i class="bi bi-house-door me-2"></i> <span>Viviendas</span>
-      </a>
-
-      <a
-        class="list-group-item list-group-item-action border-0 rounded text-dark"
-        routerLink="/alarmas"
-        routerLinkActive="active-link"
-        [title]="'Sirenas / Alarmas'"
-      >
-        <i class="bi bi-broadcast me-2"></i> <span>Sirenas / Alarmas</span>
-      </a>
-
-      <a
-        class="list-group-item list-group-item-action border-0 rounded text-dark"
-        routerLink="/controles"
-        routerLinkActive="active-link"
-        [title]="'Controles'"
-      >
-        <i class="bi bi-key me-2"></i> <span>Controles</span>
-      </a>
-
-      <!--
-        Inventario es la FÁBRICA: por dónde los equipos entran al sistema.
-        Solo CPS — una organización recibe equipos, no los produce. Su destino
-        (a qué org, a qué barrio) se decide en otra pantalla, no acá.
-      -->
-      @if (auth.isCps()) {
-        <hr class="my-2" />
-        <span
-          class="text-muted small px-3 text-uppercase fw-semibold sidebar-section-label"
-          style="font-size: 0.7rem"
-        >
-          Inventario
-        </span>
-
-        <a
-          class="list-group-item list-group-item-action border-0 rounded text-dark"
-          routerLink="/inventario/alarmas"
-          routerLinkActive="active-link"
-          [title]="'Ingreso de alarmas al sistema'"
-        >
-          <i class="bi bi-cpu me-2"></i> <span>Alarmas</span>
-        </a>
-
-        <a
-          class="list-group-item list-group-item-action border-0 rounded text-dark"
-          routerLink="/inventario/controles"
-          routerLinkActive="active-link"
-          [title]="'Ingreso de controles al sistema'"
-        >
-          <i class="bi bi-key-fill me-2"></i> <span>Controles</span>
-        </a>
-      }
-
-      <!-- Contratos: comercial puro; el vecino no tiene nada que ver acá. -->
-      @if (auth.isManager()) {
-        <hr class="my-2" />
-        <span
-          class="text-muted small px-3 text-uppercase fw-semibold sidebar-section-label"
-          style="font-size: 0.7rem"
-        >
-          Administración
-        </span>
-
-        <a
-          class="list-group-item list-group-item-action border-0 rounded text-dark"
-          routerLink="/contratos"
-          routerLinkActive="active-link"
-          [title]="'Contratos'"
-        >
-          <i class="bi bi-file-earmark-text me-2"></i> <span>Contratos</span>
-        </a>
-      }
-
-      <!-- Clientes y padrón de usuarios: exclusivo de CPS -->
-      @if (auth.isCps()) {
-        <hr class="my-2" />
-        <span
-          class="text-muted small px-3 text-uppercase fw-semibold sidebar-section-label"
-          style="font-size: 0.7rem"
-        >
-          Clientes
-        </span>
-
-        <a
-          class="list-group-item list-group-item-action border-0 rounded text-dark"
-          routerLink="/clientes"
-          routerLinkActive="active-link"
-          [title]="'Clientes'"
-        >
-          <i class="bi bi-briefcase me-2"></i> <span>Clientes</span>
-        </a>
-
-        <a
-          class="list-group-item list-group-item-action border-0 rounded text-dark"
-          routerLink="/usuarios"
-          routerLinkActive="active-link"
-          [title]="'Usuarios'"
-        >
-          <i class="bi bi-people me-2"></i> <span>Usuarios</span>
-        </a>
-
+      @for (section of sections(); track section.label; let first = $first) {
+        @if (!first) {
+          <hr class="my-2" />
+        }
         <!--
-          MI EMPRESA — nuestro negocio, separado del de los clientes.
-
-          CPS salió de la lista de clientes (2026-07-30) porque no lo es: no
-          firma contratos, no tiene cupos y no es dueña de barrios. Su ficha
-          y su catálogo comercial viven acá, y acá van a ir después
-          facturación y configuración.
-
-          Inventario NO se mudó adentro a propósito: también es solo-CPS, pero
-          es una tarea diaria de la estación de flasheo y enterrarla bajo una
-          sección administrativa sería fricción todos los días.
+          Con una sola sección visible (el vecino) el título no separa nada:
+          es ruido. Recién aparece cuando hay más de una.
         -->
-        <hr class="my-2" />
-        <span
-          class="text-muted small px-3 text-uppercase fw-semibold sidebar-section-label"
-          style="font-size: 0.7rem"
-        >
-          Mi Empresa
-        </span>
+        @if (sections().length > 1) {
+          <span
+            class="text-muted small px-3 pt-2 text-uppercase fw-semibold sidebar-section-label"
+            style="font-size: 0.7rem"
+          >
+            {{ section.label }}
+          </span>
+        }
 
-        <a
-          class="list-group-item list-group-item-action border-0 rounded text-dark"
-          routerLink="/empresa/personal"
-          routerLinkActive="active-link"
-          [title]="'Personal de CPS'"
-        >
-          <i class="bi bi-person-badge me-2"></i> <span>Personal</span>
-        </a>
-
-        <a
-          class="list-group-item list-group-item-action border-0 rounded text-dark"
-          routerLink="/empresa/planes"
-          routerLinkActive="active-link"
-          [title]="'Planes comerciales'"
-        >
-          <i class="bi bi-tags me-2"></i> <span>Planes</span>
-        </a>
+        @for (item of section.items; track item.link) {
+          <a
+            class="list-group-item list-group-item-action border-0 rounded text-dark"
+            [routerLink]="item.link"
+            routerLinkActive="active-link"
+            [routerLinkActiveOptions]="{ exact: item.link === '/' }"
+            [title]="item.label"
+          >
+            <i class="bi me-2" [class]="item.icon"></i> <span>{{ item.label }}</span>
+          </a>
+        }
       }
     </div>
   </aside>
@@ -247,7 +65,7 @@
   <div class="flex-grow-1 bg-white">
     <nav class="navbar navbar-expand-lg navbar-light bg-white border-bottom py-3">
       <div class="container-fluid">
-        <span class="navbar-brand fw-semibold text-brand mb-0 h1">Alarmas Comunitarias</span>
+        <span class="navbar-brand fw-semibold text-brand mb-0 h1">CPS Security</span>
 
         <div class="ms-auto d-flex align-items-center">
           <a routerLink="/perfil" class="me-3 text-muted small text-decoration-none">
