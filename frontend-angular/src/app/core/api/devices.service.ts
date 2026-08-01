@@ -3,7 +3,14 @@ import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 
 import { environment } from '../../../environments/environment';
-import { BoardModel, Device, DeviceState, DeviceType, Maintenance } from '../models/api.models';
+import {
+  BoardModel,
+  Device,
+  DeviceState,
+  DeviceType,
+  InstallationData,
+  Maintenance,
+} from '../models/api.models';
 
 /**
  * Alta = FÁBRICA (solo CPS). Sin neighborhoodId el equipo nace en INVENTORY
@@ -25,13 +32,27 @@ export interface CreateDevice {
 }
 
 /** Instalación por reclamo: serial + código de UN SOLO USO → queda en el barrio. */
-export interface ClaimDevice {
+/**
+ * El reclamo instala el equipo en un barrio. Lo hace un técnico —de CPS o de la
+ * organización dueña del stock— con el serial y el código de un solo uso.
+ *
+ * Lleva los datos de instalación porque el mejor momento para cargarlos es
+ * cuando el técnico está parado abajo del poste.
+ */
+export interface ClaimDevice extends InstallationData {
   serial: string;
   claimCode: string;
   neighborhoodId: number;
   name?: string;
   latitude?: number;
   longitude?: number;
+}
+
+/** Entrega de LOTE: fábrica → organización, en una sola llamada. Solo CPS. */
+export interface DeliverDevices {
+  deviceIds: number[];
+  /** null = vuelve al stock de fábrica. */
+  organizationId: number | null;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -93,9 +114,14 @@ export class DevicesService {
     return this.http.post<Device>(`${this.api}/devices/claim`, claim);
   }
 
-  /** Entrega del lote: fábrica → stock de una organización (null = devolver). */
-  deliverToOrganization(id: number, organizationId: number | null): Observable<Device> {
-    return this.http.patch<Device>(`${this.api}/devices/${id}`, { organizationId });
+  /**
+   * ENTREGA DE LOTE: fábrica → stock de una organización (null = devolver).
+   *
+   * Una sola llamada para N equipos: antes era un PATCH por equipo, y con 50
+   * alarmas cualquier falla dejaba el lote a medio entregar.
+   */
+  deliver(dto: DeliverDevices): Observable<{ delivered: number }> {
+    return this.http.post<{ delivered: number }>(`${this.api}/devices/deliver`, dto);
   }
 
   /** Bitácora del técnico. */

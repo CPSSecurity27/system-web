@@ -221,6 +221,44 @@ export class Device {
   @Column({ name: 'installed_at', type: 'timestamptz', nullable: true })
   installedAt!: Date | null;
 
+  // --- Datos de INSTALACIÓN -------------------------------------------------
+  // Lo que un técnico necesita saber ANTES de subirse a la escalera. Todos
+  // OPCIONALES (nadie mide la altura colgado de una escalera) pero
+  // recomendados, y editables después del alta.
+
+  /** Número de poste o columna donde está montada. */
+  @Column({ name: 'pole_number', type: 'text', nullable: true })
+  poleNumber!: string | null;
+
+  /**
+   * Altura de montaje en metros. NUMERIC como el precio y por lo mismo: el
+   * driver lo entrega string para no perder precisión.
+   */
+  @Column({
+    name: 'height_m',
+    type: 'numeric',
+    precision: 4,
+    scale: 1,
+    nullable: true,
+    transformer: {
+      to: (value: number | null) => value,
+      from: (value: string | null) => (value === null ? null : Number(value)),
+    },
+  })
+  heightM!: number | null;
+
+  /** La esquina, entre qué calles. */
+  @Column({ type: 'text', nullable: true })
+  reference!: string | null;
+
+  /** De qué luminaria o tablero toma energía. */
+  @Column({ name: 'power_point', type: 'text', nullable: true })
+  powerPoint!: string | null;
+
+  /** Lo que no entra en los otros cuatro. */
+  @Column({ name: 'install_notes', type: 'text', nullable: true })
+  installNotes!: string | null;
+
   @Column({ name: 'created_by', type: 'int', nullable: true })
   createdBy!: number | null;
 

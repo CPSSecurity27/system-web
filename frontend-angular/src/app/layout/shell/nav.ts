@@ -29,6 +29,8 @@ export interface NavSection {
 export interface NavFlags {
   isCps: boolean;
   isManager: boolean;
+  /** OWNER/ADMIN de una organización cliente. CPS NO cuenta acá. */
+  isOrgManager: boolean;
   isCommunityOrg: boolean;
 }
 
@@ -52,26 +54,42 @@ export function buildNav(flags: NavFlags): NavSection[] {
       ],
     },
     {
-      // Fase 1: sigue siendo solo-CPS. Que la organización vea SU stock es
-      // Fase 4, junto con la revisión de alcance en el backend.
+      /**
+       * Los equipos que TODAVÍA NO están en servicio.
+       *
+       * Lo ve CPS y también el CLIENTE, con su propio stock: la API ya lo
+       * permitía (`/devices/inventory` y `/remotes/inventory` aceptan
+       * organizaciones) y lo único que lo bloqueaba era esta pantalla. Ahí está
+       * el RECLAMO, que es como una municipalidad —o una comunitaria con
+       * autogestión— instala sus alarmas sin depender de CPS.
+       *
+       * FÁBRICA es lo único solo-CPS: una organización recibe equipos, no los
+       * produce.
+       */
       label: 'Inventario',
-      items: flags.isCps
-        ? [
-            { label: 'Alarmas', link: '/inventario/stock', icon: 'bi-box-seam' },
-            { label: 'Fábrica', link: '/inventario/fabrica', icon: 'bi-cpu' },
-            { label: 'Controles', link: '/inventario/controles', icon: 'bi-key-fill' },
-          ]
-        : [],
+      items:
+        flags.isCps || flags.isOrgManager
+          ? [
+              { label: 'Alarmas', link: '/inventario/stock', icon: 'bi-box-seam' },
+              ...(flags.isCps
+                ? [{ label: 'Fábrica', link: '/inventario/fabrica', icon: 'bi-cpu' }]
+                : []),
+              { label: 'Controles', link: '/inventario/controles', icon: 'bi-key-fill' },
+            ]
+          : [],
     },
     {
+      // Contratos NO está más acá. Desde que el contrato es de la CUENTA (uno
+      // ACTIVE por cliente), la lista de contratos ES la lista de clientes con
+      // otras columnas: mantener las dos partía el mismo dato en dos lugares.
+      // El contrato vive en la ficha del cliente, con renovar/suspender.
       label: 'Administrar',
-      items: [
-        ...(flags.isCps ? [{ label: 'Clientes', link: '/clientes', icon: 'bi-briefcase' }] : []),
-        ...(flags.isManager
-          ? [{ label: 'Contratos', link: '/contratos', icon: 'bi-file-earmark-text' }]
-          : []),
-        ...(flags.isCps ? [{ label: 'Usuarios', link: '/usuarios', icon: 'bi-people' }] : []),
-      ],
+      items: flags.isCps
+        ? [
+            { label: 'Clientes', link: '/clientes', icon: 'bi-briefcase' },
+            { label: 'Usuarios', link: '/usuarios', icon: 'bi-people' },
+          ]
+        : [],
     },
     {
       label: 'Mi Empresa',
@@ -80,6 +98,16 @@ export function buildNav(flags: NavFlags): NavSection[] {
             { label: 'Personal', link: '/empresa/personal', icon: 'bi-person-badge' },
             { label: 'Planes', link: '/empresa/planes', icon: 'bi-tags' },
           ]
+        : [],
+    },
+    {
+      // El espejo de "Mi Empresa" para el cliente: su propia ficha, sin `:id`
+      // (sale de la sesión). Es lo que reemplaza a la pestaña Contratos para
+      // una organización — si no, se quedaría sin ver lo que paga, porque
+      // /clientes es solo-CPS.
+      label: 'Mi organización',
+      items: flags.isOrgManager
+        ? [{ label: 'Mi organización', link: '/mi-organizacion', icon: 'bi-building' }]
         : [],
     },
   ];

@@ -79,23 +79,7 @@
             <div class="d-flex align-items-start justify-content-between mb-1">
               <h3 class="h6 fw-semibold mb-0">{{ device.name ?? device.serial }}</h3>
 
-              @switch (device.status) {
-                @case ('OPERATIONAL') {
-                  <span class="badge bg-success-soft text-success border">Operativa</span>
-                }
-                @case ('INSTALLED') {
-                  <span class="badge bg-success-soft text-success border">Instalada</span>
-                }
-                @case ('MAINTENANCE') {
-                  <span class="badge bg-warning-soft text-warning border">En soporte</span>
-                }
-                @case ('OUT_OF_SERVICE') {
-                  <span class="badge bg-brand-soft text-brand border">Fuera de servicio</span>
-                }
-                @default {
-                  <span class="badge bg-light text-muted border">{{ device.status }}</span>
-                }
-              }
+              <cps-status kind="device" [value]="device.status" />
             </div>
 
             <p class="text-muted small font-monospace mb-1">{{ device.serial }}</p>

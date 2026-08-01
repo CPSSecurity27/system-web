@@ -31,6 +31,20 @@ export enum OrgSubtype {
 }
 
 /**
+ * Hasta dónde llega el territorio de un cliente. Es lo que se le VENDIÓ, y por
+ * eso vive en la cuenta y no en una regla global: el sistema se vende tanto a
+ * una localidad como a un departamento entero.
+ *
+ * Determina dónde puede crear barrios:
+ *   LOCALITY   -> solo en ESA localidad
+ *   DEPARTMENT -> en cualquier localidad de ESE departamento
+ */
+export enum JurisdictionLevel {
+  LOCALITY = 'LOCALITY',
+  DEPARTMENT = 'DEPARTMENT',
+}
+
+/**
  * OWNER es el usuario INSTITUCIONAL de la cuenta (soberanía, exactamente uno).
  * ADMIN/TECHNICIAN/MONITOR son personas reales. Los cuatro valen en COMPANY y
  * en ORGANIZATION.
@@ -95,7 +109,6 @@ export enum DeviceType {
  */
 export enum DeviceStatus {
   INVENTORY = 'INVENTORY',
-  INSTALLED = 'INSTALLED',
   OPERATIONAL = 'OPERATIONAL',
   MAINTENANCE = 'MAINTENANCE',
   OUT_OF_SERVICE = 'OUT_OF_SERVICE',

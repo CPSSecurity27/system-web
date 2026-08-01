@@ -26,6 +26,7 @@ import {
   ClaimDeviceDto,
   CreateDeviceDto,
   CreateMaintenanceDto,
+  DeliverDevicesDto,
   UpdateDeviceDto,
   UpdateDeviceMilestonesDto,
   UpdateMaintenanceDto,
@@ -179,12 +180,26 @@ export class DevicesController {
     return this.devices.claim(dto, user, await this.scopes.forUser(user));
   }
 
-  /** PATCH /api/devices/:id — el `serial` no se puede cambiar. Solo CPS. */
+  /**
+   * PATCH /api/devices/:id — el `serial` no se puede cambiar.
+   *
+   * CPS o la organización dueña del barrio (el scope la acota a los suyos): el
+   * técnico que instaló la alarma tiene que poder renombrarla, completar los
+   * datos del poste y marcarla en mantenimiento sin pedirle permiso a nadie.
+   * Lo que queda para CPS —baja definitiva, entrega, testeo— lo frena el
+   * servicio, no este decorador.
+   */
   @Patch(':id')
-  @RequireMembership({
-    accountType: AccountType.COMPANY,
-    roles: [UserRole.OWNER, UserRole.ADMIN, UserRole.TECHNICIAN],
-  })
+  @RequireMembership(
+    {
+      accountType: AccountType.COMPANY,
+      roles: [UserRole.OWNER, UserRole.ADMIN, UserRole.TECHNICIAN],
+    },
+    {
+      accountType: AccountType.ORGANIZATION,
+      roles: [UserRole.OWNER, UserRole.ADMIN, UserRole.TECHNICIAN],
+    },
+  )
   async update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateDeviceDto,
@@ -195,7 +210,26 @@ export class DevicesController {
       dto,
       await this.scopes.forUser(user),
       user.id,
+      user.memberships.some((m) => m.accountType === AccountType.COMPANY),
     );
+  }
+
+  /**
+   * POST /api/devices/deliver — entrega de LOTE a una organización. Solo CPS.
+   *
+   * Existe porque entregar 50 alarmas eran 50 PATCH desde el front, cada uno
+   * con su chance de fallar por la mitad. Acá o van todas o no va ninguna.
+   */
+  @Post('deliver')
+  @RequireMembership({
+    accountType: AccountType.COMPANY,
+    roles: [UserRole.OWNER, UserRole.ADMIN, UserRole.TECHNICIAN],
+  })
+  deliver(
+    @Body() dto: DeliverDevicesDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<{ delivered: number }> {
+    return this.devices.deliver(dto, user.id);
   }
 
   /**

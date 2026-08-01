@@ -8,6 +8,11 @@ import { AuthService } from '../../core/auth/auth.service';
 import { apiErrorMessage } from '../../core/http/api-error';
 import { AlarmEvent, EventStatus } from '../../core/models/api.models';
 import { Neighborhood } from '../../core/models/neighborhood';
+import { Alert } from '../../shared/ui/alert/alert';
+import { Async } from '../../shared/ui/async/async';
+import { PageHeader } from '../../shared/ui/page-header/page-header';
+import { Paginator } from '../../shared/ui/paginator/paginator';
+import { Status } from '../../shared/ui/status/status';
 
 const PAGE_SIZE = 20;
 
@@ -20,7 +25,7 @@ const PAGE_SIZE = 20;
  */
 @Component({
   selector: 'app-event-list',
-  imports: [FormsModule, DatePipe],
+  imports: [FormsModule, DatePipe, Alert, Async, PageHeader, Paginator, Status],
   templateUrl: './event-list.html',
 })
 export class EventList {

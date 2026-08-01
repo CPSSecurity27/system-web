@@ -100,19 +100,28 @@
             <form [formGroup]="deliverForm" (ngSubmit)="deliver()" novalidate>
               <div class="row g-3 align-items-end">
                 <div class="col-12 col-sm-5">
-                  <label for="dDevice" class="form-label small fw-medium">Equipo</label>
+                  <!--
+                    Multi-selección: la entrega es por LOTE, en una sola llamada.
+                    Antes era un equipo por vez, y entregar 50 alarmas eran 50
+                    llamadas con 50 chances de quedar a medio camino.
+                  -->
+                  <label for="dDevice" class="form-label small fw-medium">
+                    Equipos <span class="text-muted fw-normal">({{ selectedIds().length }})</span>
+                  </label>
                   <select
                     id="dDevice"
                     class="form-select form-select-sm"
-                    formControlName="deviceId"
+                    multiple
+                    size="6"
+                    (change)="onSelectionChange($event)"
                   >
-                    <option [ngValue]="null">Elegí un equipo…</option>
                     @for (device of stock(); track device.id) {
-                      <option [ngValue]="device.id">
+                      <option [value]="device.id">
                         {{ device.serial }} ({{ orgName(device.organizationId) }})
                       </option>
                     }
                   </select>
+                  <div class="form-text">Ctrl o Shift para elegir varios.</div>
                 </div>
                 <div class="col-12 col-sm-5">
                   <label for="dOrg" class="form-label small fw-medium">Al stock de</label>
@@ -131,7 +140,7 @@
                   <button
                     type="submit"
                     class="btn btn-sm btn-brand w-100"
-                    [disabled]="saving() || deliverForm.invalid"
+                    [disabled]="saving() || deliverForm.invalid || selectedIds().length === 0"
                   >
                     Entregar
                   </button>
@@ -218,6 +227,83 @@
                   </button>
                 </p>
               }
+            </div>
+
+            <!--
+              DATOS DE INSTALACIÓN. Opcionales pero RECOMENDADOS: es lo que el
+              próximo técnico va a querer saber antes de subirse a la escalera.
+              Se pueden completar después desde el detalle de la alarma.
+            -->
+            <div class="border-top pt-3 mb-3">
+              <p class="fw-semibold small mb-1">
+                <i class="bi bi-clipboard-data me-1"></i> Datos de instalación
+                <span class="badge bg-warning-soft border ms-1">recomendados</span>
+              </p>
+              <p class="text-muted small">
+                Lo que hace falta saber para volver a intervenir el equipo. Se pueden completar
+                después.
+              </p>
+
+              <div class="row g-2 mb-2">
+                <div class="col-7">
+                  <label for="cPole" class="form-label small fw-medium">Poste o columna</label>
+                  <input
+                    id="cPole"
+                    type="text"
+                    class="form-control form-control-sm"
+                    formControlName="poleNumber"
+                    placeholder="Ej: 142-B"
+                  />
+                </div>
+                <div class="col-5">
+                  <label for="cHeight" class="form-label small fw-medium">Altura (m)</label>
+                  <input
+                    id="cHeight"
+                    type="number"
+                    step="0.1"
+                    min="0.1"
+                    max="30"
+                    class="form-control form-control-sm"
+                    formControlName="heightM"
+                    placeholder="6.5"
+                  />
+                </div>
+              </div>
+
+              <div class="mb-2">
+                <label for="cRef" class="form-label small fw-medium">Referencia</label>
+                <input
+                  id="cRef"
+                  type="text"
+                  class="form-control form-control-sm"
+                  formControlName="reference"
+                  placeholder="Esquina de San Martín y Belgrano"
+                />
+              </div>
+
+              <div class="mb-2">
+                <label for="cPower" class="form-label small fw-medium">
+                  Alimentación
+                </label>
+                <input
+                  id="cPower"
+                  type="text"
+                  class="form-control form-control-sm"
+                  formControlName="powerPoint"
+                  placeholder="Luminaria 12 / tablero de la plaza"
+                />
+              </div>
+
+              <div class="mb-0">
+                <label for="cNotes" class="form-label small fw-medium">Observaciones</label>
+                <textarea
+                  id="cNotes"
+                  rows="2"
+                  class="form-control form-control-sm"
+                  formControlName="installNotes"
+                  placeholder="Lo que no entre en los campos de arriba"
+                ></textarea>
+              </div>
             </div>
 
             <button

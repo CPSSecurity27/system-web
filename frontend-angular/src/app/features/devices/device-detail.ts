@@ -6,11 +6,12 @@ import { catchError, forkJoin, of } from 'rxjs';
 import { DevicesService } from '../../core/api/devices.service';
 import { apiErrorMessage } from '../../core/http/api-error';
 import { Device, DeviceState, Maintenance } from '../../core/models/api.models';
+import { Status } from '../../shared/ui/status/status';
 import { Map, MapMarker } from '../../shared/map/map';
 
 @Component({
   selector: 'app-device-detail',
-  imports: [RouterLink, DatePipe, Map],
+  imports: [RouterLink, DatePipe, Map, Status],
   templateUrl: './device-detail.html',
 })
 export class DeviceDetail {
@@ -21,10 +22,23 @@ export class DeviceDetail {
 
   protected readonly device = signal<Device | null>(null);
   protected readonly maintenances = signal<Maintenance[]>([]);
-  /** null = el servicio de alarmas todavía no reportó nada de este equipo. */
+  /** null = el servicio de alarmas todavÃ­a no reportÃ³ nada de este equipo. */
   protected readonly state = signal<DeviceState | null>(null);
   protected readonly loading = signal(true);
   protected readonly error = signal<string | null>(null);
+
+  /** Ninguno de los cinco cargado: se avisa en vez de mostrar cuatro guiones. */
+  protected readonly sinDatosDeInstalacion = computed(() => {
+    const d = this.device();
+    if (!d) return true;
+    return (
+      d.poleNumber === null &&
+      d.heightM === null &&
+      d.reference === null &&
+      d.powerPoint === null &&
+      d.installNotes === null
+    );
+  });
 
   protected readonly markers = computed<MapMarker[]>(() => {
     const device = this.device();
@@ -44,7 +58,7 @@ export class DeviceDetail {
     forkJoin({
       device: this.devices.get(this.id),
       maintenances: this.devices.maintenances(this.id),
-      // El estado vivo puede fallar o venir vacío sin romper la pantalla.
+      // El estado vivo puede fallar o venir vacÃ­o sin romper la pantalla.
       state: this.devices.state(this.id).pipe(catchError(() => of(null))),
     }).subscribe({
       next: ({ device, maintenances, state }) => {

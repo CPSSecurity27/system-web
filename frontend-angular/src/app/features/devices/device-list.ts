@@ -8,11 +8,12 @@ import { NeighborhoodsService } from '../../core/api/neighborhoods.service';
 import { AuthService } from '../../core/auth/auth.service';
 import { apiErrorMessage } from '../../core/http/api-error';
 import { Device } from '../../core/models/api.models';
+import { Status } from '../../shared/ui/status/status';
 import { Neighborhood } from '../../core/models/neighborhood';
 
 @Component({
   selector: 'app-device-list',
-  imports: [RouterLink, FormsModule],
+  imports: [RouterLink, FormsModule, Status],
   templateUrl: './device-list.html',
 })
 export class DeviceList {

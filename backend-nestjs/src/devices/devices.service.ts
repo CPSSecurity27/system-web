@@ -18,6 +18,7 @@ import {
   MaintenanceStatus,
 } from '../common/enums';
 import { AccessScope } from '../common/scope.service';
+import { Account } from '../accounts/entities/account.entity';
 import { Home } from '../homes/entities/home.entity';
 import { Neighborhood } from '../neighborhoods/entities/neighborhood.entity';
 import {
@@ -29,6 +30,8 @@ import {
   ClaimDeviceDto,
   CreateDeviceDto,
   CreateMaintenanceDto,
+  DeliverDevicesDto,
+  InstallationDataDto,
   UpdateDeviceDto,
   UpdateDeviceMilestonesDto,
   UpdateMaintenanceDto,
@@ -69,6 +72,7 @@ export class DevicesService {
     @InjectRepository(Home) private readonly homes: Repository<Home>,
     @InjectRepository(BoardModel)
     private readonly boardModels: Repository<BoardModel>,
+    @InjectRepository(Account) private readonly accounts: Repository<Account>,
     private readonly audit: AuditService,
   ) {}
 
@@ -314,6 +318,9 @@ export class DevicesService {
       latitude: dto.latitude ?? device.latitude,
       longitude: dto.longitude ?? device.longitude,
       installedAt: new Date(),
+      // Los datos de instalación: el mejor momento para cargarlos es ahora,
+      // con el técnico parado abajo del poste.
+      ...installationChanges(dto, device),
       updatedBy: actor.id,
     });
 
@@ -343,17 +350,39 @@ export class DevicesService {
   }
 
   /**
-   * El `serial` NO se puede cambiar: es la identidad física del equipo. Mover
-   * stock de fábrica a una organización ("entrega del lote") también pasa por
-   * acá (organizationId, solo mientras está en INVENTORY — el CHECK lo cuida).
+   * El `serial` NO se puede cambiar: es la identidad física del equipo.
+   *
+   * Lo puede llamar CPS o la organización dueña del barrio (el `scope` ya la
+   * acota a los suyos): el técnico que instaló la alarma tiene que poder
+   * renombrarla, completar los datos del poste y marcarla en mantenimiento sin
+   * pedirle permiso a nadie. Lo que NO puede la organización está más abajo.
    */
   async update(
     id: number,
     dto: UpdateDeviceDto,
     scope: AccessScope,
     updatedBy: number,
+    esCps: boolean,
   ): Promise<DeviceView> {
     const device = await this.findOne(id, scope);
+
+    if (!esCps) {
+      // RETIRED es la baja DEFINITIVA del equipo físico, que sigue siendo del
+      // inventario de CPS: la organización lo saca de servicio, no lo da de baja.
+      if (dto.status === DeviceStatus.RETIRED) {
+        throw new ForbiddenException(
+          'La baja definitiva del equipo la hace CPS. Podés marcarlo fuera de servicio.',
+        );
+      }
+      // Mover stock entre organizaciones es una operación comercial de CPS.
+      if (dto.organizationId !== undefined) {
+        throw new ForbiddenException('La entrega de equipos la hace CPS');
+      }
+      // `tested` es un hecho de la estación de flasheo.
+      if (dto.tested !== undefined) {
+        throw new ForbiddenException('El testeo de fábrica lo marca CPS');
+      }
+    }
 
     await this.devices.update(id, {
       name: dto.name ?? device.name,
@@ -368,10 +397,99 @@ export class DevicesService {
       installedAt: dto.installedAt
         ? new Date(dto.installedAt)
         : device.installedAt,
+      ...installationChanges(dto, device),
       updatedBy,
     });
 
+    // Cambiar el estado de un equipo es operativo y hay que poder reconstruirlo:
+    // "¿desde cuándo estaba fuera de servicio?" se contesta con esto.
+    if (dto.status && dto.status !== device.status) {
+      await this.audit.record({
+        actorUserId: updatedBy,
+        action: 'device.status_change',
+        entityType: 'device',
+        entityId: id,
+        neighborhoodId: device.neighborhoodId,
+        oldValue: { status: device.status },
+        newValue: { status: dto.status },
+      });
+    }
+
     return this.findOne(id, scope);
+  }
+
+  /**
+   * ENTREGA DE LOTE: fábrica -> organización, todo o nada.
+   *
+   * Antes eran N llamadas desde el front, cada una con su chance de fallar por
+   * la mitad y dejar el lote a medio entregar.
+   *
+   * Solo mueve equipos que estén en INVENTORY: uno ya instalado pertenece a un
+   * barrio, y el CHECK de custodia lo impide igual. Acá el 400 explica cuál.
+   */
+  async deliver(
+    dto: DeliverDevicesDto,
+    actorId: number,
+  ): Promise<{ delivered: number }> {
+    const devices = await this.devices.find({
+      where: { id: In(dto.deviceIds) },
+    });
+
+    if (devices.length !== dto.deviceIds.length) {
+      const encontrados = new Set(devices.map((d) => d.id));
+      const faltan = dto.deviceIds.filter((id) => !encontrados.has(id));
+      throw new NotFoundException(
+        `No existen los equipos: ${faltan.join(', ')}`,
+      );
+    }
+
+    const enServicio = devices.filter(
+      (d) => d.status !== DeviceStatus.INVENTORY,
+    );
+    if (enServicio.length > 0) {
+      throw new BadRequestException(
+        `Estos equipos ya están instalados y no se pueden entregar: ${enServicio
+          .map((d) => d.serial)
+          .join(', ')}`,
+      );
+    }
+
+    if (dto.organizationId) {
+      const org = await this.accounts.findOne({
+        where: { id: dto.organizationId },
+      });
+      if (!org || org.type !== AccountType.ORGANIZATION) {
+        throw new NotFoundException(
+          `No existe la organización ${dto.organizationId}`,
+        );
+      }
+    }
+
+    const organizationId = dto.organizationId ?? null;
+
+    await this.devices.manager.transaction(async (manager) => {
+      await manager.update(
+        Device,
+        { id: In(dto.deviceIds) },
+        { organizationId, updatedBy: actorId },
+      );
+    });
+
+    // Un registro por equipo: la trazabilidad de un activo es por activo, no
+    // por tanda. "¿A quién se le entregó ESTA alarma?" tiene que tener respuesta.
+    for (const device of devices) {
+      await this.audit.record({
+        actorUserId: actorId,
+        action: 'device.deliver',
+        entityType: 'device',
+        entityId: device.id,
+        accountId: organizationId ?? undefined,
+        oldValue: { organizationId: device.organizationId },
+        newValue: { organizationId },
+      });
+    }
+
+    return { delivered: devices.length };
   }
 
   /**
@@ -738,6 +856,29 @@ export class DevicesService {
     const barrio = await this.neighborhoods.findOne({ where: { id } });
     if (!barrio) throw new NotFoundException(`No existe el barrio ${id}`);
   }
+}
+
+/**
+ * Los cinco datos de instalación, listos para el UPDATE.
+ *
+ * `undefined` = no vino en el request y no se toca; **`null` = borrarlo**. Sin
+ * esa distinción no habría forma de corregir un poste mal cargado: mandar el
+ * campo vacío no haría nada.
+ */
+function installationChanges(
+  dto: InstallationDataDto,
+  device: Device,
+): Partial<Device> {
+  const pick = <T>(nuevo: T | undefined, actual: T): T =>
+    nuevo !== undefined ? nuevo : actual;
+
+  return {
+    poleNumber: pick(dto.poleNumber, device.poleNumber),
+    heightM: pick(dto.heightM, device.heightM),
+    reference: pick(dto.reference, device.reference),
+    powerPoint: pick(dto.powerPoint, device.powerPoint),
+    installNotes: pick(dto.installNotes, device.installNotes),
+  };
 }
 
 function nonInventoryStatuses(): DeviceStatus[] {

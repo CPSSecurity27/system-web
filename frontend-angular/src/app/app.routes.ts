@@ -108,19 +108,11 @@ export const routes: Routes = [
         path: 'alarmas',
         loadComponent: () => import('./features/devices/device-list').then((m) => m.DeviceList),
       },
-      {
-        // Entrega del lote a una organización + instalación por reclamo. NO es
-        // fábrica: acá sí importa el destino, y por eso no vive en Inventario.
-        // Provisorio — cada mitad se va a mudar a donde pertenece: la entrega
-        // al detalle de la cuenta, la instalación al detalle del barrio.
-        path: 'alarmas/stock',
-        canActivate: [managerGuard],
-        loadComponent: () =>
-          import('./features/devices/device-inventory').then((m) => m.DeviceInventory),
-      },
-      // Va ANTES de :id o el router se come "nueva" como si fuera un id.
-      // Mismo motivo por el que 'barrios/nuevo' precede a ':id'.
-      { path: 'alarmas/nueva', redirectTo: 'inventario/alarmas' },
+      // El stock se mudó a Inventario. Van ANTES de ':id' o el router se come
+      // "stock" y "nueva" como si fueran un id — mismo motivo por el que
+      // 'barrios/nuevo' precede a ':id'.
+      { path: 'alarmas/stock', pathMatch: 'full', redirectTo: '/inventario/stock' },
+      { path: 'alarmas/nueva', redirectTo: '/inventario/fabrica' },
       {
         path: 'alarmas/:id',
         loadComponent: () => import('./features/devices/device-detail').then((m) => m.DeviceDetail),
@@ -133,39 +125,51 @@ export const routes: Routes = [
       },
 
       // ---------------------------------------------------------------------
-      // INVENTARIO — la FÁBRICA: por dónde un equipo ENTRA al sistema.
+      // INVENTARIO — los equipos que TODAVÍA NO están en servicio.
       //
-      // Acá NO se decide destino: ni a qué organización va ni en qué barrio se
-      // instala. Eso pasa después y en otro lado (la entrega, desde la cuenta;
-      // la instalación por reclamo, desde el barrio). Lo único que importa es
-      // registrar la identidad física del equipo.
+      // El corte con /alarmas es el CHECK de la base: INVENTORY <=> sin barrio.
+      // Operar/Alarmas son las que tienen barrio; Inventario, las que no.
       //
-      // Por eso es cpsGuard y no managerGuard: fabricar lo hace CPS y nadie
-      // más. Una organización recibe equipos, no los produce.
+      // Lo ve CPS y también el CLIENTE con su propio stock (managerGuard): el
+      // backend ya recortaba por alcance, y acá está el RECLAMO con el que una
+      // muni instala sus alarmas. FÁBRICA sigue siendo lo único solo-CPS.
       // ---------------------------------------------------------------------
       {
         path: 'inventario',
-        canActivate: [cpsGuard],
+        canActivate: [managerGuard],
         loadComponent: () =>
           import('./features/inventory/inventory-shell').then((m) => m.InventoryShell),
         children: [
-          { path: '', pathMatch: 'full', redirectTo: 'alarmas' },
+          { path: '', pathMatch: 'full', redirectTo: 'stock' },
+          {
+            // El stock: equipos entregados y por entregar. Provisorio — la
+            // ENTREGA de lotes se separa a /inventario/entregas en la Fase 4,
+            // y la instalación por reclamo se muda al detalle del barrio.
+            path: 'stock',
+            loadComponent: () =>
+              import('./features/devices/device-inventory').then((m) => m.DeviceInventory),
+          },
           {
             // Alta desde MAC + n° de placa, y el registro de todo lo fabricado.
             // Alta y listado en la MISMA pantalla: la estación de flasheo carga
             // placas en tanda y navegar por equipo sería fricción pura.
-            path: 'alarmas',
+            //
+            // SOLO CPS: una organización recibe equipos, no los fabrica.
+            path: 'fabrica',
+            canActivate: [cpsGuard],
             loadComponent: () =>
               import('./features/devices/device-factory').then((m) => m.DeviceFactory),
           },
-          { path: 'alarmas/fabricar', redirectTo: 'alarmas' },
           {
             // Provisorio: el único acto de fábrica que hoy existe para
             // controles es el alta. La pantalla propia —con su listado, al
-            // molde de la de alarmas— es la fase siguiente.
+            // molde de la de alarmas— es la Fase 4.
             path: 'controles',
             loadComponent: () => import('./features/remotes/remote-form').then((m) => m.RemoteForm),
           },
+          // Los links viejos siguen andando: alguien los tiene en un favorito.
+          { path: 'alarmas', pathMatch: 'full', redirectTo: 'fabrica' },
+          { path: 'alarmas/fabricar', redirectTo: 'fabrica' },
         ],
       },
 
@@ -229,17 +233,23 @@ export const routes: Routes = [
         ],
       },
 
+      // ---------------------------------------------------------------------
+      // MI ORGANIZACIÓN — la ficha del PROPIO cliente, sin `:id`.
+      //
+      // Es el espejo de /empresa/personal: mismo componente, la cuenta sale de
+      // la sesión. Existe porque /clientes es solo-CPS: sin esto, el admin de
+      // una municipalidad no tendría dónde ver sus cupos ni su contrato.
+      // ---------------------------------------------------------------------
       {
-        path: 'contratos',
+        path: 'mi-organizacion',
         loadComponent: () =>
-          import('./features/contracts/contract-list').then((m) => m.ContractList),
+          import('./features/accounts/account-members').then((m) => m.AccountMembers),
       },
-      {
-        path: 'contratos/nuevo',
-        canActivate: [cpsGuard],
-        loadComponent: () =>
-          import('./features/contracts/contract-form').then((m) => m.ContractForm),
-      },
+
+      // Contratos dejó de ser pestaña (2026-07-31): el contrato es de la cuenta
+      // y vive en su ficha. Los links viejos siguen andando.
+      { path: 'contratos', pathMatch: 'full', redirectTo: 'clientes' },
+      { path: 'contratos/nuevo', redirectTo: 'clientes' },
 
       // Padrón de usuarios: solo CPS
       {

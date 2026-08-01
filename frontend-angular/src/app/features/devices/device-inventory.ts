@@ -48,8 +48,8 @@ export class DeviceInventory {
   );
 
   /** Entrega del lote (solo CPS): qué equipo, a qué organización. */
+  /** Los equipos van por `selectedIds` (un `<select multiple>`), no por acá. */
   protected readonly deliverForm = this.fb.group({
-    deviceId: [null as number | null, Validators.required],
     organizationId: [null as number | null, Validators.required],
   });
 
@@ -59,6 +59,13 @@ export class DeviceInventory {
     claimCode: ['', Validators.required],
     neighborhoodId: [null as number | null, Validators.required],
     name: [''],
+    // Datos de instalación: OPCIONALES pero recomendados. El mejor momento
+    // para cargarlos es este, con el técnico parado abajo del poste.
+    poleNumber: [''],
+    heightM: [null as number | null],
+    reference: [''],
+    powerPoint: [''],
+    installNotes: [''],
   });
 
   constructor() {
@@ -96,32 +103,51 @@ export class DeviceInventory {
     return this.accountList().find((a) => a.id === id)?.name ?? `Organización #${id}`;
   }
 
+  /** Los equipos tildados para la entrega. El `<select multiple>` no va por form. */
+  protected readonly selectedIds = signal<number[]>([]);
+
+  protected onSelectionChange(event: Event): void {
+    const select = event.target as HTMLSelectElement;
+    this.selectedIds.set(
+      Array.from(select.selectedOptions).map((o) => Number(o.value)),
+    );
+  }
+
+  /**
+   * ENTREGA DE LOTE: una sola llamada para N equipos. El backend la hace
+   * atómica — o van todos o no va ninguno — así que no puede quedar media tanda
+   * entregada si algo falla en el medio.
+   */
   protected deliver(): void {
-    if (this.deliverForm.invalid || this.saving()) {
+    const ids = this.selectedIds();
+    if (this.deliverForm.invalid || this.saving() || ids.length === 0) {
       this.deliverForm.markAllAsTouched();
       return;
     }
 
-    const { deviceId, organizationId } = this.deliverForm.getRawValue();
+    const { organizationId } = this.deliverForm.getRawValue();
 
     this.saving.set(true);
     this.error.set(null);
     this.message.set(null);
 
-    this.devices.deliverToOrganization(deviceId as number, organizationId as number).subscribe({
-      next: (device) => {
-        this.saving.set(false);
-        this.deliverForm.reset({ deviceId: null, organizationId: null });
-        this.message.set(
-          `Equipo ${device.serial} entregado al stock de ${this.orgName(device.organizationId)}.`,
-        );
-        this.load();
-      },
-      error: (err) => {
-        this.error.set(apiErrorMessage(err));
-        this.saving.set(false);
-      },
-    });
+    this.devices
+      .deliver({ deviceIds: ids, organizationId: organizationId as number })
+      .subscribe({
+        next: ({ delivered }) => {
+          this.saving.set(false);
+          this.deliverForm.reset({ organizationId: null });
+          this.selectedIds.set([]);
+          this.message.set(
+            `${delivered} ${delivered === 1 ? 'equipo entregado' : 'equipos entregados'} al stock de ${this.orgName(organizationId as number)}.`,
+          );
+          this.load();
+        },
+        error: (err) => {
+          this.error.set(apiErrorMessage(err));
+          this.saving.set(false);
+        },
+      });
   }
 
   protected setPosition(position: { latitude: number; longitude: number }): void {
@@ -154,11 +180,27 @@ export class DeviceInventory {
         name: value.name.trim() ? value.name.trim() : undefined,
         latitude: this.latitude() ?? undefined,
         longitude: this.longitude() ?? undefined,
+        // Solo se mandan los que se completaron: el vacío no es un dato.
+        poleNumber: value.poleNumber.trim() || undefined,
+        heightM: value.heightM ?? undefined,
+        reference: value.reference.trim() || undefined,
+        powerPoint: value.powerPoint.trim() || undefined,
+        installNotes: value.installNotes.trim() || undefined,
       })
       .subscribe({
         next: (device) => {
           this.saving.set(false);
-          this.claimForm.reset({ serial: '', claimCode: '', neighborhoodId: null, name: '' });
+          this.claimForm.reset({
+            serial: '',
+            claimCode: '',
+            neighborhoodId: null,
+            name: '',
+            poleNumber: '',
+            heightM: null,
+            reference: '',
+            powerPoint: '',
+            installNotes: '',
+          });
           this.clearPosition();
           this.message.set(
             `Equipo ${device.serial} instalado en el barrio. El código quedó quemado.`,

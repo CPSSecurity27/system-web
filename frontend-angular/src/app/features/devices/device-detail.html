@@ -25,23 +25,9 @@
           <dl class="row mb-0 small">
             <dt class="col-5 text-muted fw-normal">Estado del equipo</dt>
             <dd class="col-7">
-              @switch (alarma.status) {
-                @case ('OPERATIONAL') {
-                  <span class="badge bg-success-soft text-success border">Operativa</span>
-                }
-                @case ('INSTALLED') {
-                  <span class="badge bg-success-soft text-success border">Instalada</span>
-                }
-                @case ('MAINTENANCE') {
-                  <span class="badge bg-warning-soft text-warning border">En soporte</span>
-                }
-                @case ('OUT_OF_SERVICE') {
-                  <span class="badge bg-brand-soft text-brand border">Fuera de servicio</span>
-                }
-                @default {
-                  <span class="badge bg-light text-muted border">{{ alarma.status }}</span>
-                }
-              }
+              <!-- Lo que el equipo ES. El estado VIVO (online/mudo) va aparte:
+                   lo informa el servicio de alarmas, no esta tabla. -->
+              <cps-status kind="device" [value]="alarma.status" />
             </dd>
 
             <dt class="col-5 text-muted fw-normal">Instalada</dt>
@@ -58,6 +44,44 @@
               }
             </dd>
           </dl>
+
+          <!--
+            DATOS DE INSTALACIÓN: lo que el técnico necesita antes de subirse a
+            la escalera. Si están vacíos se dice, en vez de esconder la fila:
+            el hueco es justamente la información útil.
+          -->
+          <div class="border-top mt-3 pt-3">
+            <p class="fw-semibold small mb-2">
+              <i class="bi bi-clipboard-data me-1"></i> Datos de instalación
+            </p>
+            @if (sinDatosDeInstalacion()) {
+              <p class="text-muted small mb-0">
+                <i class="bi bi-exclamation-circle me-1"></i>
+                Sin cargar. El próximo técnico que venga no va a saber en qué poste está.
+              </p>
+            } @else {
+              <dl class="row mb-0 small">
+                <dt class="col-5 text-muted fw-normal">Poste o columna</dt>
+                <dd class="col-7">{{ alarma.poleNumber ?? '—' }}</dd>
+
+                <dt class="col-5 text-muted fw-normal">Altura</dt>
+                <dd class="col-7">
+                  {{ alarma.heightM !== null ? alarma.heightM + ' m' : '—' }}
+                </dd>
+
+                <dt class="col-5 text-muted fw-normal">Referencia</dt>
+                <dd class="col-7">{{ alarma.reference ?? '—' }}</dd>
+
+                <dt class="col-5 text-muted fw-normal">Alimentación</dt>
+                <dd class="col-7">{{ alarma.powerPoint ?? '—' }}</dd>
+
+                @if (alarma.installNotes) {
+                  <dt class="col-5 text-muted fw-normal">Observaciones</dt>
+                  <dd class="col-7">{{ alarma.installNotes }}</dd>
+                }
+              </dl>
+            }
+          </div>
 
           <!-- Estado VIVO ≠ estado del equipo. Lo escribe SOLO el servicio de alarmas. -->
           @if (state(); as vivo) {

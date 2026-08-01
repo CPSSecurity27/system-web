@@ -4,6 +4,12 @@ import { AccountType, HomeMemberRole, OrgSubtype, UserRole } from '../auth/auth.
 // re-exportarlo explícito.
 export type { OrgSubtype };
 
+/**
+ * Hasta dónde llega el territorio de un cliente. Es lo que se le VENDIÓ: el
+ * sistema se vende tanto a una localidad como a un departamento entero.
+ */
+export type JurisdictionLevel = 'LOCALITY' | 'DEPARTMENT';
+
 /** /accounts, /users y /events vienen paginados; el resto son arrays pelados. */
 export interface Paginated<T> {
   items: T[];
@@ -57,6 +63,19 @@ export interface Account {
   /** 0 = la cuenta no tiene técnicos propios (el trabajo de campo lo hace CPS). */
   maxTechnicianUsers: number | null;
   maxMonitorUsers: number | null;
+  /**
+   * JURISDICCIÓN: hasta dónde llega el cliente. Es lo que se le VENDIÓ, y de
+   * eso depende dónde puede crear barrios:
+   *   LOCALITY   → solo en esa localidad
+   *   DEPARTMENT → en cualquier localidad de ese departamento
+   * null solo en COMPANY: CPS no tiene territorio.
+   */
+  jurisdictionLevel: JurisdictionLevel | null;
+  localityId: number | null;
+  departmentId: number | null;
+  /** Domicilio en el mapa. Opcional: ubica al cliente, no valida nada. */
+  latitude: number | null;
+  longitude: number | null;
 }
 
 /**
@@ -136,8 +155,33 @@ export interface HomeMember {
  * neighborhoodId null) y se instala por CLAIM (serial + código de un solo uso).
  */
 export type DeviceType = 'COMMUNITY_ALARM' | 'SIREN' | 'REPEATER' | 'SENSOR';
+/**
+ * `INSTALLED` se eliminó (2026-07-31): era lo mismo que OPERATIONAL y el
+ * backend nunca lo escribía.
+ *
+ * OJO: esto es lo que el equipo ES (estado administrativo). Si está online,
+ * sonando o mudo es ESTADO VIVO y vive en `device_state`, que escribe
+ * únicamente el servicio de alarmas. Una alarma OPERATIONAL que lleva tres días
+ * sin conectarse es un problema, y solo se ve si no se mezclan los dos.
+ */
 export type DeviceStatus =
-  'INVENTORY' | 'INSTALLED' | 'OPERATIONAL' | 'MAINTENANCE' | 'OUT_OF_SERVICE' | 'RETIRED';
+  'INVENTORY' | 'OPERATIONAL' | 'MAINTENANCE' | 'OUT_OF_SERVICE' | 'RETIRED';
+
+/**
+ * Los datos de INSTALACIÓN: lo que un técnico necesita saber antes de subirse a
+ * la escalera. Opcionales pero recomendados.
+ */
+export interface InstallationData {
+  /** Número de poste o columna. */
+  poleNumber?: string | null;
+  /** Altura de montaje en metros. */
+  heightM?: number | null;
+  /** La esquina, entre qué calles. */
+  reference?: string | null;
+  /** De qué luminaria o tablero toma energía. */
+  powerPoint?: string | null;
+  installNotes?: string | null;
+}
 
 /** Modelo de placa. El `code` es SOLO el prefijo del número impreso: 'ALOY'. */
 export interface BoardModel {
@@ -210,6 +254,12 @@ export interface Device {
   latitude: number | null;
   longitude: number | null;
   installedAt: string | null;
+  /** Datos de instalación: opcionales, recomendados, editables después. */
+  poleNumber: string | null;
+  heightM: number | null;
+  reference: string | null;
+  powerPoint: string | null;
+  installNotes: string | null;
   /** Último hito alcanzado en la puesta en marcha. Derivada, no almacenada. */
   stage: DeviceStage;
   milestones: DeviceMilestones;
@@ -278,18 +328,24 @@ export interface RemoteCode {
 export type ContractStatus = 'ACTIVE' | 'SUSPENDED' | 'EXPIRED' | 'CANCELLED';
 
 /**
- * v2: SIEMPRE organización → barrio, comercial puro. Los cupos ya no viven
- * acá: van en la cuenta y en el barrio (solo CPS los toca).
+ * v2.3: SIEMPRE organización → CUENTA, comercial puro. Era por barrio hasta
+ * 2026-07-31: se movió porque el sistema se vende a nivel municipal — la muni
+ * paga por N barrios y no le revende a cada uno. Consecuencia: no existe un
+ * "barrio sin contrato".
+ *
+ * Los cupos no viven acá: van en la cuenta y en el barrio (solo CPS los toca).
+ *
+ * `endDate` es obligatoria: el precio es POR EL PERÍODO del contrato. El
+ * período no se guarda — se deriva de las dos fechas.
  */
 export interface Contract {
   id: number;
   price: number;
   description: string | null;
   startDate: string;
-  endDate: string | null;
+  endDate: string;
   status: ContractStatus;
   accountId: number;
-  neighborhoodId: number;
 }
 
 // --- Eventos (el tablero del monitoreo) ------------------------------------

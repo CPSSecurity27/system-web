@@ -3,6 +3,7 @@ import { buildNav, NavFlags } from './nav';
 const flags = (over: Partial<NavFlags> = {}): NavFlags => ({
   isCps: false,
   isManager: false,
+  isOrgManager: false,
   isCommunityOrg: false,
   ...over,
 });
@@ -39,9 +40,32 @@ describe('buildNav', () => {
     expect(items.find((i) => i.link === '/barrios')?.label).toBe('Barrios');
   });
 
-  it('el manager de una organización ve Administrar con Contratos solamente', () => {
-    expect(sectionLabels(flags({ isManager: true }))).toEqual(['Operar', 'Administrar']);
-    expect(linksOf(flags({ isManager: true }), 'Administrar')).toEqual(['/contratos']);
+  it('el manager de una organización ve Operar, su Inventario y su organización', () => {
+    const f = flags({ isManager: true, isOrgManager: true });
+    expect(sectionLabels(f)).toEqual(['Operar', 'Inventario', 'Mi organización']);
+    expect(linksOf(f, 'Mi organización')).toEqual(['/mi-organizacion']);
+  });
+
+  it('la organización NO ve Administrar: Clientes y Usuarios son solo de CPS', () => {
+    expect(sectionLabels(flags({ isManager: true, isOrgManager: true }))).not.toContain(
+      'Administrar',
+    );
+  });
+
+  it('CPS NO ve "Mi organización": para eso tiene Mi Empresa', () => {
+    expect(sectionLabels(flags({ isCps: true, isManager: true }))).not.toContain(
+      'Mi organización',
+    );
+  });
+
+  it('Contratos ya no es una pestaña: el contrato vive en la ficha del cliente', () => {
+    for (const f of [
+      flags({ isCps: true, isManager: true }),
+      flags({ isManager: true, isOrgManager: true }),
+    ]) {
+      const links = buildNav(f).flatMap((s) => s.items.map((i) => i.link));
+      expect(links).not.toContain('/contratos');
+    }
   });
 
   it('CPS ve las cuatro secciones', () => {
@@ -53,8 +77,7 @@ describe('buildNav', () => {
     ]);
   });
 
-  it('Inventario es solo de CPS en esta fase', () => {
-    expect(sectionLabels(flags({ isManager: true }))).not.toContain('Inventario');
+  it('CPS ve todo el inventario, fábrica incluida', () => {
     expect(linksOf(flags({ isCps: true, isManager: true }), 'Inventario')).toEqual([
       '/inventario/stock',
       '/inventario/fabrica',
@@ -62,10 +85,21 @@ describe('buildNav', () => {
     ]);
   });
 
-  it('Administrar de CPS suma Clientes y Usuarios', () => {
+  it('el cliente ve SU inventario: alarmas y controles, pero NO la fábrica', () => {
+    const f = flags({ isManager: true, isOrgManager: true });
+    expect(linksOf(f, 'Inventario')).toEqual([
+      '/inventario/stock',
+      '/inventario/controles',
+    ]);
+  });
+
+  it('el vecino no ve inventario', () => {
+    expect(sectionLabels(flags())).not.toContain('Inventario');
+  });
+
+  it('Administrar de CPS son Clientes y Usuarios', () => {
     expect(linksOf(flags({ isCps: true, isManager: true }), 'Administrar')).toEqual([
       '/clientes',
-      '/contratos',
       '/usuarios',
     ]);
   });

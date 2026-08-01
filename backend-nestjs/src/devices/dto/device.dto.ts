@@ -1,4 +1,7 @@
 import {
+  ArrayMaxSize,
+  ArrayNotEmpty,
+  IsArray,
   IsBoolean,
   IsDateString,
   IsEnum,
@@ -6,8 +9,10 @@ import {
   IsLatitude,
   IsLongitude,
   IsNotEmpty,
+  IsNumber,
   IsOptional,
   IsString,
+  Max,
   Min,
 } from 'class-validator';
 import {
@@ -94,10 +99,52 @@ export class CreateDeviceDto {
 }
 
 /**
+ * Los datos de INSTALACIÓN, compartidos por el reclamo y la edición.
+ *
+ * Todos OPCIONALES —nadie mide la altura exacta colgado de una escalera— pero
+ * recomendados: es lo que un técnico necesita saber ANTES de subirse. Se cargan
+ * al instalar y se completan o corrigen después.
+ */
+export class InstallationDataDto {
+  /** Número de poste o columna. */
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  poleNumber?: string;
+
+  /** Altura de montaje en metros. El CHECK de la base la acota a (0, 30]. */
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 1 }, { message: 'La altura admite 1 decimal' })
+  @Min(0.1, { message: 'La altura tiene que ser mayor a 0' })
+  @Max(30, { message: 'La altura no puede superar los 30 metros' })
+  heightM?: number;
+
+  /** La esquina, entre qué calles. */
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  reference?: string;
+
+  /** De qué luminaria o tablero toma energía. */
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  powerPoint?: string;
+
+  /** Lo que no entra en los otros cuatro. */
+  @IsOptional()
+  @IsString()
+  installNotes?: string;
+}
+
+/**
  * CLAIM: el técnico (de CPS o de la organización dueña del stock) vincula el
  * equipo a SU barrio con serial + código. El código es de un solo uso.
+ *
+ * Hereda los datos de instalación: el mejor momento para cargarlos es cuando el
+ * técnico está parado abajo del poste.
  */
-export class ClaimDeviceDto {
+export class ClaimDeviceDto extends InstallationDataDto {
   @IsString()
   @IsNotEmpty()
   serial!: string;
@@ -124,8 +171,13 @@ export class ClaimDeviceDto {
   longitude?: number;
 }
 
-/** El `serial` NO está: es la identidad física del equipo y no se cambia. */
-export class UpdateDeviceDto {
+/**
+ * El `serial` NO está: es la identidad física del equipo y no se cambia.
+ *
+ * Hereda los datos de instalación: se completan y corrigen después, que es como
+ * pasa en la realidad.
+ */
+export class UpdateDeviceDto extends InstallationDataDto {
   @IsOptional()
   @IsString()
   @IsNotEmpty()
@@ -159,6 +211,30 @@ export class UpdateDeviceDto {
   @IsOptional()
   @IsDateString({}, { message: 'Fecha de instalación inválida' })
   installedAt?: string;
+}
+
+/**
+ * ENTREGA DE LOTE: fábrica -> organización, en UNA llamada.
+ *
+ * Existe porque entregar 50 alarmas eran 50 PATCH desde el front, cada uno con
+ * su chance de fallar por la mitad y dejar el lote a medio entregar. Acá o van
+ * todas o no va ninguna.
+ *
+ * `organizationId: null` devuelve a fábrica.
+ */
+export class DeliverDevicesDto {
+  @IsArray()
+  @ArrayNotEmpty({ message: 'Elegí al menos un equipo' })
+  @ArrayMaxSize(500, { message: 'Máximo 500 equipos por entrega' })
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  deviceIds!: number[];
+
+  /** La organización que recibe. `null` = vuelve al stock de fábrica. */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  organizationId?: number | null;
 }
 
 /**

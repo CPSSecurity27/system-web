@@ -8,6 +8,7 @@ import { BoardModel } from './entities/board-model.entity';
 import { DeviceMaintenance } from './entities/device-maintenance.entity';
 import { DeviceState } from './entities/device-state.entity';
 import { Device } from './entities/device.entity';
+import { Account } from '../accounts/entities/account.entity';
 
 @Module({
   imports: [
@@ -18,6 +19,8 @@ import { Device } from './entities/device.entity';
       BoardModel,
       Neighborhood,
       Home,
+      // La entrega de lote valida que la organización destino exista.
+      Account,
     ]),
   ],
   controllers: [DevicesController],

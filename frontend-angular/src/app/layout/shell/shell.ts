@@ -20,6 +20,7 @@ export class Shell {
     buildNav({
       isCps: this.auth.isCps(),
       isManager: this.auth.isManager(),
+      isOrgManager: this.auth.isOrgManager(),
       isCommunityOrg: this.auth.isCommunityOrg(),
     }),
   );

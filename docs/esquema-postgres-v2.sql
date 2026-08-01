@@ -27,7 +27,9 @@ CREATE TYPE managed_by_type   AS ENUM ('CPS', 'ORGANIZATION');
 CREATE TYPE home_member_role  AS ENUM ('TITULAR', 'FAMILIAR');
 CREATE TYPE contract_status   AS ENUM ('ACTIVE', 'SUSPENDED', 'EXPIRED', 'CANCELLED');
 CREATE TYPE device_type       AS ENUM ('COMMUNITY_ALARM', 'SIREN', 'REPEATER', 'SENSOR');
-CREATE TYPE device_status     AS ENUM ('INVENTORY', 'INSTALLED', 'OPERATIONAL',
+-- INSTALLED se eliminó (2026-07-31): era lo mismo que OPERATIONAL y estaba
+-- muerto — el backend nunca lo escribió.
+CREATE TYPE device_status     AS ENUM ('INVENTORY', 'OPERATIONAL',
                                        'MAINTENANCE', 'OUT_OF_SERVICE', 'RETIRED');
 -- Cómo se supo de un hito del equipo: lo vio el broker o lo marcó una persona.
 CREATE TYPE device_milestone_source AS ENUM ('OBSERVED', 'MANUAL');
@@ -474,6 +476,19 @@ CREATE TABLE device (
   longitude       DOUBLE PRECISION,
   installed_at    TIMESTAMPTZ,
 
+  -- Datos de INSTALACIÓN (2026-07-31). Lo que un técnico necesita saber ANTES
+  -- de subirse a la escalera. Todos OPCIONALES —nadie mide la altura colgado de
+  -- una escalera— pero recomendados, y editables después.
+  --
+  -- Columnas dedicadas y no un JSONB: así se puede preguntar "¿qué alarma está
+  -- en el poste 42?" o "¿cuáles cuelgan del tablero de la plaza?", que es lo que
+  -- sirve cuando hay que ir a arreglar algo.
+  pole_number     TEXT,                     -- número de poste o columna
+  height_m        NUMERIC(4,1),             -- altura de montaje, en metros
+  reference       TEXT,                     -- la esquina, entre qué calles
+  power_point     TEXT,                     -- de qué luminaria o tablero cuelga
+  install_notes   TEXT,                     -- lo que no entra en los anteriores
+
   created_by      INT REFERENCES app_user(id) ON DELETE SET NULL,
   updated_by      INT REFERENCES app_user(id) ON DELETE SET NULL,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -496,6 +511,10 @@ CREATE TABLE device (
   ),
   CONSTRAINT chk_device_board_seq CHECK (
     board_seq IS NULL OR (board_seq BETWEEN 1 AND 9999)
+  ),
+  -- Una altura de 0 o de 300 metros es un error de tipeo, no un dato.
+  CONSTRAINT chk_device_height CHECK (
+    height_m IS NULL OR (height_m > 0 AND height_m <= 30)
   ),
   -- La fecha de la primera conexión y su origen viajan juntos o no viajan.
   CONSTRAINT chk_device_first_connection CHECK (
