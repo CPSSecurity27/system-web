@@ -87,9 +87,12 @@ export async function login(
   app: INestApplication,
   username: string,
 ): Promise<string> {
+  // El campo es `identifier` desde el pivot a login por email (2026-07-21):
+  // un solo campo para username (panel), email o DNI (vecino). Mandar
+  // `username` rebota con 400 por `forbidNonWhitelisted`.
   const res = await api(app)
     .post('/api/auth/login')
-    .send({ username, password: CLAVE })
+    .send({ identifier: username, password: CLAVE })
     .expect(200);
   return (res.body as { accessToken: string }).accessToken;
 }

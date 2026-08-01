@@ -80,6 +80,134 @@ describe('Negocio — invariantes del modelo', () => {
     });
   });
 
+  /**
+   * El alta de un cliente. Dos caminos, y la diferencia NO es cosmética:
+   *
+   *  COMMUNITY  nace con su único barrio, así que hay contra qué contratar:
+   *             el contrato entra al mismo acto atómico y es obligatorio.
+   *  MUNICIPAL  nace SIN barrios (los crea después, contra su cupo), así que
+   *             no puede haber contrato todavía. Eso es válido, no un dato
+   *             faltante.
+   */
+  describe('alta de clientes', () => {
+    const contrato = {
+      price: 12345.67,
+      startDate: '2026-08-01',
+      description: 'Contrato de prueba',
+    };
+
+    const comunidad = (over: Record<string, unknown> = {}) => ({
+      name: `Consorcio ${Math.random().toString(36).slice(2, 8)}`,
+      managedBy: 'CPS',
+      maxAdminUsers: 1,
+      maxTechnicianUsers: 0,
+      maxMonitorUsers: 1,
+      ownerUsername: `owner_${Math.random().toString(36).slice(2, 8)}`,
+      neighborhood: { name: 'Barrio del consorcio', localityId: e.ids.localidad },
+      contract: contrato,
+      ...over,
+    });
+
+    it('una comunitaria NO se puede crear sin contrato', () => {
+      const { contract: _sinContrato, ...sinContrato } = comunidad();
+      return api(e.app)
+        .post('/api/accounts/onboard-community')
+        .set(bearer(e.cps))
+        .send(sinContrato)
+        .expect(400);
+    });
+
+    it('una comunitaria nace con su barrio Y su contrato, en un solo acto', async () => {
+      const res = await api(e.app)
+        .post('/api/accounts/onboard-community')
+        .set(bearer(e.cps))
+        .send(comunidad())
+        .expect(201);
+
+      const body = res.body as { neighborhoodId: number; contractId: number };
+      expect(typeof body.contractId).toBe('number');
+
+      const contratoCreado = await api(e.app)
+        .get(`/api/contracts/${body.contractId}`)
+        .set(bearer(e.cps))
+        .expect(200);
+
+      const c = contratoCreado.body as { price: number; neighborhoodId: number };
+      expect(c.price).toBe(12345.67);
+      expect(c.neighborhoodId).toBe(body.neighborhoodId);
+    });
+
+    it('una municipalidad nace SIN barrios y SIN contrato, y eso es válido', async () => {
+      const name = `Muni ${Math.random().toString(36).slice(2, 8)}`;
+      const res = await api(e.app)
+        .post('/api/accounts/onboard-municipal')
+        .set(bearer(e.cps))
+        .send({
+          name,
+          maxNeighborhoods: 5,
+          maxAdminUsers: 2,
+          maxTechnicianUsers: 1,
+          maxMonitorUsers: 1,
+          ownerUsername: `muni_${Math.random().toString(36).slice(2, 8)}`,
+        })
+        .expect(201);
+
+      const body = res.body as { account: { id: number }; temporaryPassword: string };
+      expect(typeof body.temporaryPassword).toBe('string');
+
+      const barrios = await api(e.app)
+        .get(`/api/neighborhoods?organizationId=${body.account.id}`)
+        .set(bearer(e.cps))
+        .expect(200);
+      expect(barrios.body).toEqual([]);
+    });
+
+    /**
+     * EL bug que este alta cierra. Antes eran tres llamadas encadenadas desde
+     * el front: si fallaba la del OWNER, quedaba una cuenta que nadie podía
+     * administrar. Que el mensaje diga cuál falló no deshace lo ya creado.
+     */
+    it('el alta municipal es ATÓMICA: si el OWNER falla, NO queda cuenta huérfana', async () => {
+      const ownerUsername = `dup_${Math.random().toString(36).slice(2, 8)}`;
+      const huerfana = `Huerfana ${Math.random().toString(36).slice(2, 8)}`;
+
+      // Primera: se queda con el username.
+      await api(e.app)
+        .post('/api/accounts/onboard-municipal')
+        .set(bearer(e.cps))
+        .send({
+          name: `Muni ${Math.random().toString(36).slice(2, 8)}`,
+          maxNeighborhoods: 1,
+          maxAdminUsers: 1,
+          maxTechnicianUsers: 0,
+          maxMonitorUsers: 0,
+          ownerUsername,
+        })
+        .expect(201);
+
+      // Segunda: mismo username, otro nombre de cuenta. Debe rebotar...
+      await api(e.app)
+        .post('/api/accounts/onboard-municipal')
+        .set(bearer(e.cps))
+        .send({
+          name: huerfana,
+          maxNeighborhoods: 1,
+          maxAdminUsers: 1,
+          maxTechnicianUsers: 0,
+          maxMonitorUsers: 0,
+          ownerUsername,
+        })
+        .expect(409);
+
+      // ...y NO dejar la cuenta creada.
+      const res = await api(e.app)
+        .get(`/api/accounts?search=${encodeURIComponent(huerfana)}`)
+        .set(bearer(e.cps))
+        .expect(200);
+      expect((res.body as { items: unknown[] }).items).toEqual([]);
+    });
+  });
+
   describe('membresías (los invariantes de §5 que la base no puede)', () => {
     it('un TECHNICIAN NO existe en una cuenta HOME', () =>
       api(e.app)
