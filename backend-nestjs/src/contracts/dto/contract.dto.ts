@@ -11,7 +11,10 @@ import {
 import { ContractStatus } from '../../common/enums';
 
 /**
- * v2: el contrato es SIEMPRE organización -> barrio y es comercial PURO.
+ * v2.3: el contrato es SIEMPRE organización -> CUENTA (era por barrio hasta
+ * 2026-07-31) y es comercial PURO. El sistema se vende a nivel municipal: la
+ * muni paga por N barrios y no le revende a cada uno.
+ *
  * Los cupos (max_family_members, controles, etc.) NO viven acá: van en la
  * cuenta y en el barrio, y solo CPS los toca (/accounts/:id/quotas y el barrio).
  */
@@ -19,10 +22,6 @@ export class CreateContractDto {
   @IsInt()
   @Min(1)
   accountId!: number;
-
-  @IsInt()
-  @Min(1)
-  neighborhoodId!: number;
 
   /** Se CONGELA al firmar: si mañana sube la tarifa, este contrato no cambia. */
   @Type(() => Number)
@@ -36,10 +35,13 @@ export class CreateContractDto {
   @IsDateString({}, { message: 'Fecha de inicio inválida (YYYY-MM-DD)' })
   startDate!: string;
 
-  /** Nullable: un contrato abierto o autorrenovable no tiene fecha de fin. */
-  @IsOptional()
+  /**
+   * OBLIGATORIA: el precio es por EL PERÍODO del contrato, así que sin fecha de
+   * fin el número no significa nada. El período no se manda ni se guarda: se
+   * deriva de las dos fechas.
+   */
   @IsDateString({}, { message: 'Fecha de fin inválida (YYYY-MM-DD)' })
-  endDate?: string;
+  endDate!: string;
 
   @IsOptional()
   @IsString()

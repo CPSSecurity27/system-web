@@ -24,18 +24,26 @@
               <label for="organizationId" class="form-label small fw-medium">
                 Organización dueña
               </label>
+              <!-- Solo MUNICIPALES: una comunitaria ya tiene su único barrio,
+                   creado con la cuenta. Ver `organizations()`. -->
               <select id="organizationId" class="form-select" formControlName="organizationId">
-                <option [ngValue]="null">Elegí la organización cliente…</option>
+                <option [ngValue]="null">Elegí la municipalidad…</option>
                 @for (org of organizations(); track org.id) {
-                  <option [ngValue]="org.id">
-                    {{ org.name }}
-                    ({{ org.subtype === 'MUNICIPAL' ? 'Municipalidad' : 'Comunidad' }})
-                  </option>
+                  <option [ngValue]="org.id">{{ org.name }}</option>
                 }
               </select>
               <div class="form-text">
-                El barrio nace a nombre del cliente y descuenta de SU cupo de barrios.
+                El barrio nace a nombre de la municipalidad y descuenta de SU cupo de barrios.
+                <strong>Solo municipalidades:</strong> una comunitaria gestiona un único barrio y ya
+                lo tiene desde que se creó.
               </div>
+              @if (organizations().length === 0) {
+                <div class="alert bg-warning-soft border-0 py-2 small mt-2">
+                  <i class="bi bi-info-circle me-1"></i>
+                  No hay ninguna municipalidad cargada todavía.
+                  <a routerLink="/clientes/nuevo">Creá el cliente primero</a>.
+                </div>
+              }
             </div>
           } @else {
             <div class="alert bg-warning-soft border-0 py-2 small mb-3">
@@ -99,6 +107,38 @@
               en el padrón oficial, así que no se puede crear un barrio ahí.
             </div>
           }
+
+          <!--
+            El PUNTO en el mapa: opcional, ubica al barrio. NO decide dónde
+            puede estar — eso lo dice la LOCALIDAD, que el backend valida
+            contra la jurisdicción del cliente.
+          -->
+          <div class="card border mb-3">
+            <div class="card-header bg-white border-bottom">
+              <span class="fw-semibold small">
+                <i class="bi bi-geo-alt me-1"></i> Ubicación en el mapa
+                <span class="text-muted fw-normal">(opcional)</span>
+              </span>
+            </div>
+            <div class="card-body">
+              <!-- Nadie tipea coordenadas: se clickea el mapa y listo. -->
+              <p class="text-muted small mb-2">Hacé click en el mapa para marcar el barrio.</p>
+              <app-map [clickable]="true" (positionChange)="setPosition($event)" />
+              @if (latitude() !== null) {
+                <p class="small mb-0 mt-2">
+                  <i class="bi bi-check-circle text-success me-1"></i>
+                  <span class="font-monospace">{{ latitude() }}, {{ longitude() }}</span>
+                  <button
+                    type="button"
+                    class="btn btn-link btn-sm p-0 ms-2 align-baseline"
+                    (click)="clearPosition()"
+                  >
+                    Quitar
+                  </button>
+                </p>
+              }
+            </div>
+          </div>
 
           @if (error()) {
             <div class="alert bg-brand-soft text-brand border-0 py-2 small" role="alert">

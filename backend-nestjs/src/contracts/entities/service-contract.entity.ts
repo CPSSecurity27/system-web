@@ -4,29 +4,33 @@ import {
   CreateDateColumn,
   Entity,
   Index,
-  JoinColumn,
-  ManyToOne,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
 import { AccountType, ContractStatus } from '../../common/enums';
-import { Neighborhood } from '../../neighborhoods/entities/neighborhood.entity';
 
 /**
- * El contrato de servicio (v2): SIEMPRE organización -> barrio. Ya no existen
- * contratos por vivienda (nadie paga a nivel hogar en ningún esquema).
+ * El contrato de servicio (v2.3): SIEMPRE organización -> CUENTA.
+ *
+ * Era del BARRIO hasta 2026-07-31. Se movió a la cuenta porque el sistema se
+ * vende A NIVEL MUNICIPAL: la muni paga por una cantidad de barrios
+ * (`account.max_neighborhoods`) y NO le revende a cada uno. Un contrato por
+ * barrio la convertiría en intermediaria de sus propios vecinos.
+ * Consecuencia: no existe un "barrio sin contrato" — si la cuenta tiene
+ * contrato vigente, todos sus barrios están cubiertos hasta el cupo.
  *
  * Guarda lo comercial PURO y lo congela al firmar (price, fechas), como el
- * precio en una factura. Los CUPOS ya no viven acá: son columnas del barrio y
- * de la cuenta, editables solo por CPS (la parte flexible de la tarifa).
+ * precio en una factura. Los CUPOS no viven acá: son columnas del barrio y de
+ * la cuenta, editables solo por CPS (la parte flexible de la tarifa).
  *
- * El FK apunta del contrato hacia el barrio (y no al revés) para conservar el
- * historial: un barrio acumula contratos vencidos.
+ * El PERÍODO no se guarda: se deriva de start_date..end_date. Guardarlo sería
+ * un segundo lugar donde vive el mismo dato, libre de contradecir a las fechas
+ * (mismo criterio que los hitos de puesta en marcha del equipo).
  *
  * Invariantes que impone la BASE:
  *  - account_type es copia atada con FK compuesta a account(id, type) y fijada
  *    en 'ORGANIZATION' por CHECK: una COMPANY no puede contratar.
- *  - Índice único parcial: UN solo contrato ACTIVE por barrio.
+ *  - Índice único parcial: UN solo contrato ACTIVE por CUENTA.
  */
 @Entity('service_contract')
 @Index('idx_contract_account', ['accountId'])
@@ -57,9 +61,13 @@ export class ServiceContract {
   @Column({ name: 'start_date', type: 'date' })
   startDate!: string;
 
-  /** Nullable: un contrato abierto o autorrenovable no tiene fecha de fin. */
-  @Column({ name: 'end_date', type: 'date', nullable: true })
-  endDate!: string | null;
+  /**
+   * OBLIGATORIA desde 2026-07-31: el precio es por EL PERÍODO del contrato, así
+   * que sin fecha de fin el número no significa nada. Un contrato "abierto" se
+   * modela firmando el siguiente cuando este vence (estado EXPIRED).
+   */
+  @Column({ name: 'end_date', type: 'date' })
+  endDate!: string;
 
   @Column({ type: 'enum', enum: ContractStatus, enumName: 'contract_status' })
   status!: ContractStatus;
@@ -77,19 +85,9 @@ export class ServiceContract {
   })
   accountType!: AccountType;
 
-  @Column({ name: 'neighborhood_id', type: 'int' })
-  neighborhoodId!: number;
-
   // A propósito NO hay @ManyToOne a Account: en la base, account_id no tiene una
   // FK simple, sino la COMPUESTA (account_id, account_type) -> account(id, type).
   // TypeORM no sabe expresar eso; la cuenta se carga explícita cuando hace falta.
-
-  @ManyToOne(() => Neighborhood, { onDelete: 'RESTRICT' })
-  @JoinColumn({
-    name: 'neighborhood_id',
-    foreignKeyConstraintName: 'service_contract_neighborhood_id_fkey',
-  })
-  neighborhood!: Neighborhood;
 
   @Column({ name: 'created_by', type: 'int', nullable: true })
   createdBy!: number | null;

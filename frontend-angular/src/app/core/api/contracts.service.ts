@@ -9,14 +9,18 @@ import { Contract, ContractStatus } from '../models/api.models';
  * v2: el contrato es SIEMPRE organización → barrio y es comercial PURO.
  * Los cupos ya NO viven acá: van en la cuenta y en el barrio (solo CPS).
  */
+/**
+ * El contrato es del CLIENTE, no de un barrio (desde 2026-07-31): el sistema se
+ * vende a nivel municipal y la cuenta paga por los barrios de su cupo.
+ */
 export interface CreateContract {
   accountId: number;
-  neighborhoodId: number;
   /** Se CONGELA al firmar, como el precio en una factura. */
   price: number;
   /** 'YYYY-MM-DD', NO un timestamp ISO. */
   startDate: string;
-  endDate?: string;
+  /** OBLIGATORIA: el precio es por EL PERÍODO del contrato. */
+  endDate: string;
   description?: string;
 }
 

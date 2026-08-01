@@ -5,9 +5,9 @@
   </div>
 } @else {
   <div class="d-flex align-items-center mb-3">
-    <!-- Mi Empresa no tiene lista de la que venir: el volver la llevaría a la
-         de clientes, que es justo el lugar donde CPS ya no está. -->
-    @if (!isCompanyView) {
+    <!-- Sin `:id` no hay lista de la que venir: el volver llevaría a /clientes,
+         que es solo-CPS (y donde CPS ni siquiera figura). -->
+    @if (!isOwnAccountView) {
       <a routerLink="/clientes" class="btn btn-sm btn-outline-secondary me-2" title="Volver">
         <i class="bi bi-arrow-left"></i>
       </a>
@@ -174,6 +174,227 @@
           </table>
         </div>
       </div>
+
+      <!--
+        LOS BARRIOS del cliente. Acá y no solo en /barrios: desde la ficha se
+        ve de un vistazo cuántos tiene contra su cupo, que es media tarifa.
+      -->
+      @if (account()?.type === 'ORGANIZATION') {
+        <div class="card border mt-3">
+          <div class="card-header bg-white border-bottom d-flex align-items-center">
+            <span class="fw-semibold small"><i class="bi bi-houses me-1"></i> Barrios</span>
+            <span class="badge text-bg-light border ms-2">
+              {{ orgBarrios().length }}/{{ account()?.maxNeighborhoods }}
+            </span>
+            @if (auth.isCps() && account()?.subtype !== 'COMMUNITY') {
+              <a routerLink="/barrios/nuevo" class="btn btn-sm btn-outline-secondary ms-auto">
+                <i class="bi bi-plus-lg me-1"></i> Nuevo barrio
+              </a>
+            }
+          </div>
+          <div class="card-body">
+            @if (orgBarrios().length === 0) {
+              <p class="text-muted small mb-0">
+                Este cliente todavía no tiene barrios.
+                @if (account()?.subtype === 'MUNICIPAL') {
+                  Los puede crear su administrador, o CPS desde
+                  <a routerLink="/barrios/nuevo">Nuevo barrio</a>.
+                }
+              </p>
+            } @else {
+              <ul class="list-unstyled small mb-0">
+                @for (barrio of orgBarrios(); track barrio.id) {
+                  <li class="mb-1 d-flex align-items-center gap-2">
+                    <a [routerLink]="['/barrios', barrio.id]" class="text-decoration-none">
+                      {{ barrio.name }}
+                    </a>
+                    <!-- Quién OPERA el barrio: es una decisión comercial POR
+                         BARRIO, independiente del subtipo de la cuenta. -->
+                    @if (barrio.managedBy === 'CPS') {
+                      <span class="badge bg-brand-soft text-brand border">Llave en mano</span>
+                    } @else {
+                      <span class="badge text-bg-light border">Autogestión</span>
+                    }
+                    @if (barrio.latitude === null) {
+                      <span class="text-muted" title="Sin punto en el mapa">
+                        <i class="bi bi-geo-alt"></i>
+                      </span>
+                    }
+                  </li>
+                }
+              </ul>
+            }
+          </div>
+        </div>
+      }
+
+      <!--
+        CONTRATO. Vive acá desde que dejó de ser pestaña (2026-07-31): es de la
+        CUENTA, uno ACTIVE por cliente. CPS no contrata (presta el servicio),
+        así que la tarjeta no aparece en Mi Empresa.
+      -->
+      @if (account()?.type === 'ORGANIZATION') {
+        <div class="card border mt-3">
+          <div class="card-header bg-white border-bottom d-flex align-items-center">
+            <span class="fw-semibold small">
+              <i class="bi bi-file-earmark-text me-1"></i> Contrato
+            </span>
+            @if (auth.isCps() && !showRenew()) {
+              <button
+                type="button"
+                class="btn btn-sm btn-outline-secondary ms-auto"
+                (click)="abrirRenovacion()"
+              >
+                <i class="bi bi-arrow-repeat me-1"></i>
+                {{ activeContract() ? 'Renovar' : 'Firmar contrato' }}
+              </button>
+            }
+          </div>
+          <div class="card-body">
+            @if (activeContract(); as contrato) {
+              <div class="d-flex flex-wrap gap-4 align-items-center mb-2">
+                <div>
+                  <div class="text-muted small">Precio del período</div>
+                  <div class="fw-semibold">
+                    {{ contrato.price | currency: 'ARS' : 'symbol-narrow' }}
+                  </div>
+                </div>
+                <div>
+                  <div class="text-muted small">Período</div>
+                  <div class="small">
+                    {{ contrato.startDate | date: 'dd/MM/yyyy' }} —
+                    {{ contrato.endDate | date: 'dd/MM/yyyy' }}
+                  </div>
+                </div>
+                <div>
+                  <div class="text-muted small">Estado</div>
+                  <span class="badge bg-success-soft text-success border">Activo</span>
+                </div>
+                @if (auth.isCps()) {
+                  <div class="ms-auto">
+                    <button
+                      type="button"
+                      class="btn btn-sm btn-outline-secondary me-1"
+                      [disabled]="savingContract()"
+                      (click)="cambiarEstadoContrato(contrato, 'SUSPENDED')"
+                    >
+                      Suspender
+                    </button>
+                    <button
+                      type="button"
+                      class="btn btn-sm btn-outline-danger"
+                      [disabled]="savingContract()"
+                      (click)="cambiarEstadoContrato(contrato, 'CANCELLED')"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                }
+              </div>
+              @if (contrato.description) {
+                <p class="text-muted small mb-0">{{ contrato.description }}</p>
+              }
+            } @else {
+              <cps-alert variant="warning" [dense]="true">
+                Este cliente no tiene contrato vigente.
+              </cps-alert>
+            }
+
+            <!--
+              RENOVAR es firmar uno NUEVO, no correr la fecha del vigente: el
+              precio está congelado y es POR EL PERÍODO, así que estirar el
+              plazo abarataría el servicio sin que nadie lo decida.
+            -->
+            @if (showRenew()) {
+              <hr />
+              <form [formGroup]="renewForm" (ngSubmit)="renovar()" novalidate>
+                <p class="text-muted small">
+                  Se firma un contrato nuevo con su propio precio y período. El vigente, si hay,
+                  queda como <strong>vencido</strong>.
+                </p>
+                <div class="row g-3 mb-2">
+                  <div class="col-12 col-sm-4">
+                    <label for="rPrice" class="form-label small fw-medium">Precio del período</label>
+                    <input
+                      id="rPrice"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      class="form-control"
+                      formControlName="price"
+                    />
+                  </div>
+                  <div class="col-12 col-sm-4">
+                    <label for="rStart" class="form-label small fw-medium">Desde</label>
+                    <input id="rStart" type="date" class="form-control" formControlName="startDate" />
+                  </div>
+                  <div class="col-12 col-sm-4">
+                    <label for="rEnd" class="form-label small fw-medium">Hasta</label>
+                    <input id="rEnd" type="date" class="form-control" formControlName="endDate" />
+                  </div>
+                </div>
+                <div class="btn-group btn-group-sm flex-wrap mb-3" role="group">
+                  <button type="button" class="btn btn-outline-secondary" (click)="aplicarPlazoRenovacion(3)">
+                    Trimestral
+                  </button>
+                  <button type="button" class="btn btn-outline-secondary" (click)="aplicarPlazoRenovacion(6)">
+                    Semestral
+                  </button>
+                  <button type="button" class="btn btn-outline-secondary" (click)="aplicarPlazoRenovacion(12)">
+                    Anual
+                  </button>
+                  <button type="button" class="btn btn-outline-secondary" (click)="aplicarPlazoRenovacion(24)">
+                    2 años
+                  </button>
+                </div>
+                <div class="d-flex gap-2">
+                  <button
+                    type="submit"
+                    class="btn btn-sm btn-brand"
+                    [disabled]="savingContract() || renewForm.invalid"
+                  >
+                    {{ savingContract() ? 'Firmando…' : 'Firmar' }}
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-outline-secondary"
+                    (click)="showRenew.set(false)"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </form>
+            }
+
+            @if (pastContracts().length > 0) {
+              <hr />
+              <p class="text-muted small mb-2">Historial</p>
+              <ul class="list-unstyled small mb-0">
+                @for (viejo of pastContracts(); track viejo.id) {
+                  <li class="mb-1 d-flex gap-2 align-items-center">
+                    <span class="badge bg-light text-muted border">{{ viejo.status }}</span>
+                    <span>{{ viejo.price | currency: 'ARS' : 'symbol-narrow' }}</span>
+                    <span class="text-muted">
+                      {{ viejo.startDate | date: 'dd/MM/yy' }} —
+                      {{ viejo.endDate | date: 'dd/MM/yy' }}
+                    </span>
+                    @if (auth.isCps() && viejo.status === 'SUSPENDED') {
+                      <button
+                        type="button"
+                        class="btn btn-sm btn-outline-secondary ms-auto"
+                        [disabled]="savingContract()"
+                        (click)="cambiarEstadoContrato(viejo, 'ACTIVE')"
+                      >
+                        Reactivar
+                      </button>
+                    }
+                  </li>
+                }
+              </ul>
+            }
+          </div>
+        </div>
+      }
 
       <!-- CUPOS: la tarifa. Solo CPS los ve editables; el cambio queda auditado.
            La cuenta COMPANY no tiene cupos (CPS no se cobra a sí misma): la

@@ -10,17 +10,19 @@ import { AccountType, ContractStatus } from '../common/enums';
 import { AuditService } from '../common/audit.service';
 import { AccessScope } from '../common/scope.service';
 import { Account } from '../accounts/entities/account.entity';
-import { Neighborhood } from '../neighborhoods/entities/neighborhood.entity';
 import { CreateContractDto, UpdateContractDto } from './dto/contract.dto';
 import { ServiceContract } from './entities/service-contract.entity';
 
-/** Violación del índice único parcial (un solo contrato ACTIVE por barrio). */
+/** Violación del índice único parcial (un solo contrato ACTIVE por CUENTA). */
 const PG_UNIQUE_VIOLATION = '23505';
 
 /**
- * Contratos (v2): SIEMPRE organización -> barrio. Ya no existen contratos por
- * vivienda (nadie paga a nivel hogar). El contrato es comercial PURO: precio y
- * fechas congelados al firmar. Los cupos viven en la cuenta y el barrio.
+ * Contratos (v2.3): SIEMPRE organización -> CUENTA. Era por barrio hasta
+ * 2026-07-31: se movió porque el sistema se vende a nivel municipal — la muni
+ * paga por N barrios y no le revende a cada uno.
+ *
+ * El contrato es comercial PURO: precio y fechas congelados al firmar. Los
+ * cupos viven en la cuenta y el barrio.
  */
 @Injectable()
 export class ContractsService {
@@ -28,8 +30,6 @@ export class ContractsService {
     @InjectRepository(ServiceContract)
     private readonly contracts: Repository<ServiceContract>,
     @InjectRepository(Account) private readonly accounts: Repository<Account>,
-    @InjectRepository(Neighborhood)
-    private readonly neighborhoods: Repository<Neighborhood>,
     private readonly audit: AuditService,
   ) {}
 
@@ -47,7 +47,6 @@ export class ContractsService {
       );
     }
 
-    await this.assertNeighborhoodExists(dto.neighborhoodId);
     this.assertDates(dto.startDate, dto.endDate);
 
     try {
@@ -56,12 +55,11 @@ export class ContractsService {
           price: dto.price,
           description: dto.description ?? null,
           startDate: dto.startDate,
-          endDate: dto.endDate ?? null,
+          endDate: dto.endDate,
           status: ContractStatus.ACTIVE,
           accountId: account.id,
           // Fijada en ORGANIZATION por el CHECK; la FK compuesta la verifica.
           accountType: AccountType.ORGANIZATION,
-          neighborhoodId: dto.neighborhoodId,
           createdBy,
         }),
       );
@@ -72,36 +70,40 @@ export class ContractsService {
         entityType: 'service_contract',
         entityId: contract.id,
         accountId: account.id,
-        neighborhoodId: dto.neighborhoodId,
         newValue: {
           price: dto.price,
           startDate: dto.startDate,
-          endDate: dto.endDate ?? null,
+          endDate: dto.endDate,
         },
       });
 
       return contract;
     } catch (error) {
-      // Un solo contrato ACTIVE por barrio: se deja fallar a la base (chequear
+      // Un solo contrato ACTIVE por CUENTA: se deja fallar a la base (chequear
       // antes con SELECT sería una condición de carrera) y se traduce el error.
       if (isUniqueViolation(error)) {
         throw new ConflictException(
-          'Ese barrio ya tiene un contrato ACTIVE. Cerrá el anterior primero.',
+          'Ese cliente ya tiene un contrato ACTIVE. Cerrá el anterior primero.',
         );
       }
       throw error;
     }
   }
 
+  /**
+   * El alcance de contratos sale de las CUENTAS, no de los barrios: desde que
+   * el contrato es de la cuenta, una muni recién creada no tiene barrios y su
+   * contrato existe igual. Filtrar por barrio la dejaría sin ver el suyo.
+   */
   findAll(scope: AccessScope): Promise<ServiceContract[]> {
     if (scope.global) {
       return this.contracts.find({ order: { id: 'DESC' } });
     }
 
-    if (scope.neighborhoodIds.length === 0) return Promise.resolve([]);
+    if (scope.accountIds.length === 0) return Promise.resolve([]);
 
     return this.contracts.find({
-      where: { neighborhoodId: In(scope.neighborhoodIds) },
+      where: { accountId: In(scope.accountIds) },
       order: { id: 'DESC' },
     });
   }
@@ -110,10 +112,8 @@ export class ContractsService {
     const contract = await this.contracts.findOne({ where: { id } });
     if (!contract) throw new NotFoundException(`No existe el contrato ${id}`);
 
-    if (
-      !scope.global &&
-      !scope.neighborhoodIds.includes(contract.neighborhoodId)
-    ) {
+    if (!scope.global && !scope.accountIds.includes(contract.accountId)) {
+      // 404 y no 403: en contratos no se revela ni que existe.
       throw new NotFoundException(`No existe el contrato ${id}`);
     }
 
@@ -134,6 +134,7 @@ export class ContractsService {
       global: true,
       neighborhoodIds: [],
       homeIds: [],
+      accountIds: [],
     });
 
     if (dto.endDate) this.assertDates(contract.startDate, dto.endDate);
@@ -146,10 +147,12 @@ export class ContractsService {
         updatedBy,
       });
     } catch (error) {
-      // Reactivar un contrato viejo cuando ya hay otro ACTIVE sobre el mismo
-      // barrio: lo frena el mismo índice único parcial.
+      // Reactivar un contrato viejo cuando ya hay otro ACTIVE sobre la misma
+      // cuenta: lo frena el mismo índice único parcial.
       if (isUniqueViolation(error)) {
-        throw new ConflictException('Ese barrio ya tiene otro contrato ACTIVE');
+        throw new ConflictException(
+          'Ese cliente ya tiene otro contrato ACTIVE',
+        );
       }
       throw error;
     }
@@ -161,7 +164,6 @@ export class ContractsService {
         entityType: 'service_contract',
         entityId: id,
         accountId: contract.accountId,
-        neighborhoodId: contract.neighborhoodId,
         oldValue: { status: contract.status },
         newValue: { status: dto.status },
       });
@@ -182,11 +184,6 @@ export class ContractsService {
     const account = await this.accounts.findOne({ where: { id } });
     if (!account) throw new NotFoundException(`No existe la cuenta ${id}`);
     return account;
-  }
-
-  private async assertNeighborhoodExists(id: number): Promise<void> {
-    const found = await this.neighborhoods.findOne({ where: { id } });
-    if (!found) throw new NotFoundException(`No existe el barrio ${id}`);
   }
 }
 

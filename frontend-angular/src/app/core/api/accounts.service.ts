@@ -6,6 +6,7 @@ import { environment } from '../../../environments/environment';
 import { AccountType, UserRole } from '../auth/auth.models';
 import {
   Account,
+  JurisdictionLevel,
   ManagedBy,
   Member,
   OrgSubtype,
@@ -45,6 +46,10 @@ export interface OnboardCommunity {
    */
   managedBy: ManagedBy;
   planId?: number;
+  /** Obligatorio: no existe un cliente sin contrato. */
+  contract: OnboardContract;
+  /** Opcional: si está, el OWNER puede recuperar su contraseña solo. */
+  ownerEmail?: string;
   maxAdminUsers?: number;
   maxTechnicianUsers?: number;
   maxMonitorUsers?: number;
@@ -57,9 +62,64 @@ export interface OnboardCommunity {
   };
 }
 
+/**
+ * El contrato que se firma junto con el alta. Es de la CUENTA, y no lleva su
+ * id porque la cuenta se está creando en el mismo acto.
+ */
+export interface OnboardContract {
+  price: number;
+  /** AAAA-MM-DD */
+  startDate: string;
+  /** OBLIGATORIA: el precio es por el período del contrato. */
+  endDate: string;
+  description?: string;
+}
+
+/**
+ * Hasta dónde llega el cliente. Solo se manda en el alta MUNICIPAL: la
+ * comunitaria la deriva de su único barrio.
+ */
+export interface Jurisdiction {
+  level: JurisdictionLevel;
+  /** Con nivel LOCALITY. */
+  localityId?: number;
+  /** Con nivel DEPARTMENT. */
+  departmentId?: number;
+  latitude?: number;
+  longitude?: number;
+}
+
 export interface OnboardCommunityResult {
   account: Account;
   neighborhoodId: number;
+  contractId: number;
+  ownerId: number;
+  ownerUsername: string;
+  /** Se muestra UNA sola vez: no se puede volver a leer. */
+  temporaryPassword: string;
+}
+
+/**
+ * Alta atómica de una MUNICIPAL: cuenta + OWNER + membresía. Sin barrio y sin
+ * contrato, a propósito — la muni carga sus barrios después, contra su cupo.
+ */
+export interface OnboardMunicipal {
+  name: string;
+  jurisdiction: Jurisdiction;
+  contract: OnboardContract;
+  planId?: number;
+  maxNeighborhoods?: number;
+  maxAdminUsers?: number;
+  maxTechnicianUsers?: number;
+  maxMonitorUsers?: number;
+  ownerUsername: string;
+  /** Opcional: si está, el OWNER puede recuperar su contraseña solo. */
+  ownerEmail?: string;
+}
+
+export interface OnboardMunicipalResult {
+  account: Account;
+  contractId: number;
   ownerId: number;
   ownerUsername: string;
   /** Se muestra UNA sola vez: no se puede volver a leer. */
@@ -112,13 +172,26 @@ export class AccountsService {
 
   /**
    * Alta atómica de una organización COMMUNITY: cuenta + su único barrio +
-   * OWNER institucional (clave temporal) + membresía, todo en una transacción
-   * — o nada, si algo falla no queda una cuenta a medio crear. Para MUNICIPAL
-   * seguí usando create() + UsersService.create() + addMember() por
-   * separado: tiene varios barrios y los carga después.
+   * OWNER institucional (clave temporal) + membresía + CONTRATO, todo en una
+   * transacción — o nada, si algo falla no queda una cuenta a medio crear.
+   *
+   * El contrato va acá porque la comunitaria nace con su barrio: hay contra
+   * qué contratar. Es obligatorio.
    */
   onboardCommunity(dto: OnboardCommunity): Observable<OnboardCommunityResult> {
     return this.http.post<OnboardCommunityResult>(`${this.api}/accounts/onboard-community`, dto);
+  }
+
+  /**
+   * Alta atómica de una MUNICIPAL: cuenta + OWNER + membresía en una sola
+   * llamada. Antes eran tres encadenadas desde acá, y si fallaba la del OWNER
+   * quedaba una cuenta que nadie podía administrar.
+   *
+   * No lleva contrato: la muni nace SIN barrios, así que no hay contra qué
+   * firmarlo. Eso es un estado válido, no un alta a medias.
+   */
+  onboardMunicipal(dto: OnboardMunicipal): Observable<OnboardMunicipalResult> {
+    return this.http.post<OnboardMunicipalResult>(`${this.api}/accounts/onboard-municipal`, dto);
   }
 
   /** SOLO CPS: los cupos son la tarifa. Queda auditado con viejo → nuevo. */

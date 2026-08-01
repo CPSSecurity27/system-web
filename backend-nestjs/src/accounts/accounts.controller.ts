@@ -17,13 +17,18 @@ import { AccountType, UserRole } from '../common/enums';
 import type { AuthenticatedUser } from '../auth/auth.service';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { RequireMembership } from '../auth/decorators/roles.decorator';
-import type { OnboardCommunityResult, PagedAccounts } from './accounts.service';
+import type {
+  OnboardCommunityResult,
+  OnboardMunicipalResult,
+  PagedAccounts,
+} from './accounts.service';
 import { AccountsService } from './accounts.service';
 import {
   AddMemberDto,
   CreateAccountDto,
   FindAccountsQuery,
   OnboardCommunityDto,
+  OnboardMunicipalDto,
   SetStaffAssignmentsDto,
   UpdateMemberRoleDto,
   UpdateQuotasDto,
@@ -78,6 +83,29 @@ export class AccountsController {
     @CurrentUser() actor: AuthenticatedUser,
   ): Promise<OnboardCommunityResult> {
     return this.accounts.onboardCommunity(dto, actor);
+  }
+
+  /**
+   * POST /api/accounts/onboard-municipal — SOLO CPS.
+   *
+   * Alta atómica de una MUNICIPAL: cuenta + OWNER institucional (clave
+   * temporal, ver `temporaryPassword` en la respuesta, se muestra UNA sola vez)
+   * + membresía, en una sola transacción.
+   *
+   * NO crea barrio ni contrato: la muni carga sus barrios después, contra su
+   * cupo, y el contrato es del barrio. Una municipalidad con cero barrios es un
+   * estado válido, no un alta a medias.
+   */
+  @Post('onboard-municipal')
+  @RequireMembership({
+    accountType: AccountType.COMPANY,
+    roles: [UserRole.OWNER, UserRole.ADMIN],
+  })
+  onboardMunicipal(
+    @Body() dto: OnboardMunicipalDto,
+    @CurrentUser() actor: AuthenticatedUser,
+  ): Promise<OnboardMunicipalResult> {
+    return this.accounts.onboardMunicipal(dto, actor);
   }
 
   /**

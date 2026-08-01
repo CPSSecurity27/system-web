@@ -11,6 +11,7 @@ import { AuditService } from '../common/audit.service';
 import {
   AccountType,
   EntityStatus,
+  JurisdictionLevel,
   ManagedBy,
   UserRole,
 } from '../common/enums';
@@ -146,6 +147,7 @@ export class NeighborhoodsService {
     // segundo chequeo por subtipo sería la misma regla dicha dos veces, y el
     // día que difieran gana la que nadie recuerda que existe.
     await this.assertNeighborhoodRoomLeft(organization);
+    await this.assertDentroDeJurisdiccion(organization, dto.localityId);
 
     const neighborhood = await this.neighborhoods.save(
       this.neighborhoods.create({
@@ -179,6 +181,7 @@ export class NeighborhoodsService {
       global: true,
       neighborhoodIds: [],
       homeIds: [],
+      accountIds: [],
     });
   }
 
@@ -325,6 +328,60 @@ export class NeighborhoodsService {
           `y ya hay ${existentes}. Para ampliarlo, contactá a CPS.`,
       );
     }
+  }
+
+  /**
+   * El barrio tiene que caer DENTRO de la jurisdicción de su cuenta.
+   *
+   * El sistema se vende a nivel localidad o a nivel departamento, y el límite
+   * es distinto para cada cliente:
+   *   LOCALITY   -> el barrio va en ESA localidad. San Pedro no puede crear en
+   *                 Rosario de Río Grande (ex Barro Negro): mismo departamento,
+   *                 otro municipio.
+   *   DEPARTMENT -> el barrio va en cualquier localidad de ESE departamento,
+   *                 pero no en otro (Ledesma queda afuera).
+   *
+   * Vale para TODOS, CPS incluida: la regla es del cliente, no de quien carga.
+   * Y vive acá y no en la base porque cruza account -> locality -> department.
+   */
+  private async assertDentroDeJurisdiccion(
+    organization: Account,
+    localityId: number,
+  ): Promise<void> {
+    const locality = await this.localities.findOne({
+      where: { id: localityId },
+      relations: { department: true },
+    });
+    if (!locality) {
+      throw new NotFoundException(`No existe la localidad ${localityId}`);
+    }
+
+    if (organization.jurisdictionLevel === JurisdictionLevel.LOCALITY) {
+      if (locality.id !== organization.localityId) {
+        throw new BadRequestException(
+          `El cliente opera en una sola localidad y "${locality.name}" no es esa. ` +
+            'Si el territorio del cliente cambió, CPS ajusta su jurisdicción.',
+        );
+      }
+      return;
+    }
+
+    if (organization.jurisdictionLevel === JurisdictionLevel.DEPARTMENT) {
+      if (locality.departmentId !== organization.departmentId) {
+        throw new BadRequestException(
+          `"${locality.name}" está fuera del departamento del cliente. ` +
+            'Si el territorio del cliente cambió, CPS ajusta su jurisdicción.',
+        );
+      }
+      return;
+    }
+
+    // Una ORGANIZATION sin jurisdicción no debería existir (lo impide el CHECK
+    // chk_account_jurisdiction). Si aparece, es un dato corrupto: mejor frenar
+    // que dejar crear barrios en cualquier lado.
+    throw new BadRequestException(
+      'El cliente no tiene jurisdicción definida: no se puede validar dónde va el barrio',
+    );
   }
 
   private async getOrganization(id: number): Promise<Account> {

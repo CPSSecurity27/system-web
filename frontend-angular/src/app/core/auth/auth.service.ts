@@ -65,6 +65,18 @@ export class AuthService {
     () =>
       (this.user()?.memberships ?? []).find((m) => m.accountType === 'COMPANY')?.accountId ?? null,
   );
+  /**
+   * La cuenta ORGANIZATION propia. El espejo de `companyAccountId`, para que
+   * "Mi organización" reuse la ficha de cliente sin `:id` en la URL.
+   *
+   * Una persona pertenece a UNA sola cuenta (índice `uq_account_user_single_account`),
+   * así que no hay ambigüedad posible acá.
+   */
+  readonly organizationAccountId = computed(
+    () =>
+      (this.user()?.memberships ?? []).find((m) => m.accountType === 'ORGANIZATION')?.accountId ??
+      null,
+  );
   /** Vecino: al menos una membresía de hogar. TITULAR administra la suya. */
   readonly isVecino = computed(() => (this.user()?.homeMemberships ?? []).length > 0);
   /** Clave TEMPORAL sin cambiar: el guard manda a /perfil pase lo que pase. */

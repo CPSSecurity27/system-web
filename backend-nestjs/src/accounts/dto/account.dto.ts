@@ -1,11 +1,15 @@
 import { Type } from 'class-transformer';
 import {
   IsArray,
+  IsDateString,
+  IsDefined,
+  IsEmail,
   IsEnum,
   IsInt,
   IsLatitude,
   IsLongitude,
   IsNotEmpty,
+  IsNumber,
   IsOptional,
   IsString,
   Max,
@@ -17,6 +21,7 @@ import {
 import {
   AccountType,
   EntityStatus,
+  JurisdictionLevel,
   ManagedBy,
   OrgSubtype,
   UserRole,
@@ -129,12 +134,82 @@ export class OnboardCommunityNeighborhoodDto {
 }
 
 /**
+ * El contrato que se firma junto con el alta de un cliente. Es de la CUENTA:
+ * el sistema se vende a nivel municipal, la muni paga por N barrios y no le
+ * revende a cada uno.
+ *
+ * NO lleva `accountId`: la cuenta se está creando en el mismo acto y todavía no
+ * tiene id. Pedirlo sería pedirle al cliente un dato que no puede conocer.
+ */
+export class OnboardContractDto {
+  /** NUMERIC(12,2) en la base. Es dinero: nunca punto flotante del lado servidor. */
+  @IsNumber(
+    { maxDecimalPlaces: 2 },
+    { message: 'El precio admite hasta 2 decimales' },
+  )
+  @Min(0, { message: 'El precio no puede ser negativo' })
+  price!: number;
+
+  @IsDateString({}, { message: 'Fecha de inicio inválida (AAAA-MM-DD)' })
+  startDate!: string;
+
+  /**
+   * OBLIGATORIA: el precio es por EL PERÍODO del contrato, así que sin fecha de
+   * fin el número no significa nada. El período (trimestral, anual…) no se
+   * manda ni se guarda: se deriva de las dos fechas.
+   */
+  @IsDateString({}, { message: 'Fecha de fin inválida (AAAA-MM-DD)' })
+  endDate!: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+}
+
+/**
+ * Hasta dónde llega el cliente. Se pregunta SOLO en el alta municipal: la
+ * comunitaria la deriva de su único barrio (siempre LOCALITY).
+ *
+ * El id que corresponde según el nivel lo valida el servicio: acá los dos son
+ * opcionales porque cuál va depende de `level`.
+ */
+export class JurisdictionDto {
+  @IsEnum(JurisdictionLevel, {
+    message: 'Nivel de jurisdicción inválido (LOCALITY o DEPARTMENT)',
+  })
+  level!: JurisdictionLevel;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  localityId?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  departmentId?: number;
+
+  /** Domicilio en el mapa. Opcional: ubica al cliente, no valida nada. */
+  @IsOptional()
+  @IsLatitude({ message: 'Latitud inválida' })
+  latitude?: number;
+
+  @IsOptional()
+  @IsLongitude({ message: 'Longitud inválida' })
+  longitude?: number;
+}
+
+/**
  * Alta atómica de una organización COMMUNITY: cuenta + su único barrio + OWNER
- * institucional + membresía, en una sola transacción (AccountsService
- * #onboardCommunity). Solo CPS (controller). No pide `subtype` ni
- * `maxNeighborhoods`: una comunitaria SIEMPRE es COMMUNITY con cupo 1 —
+ * institucional + membresía + CONTRATO, en una sola transacción
+ * (AccountsService #onboardCommunity). Solo CPS (controller). No pide `subtype`
+ * ni `maxNeighborhoods`: una comunitaria SIEMPRE es COMMUNITY con cupo 1 —
  * pedirlo sería abrir la puerta a un valor inconsistente que el servicio de
  * todos modos va a pisar.
+ *
+ * El contrato es OBLIGATORIO acá y solo acá: la comunitaria nace con su barrio,
+ * así que hay contra qué contratar. Una MUNICIPAL nace sin barrios y por eso su
+ * alta (OnboardMunicipalDto) no lo pide.
  */
 export class OnboardCommunityDto {
   /** Nombre de la cuenta (la comunidad/consorcio) Y del usuario institucional OWNER. */
@@ -180,9 +255,90 @@ export class OnboardCommunityDto {
   @MinLength(3, { message: 'El usuario debe tener al menos 3 caracteres' })
   ownerUsername!: string;
 
+  /** Opcional: si está, el OWNER puede recuperar su contraseña solo. */
+  @IsOptional()
+  @IsEmail({}, { message: 'Correo inválido' })
+  ownerEmail?: string;
+
+  /**
+   * OJO con el `@IsDefined()`: sin él, `@ValidateNested()` sobre una propiedad
+   * AUSENTE no valida nada —class-validator la saltea en silencio— y el objeto
+   * llega al servicio como `undefined`. Resultado: 500 en vez de 400.
+   */
+  @IsDefined({ message: 'Falta el barrio de la comunidad' })
   @ValidateNested()
   @Type(() => OnboardCommunityNeighborhoodDto)
   neighborhood!: OnboardCommunityNeighborhoodDto;
+
+  @IsDefined({ message: 'Una comunitaria no se puede crear sin contrato' })
+  @ValidateNested()
+  @Type(() => OnboardContractDto)
+  contract!: OnboardContractDto;
+}
+
+/**
+ * Alta atómica de una organización MUNICIPAL: cuenta + jurisdicción + OWNER
+ * institucional + membresía + CONTRATO, en una sola transacción. Solo CPS.
+ *
+ * NO crea barrio: la municipalidad los crea después, contra su cupo. Un cliente
+ * municipal con cero barrios es un estado VÁLIDO — el contrato es de la cuenta,
+ * así que no depende de que exista un barrio.
+ *
+ * Existe para cerrar un bug real: antes el front encadenaba tres llamadas
+ * (cuenta -> usuario -> membresía) y si fallaba una del medio quedaba una
+ * cuenta creada SIN OWNER, que nadie podía administrar.
+ */
+export class OnboardMunicipalDto {
+  /** Nombre de la cuenta Y del usuario institucional OWNER. */
+  @IsString()
+  @IsNotEmpty({ message: 'El nombre es obligatorio' })
+  name!: string;
+
+  /** Hasta dónde llega: una localidad o un departamento entero. */
+  @IsDefined({ message: 'Falta la jurisdicción del cliente' })
+  @ValidateNested()
+  @Type(() => JurisdictionDto)
+  jurisdiction!: JurisdictionDto;
+
+  @IsDefined({ message: 'Un cliente no se puede crear sin contrato' })
+  @ValidateNested()
+  @Type(() => OnboardContractDto)
+  contract!: OnboardContractDto;
+
+  /** Igual que en CreateAccountDto: los cupos salen de acá o de los campos de abajo. */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  planId?: number;
+
+  @ValidateIf((_, value) => value !== undefined)
+  @IsInt()
+  @Min(1, { message: 'Una municipalidad necesita al menos 1 barrio de cupo' })
+  maxNeighborhoods?: number;
+
+  @ValidateIf((_, value) => value !== undefined)
+  @IsInt()
+  @Min(0, { message: 'El cupo de administradores no puede ser negativo' })
+  maxAdminUsers?: number;
+
+  @ValidateIf((_, value) => value !== undefined)
+  @IsInt()
+  @Min(0, { message: 'El cupo de técnicos no puede ser negativo' })
+  maxTechnicianUsers?: number;
+
+  @ValidateIf((_, value) => value !== undefined)
+  @IsInt()
+  @Min(0, { message: 'El cupo de monitores no puede ser negativo' })
+  maxMonitorUsers?: number;
+
+  @IsString()
+  @MinLength(3, { message: 'El usuario debe tener al menos 3 caracteres' })
+  ownerUsername!: string;
+
+  /** Opcional: si está, el OWNER puede recuperar su contraseña solo. */
+  @IsOptional()
+  @IsEmail({}, { message: 'Correo inválido' })
+  ownerEmail?: string;
 }
 
 /**

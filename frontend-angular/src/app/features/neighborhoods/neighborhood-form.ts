@@ -10,6 +10,7 @@ import { AuthService } from '../../core/auth/auth.service';
 import { apiErrorMessage } from '../../core/http/api-error';
 import { Account } from '../../core/models/api.models';
 import { Locality } from '../../core/models/neighborhood';
+import { Map } from '../../shared/map/map';
 
 /**
  * v2: el alta ya no es solo-CPS. CPS crea barrios para cualquier organización;
@@ -18,7 +19,7 @@ import { Locality } from '../../core/models/neighborhood';
  */
 @Component({
   selector: 'app-neighborhood-form',
-  imports: [ReactiveFormsModule, RouterLink],
+  imports: [ReactiveFormsModule, RouterLink, Map],
   templateUrl: './neighborhood-form.html',
 })
 export class NeighborhoodForm {
@@ -37,10 +38,18 @@ export class NeighborhoodForm {
   protected readonly searching = signal(false);
   protected readonly selected = signal<Locality | null>(null);
 
-  /** Solo CPS elige la organización dueña; una org siempre crea para sí. */
+  /**
+   * Solo CPS elige la organización dueña; una org siempre crea para sí.
+   *
+   * SOLO MUNICIPALES: una comunitaria gestiona UN único barrio y ese barrio
+   * nace con la cuenta (onboarding atómico), así que su cupo ya está consumido
+   * el día 1. Ofrecerla acá sería ofrecer una puerta que siempre da al 400 de
+   * cupo. Es la misma razón por la que `neighborhoodManagerGuard` no deja
+   * entrar a esta pantalla al admin de una comunitaria.
+   */
   protected readonly accountList = signal<Account[]>([]);
   protected readonly organizations = computed(() =>
-    this.accountList().filter((a) => a.type === 'ORGANIZATION'),
+    this.accountList().filter((a) => a.type === 'ORGANIZATION' && a.subtype === 'MUNICIPAL'),
   );
 
   protected readonly form = this.fb.group({
@@ -48,6 +57,27 @@ export class NeighborhoodForm {
     search: [''],
     organizationId: [null as number | null],
   });
+
+  /**
+   * El punto en el mapa. OPCIONAL: sirve para ubicar el barrio, no para
+   * validar nada — el que decide dónde puede estar es la LOCALIDAD, que se
+   * chequea contra la jurisdicción del cliente en el backend.
+   *
+   * Nadie tipea coordenadas: se clickea el mapa, igual que en el alta de
+   * vivienda y en la instalación de un equipo.
+   */
+  protected readonly latitude = signal<number | null>(null);
+  protected readonly longitude = signal<number | null>(null);
+
+  protected setPosition(position: { latitude: number; longitude: number }): void {
+    this.latitude.set(position.latitude);
+    this.longitude.set(position.longitude);
+  }
+
+  protected clearPosition(): void {
+    this.latitude.set(null);
+    this.longitude.set(null);
+  }
 
   constructor() {
     if (this.auth.isCps()) {
@@ -111,12 +141,17 @@ export class NeighborhoodForm {
     this.saving.set(true);
     this.error.set(null);
 
+    const lat = this.latitude();
+    const lng = this.longitude();
+
     this.neighborhoods
       .create({
         name: name as string,
         localityId: locality.id,
         // La organización solo la manda CPS: una org crea para sí misma.
         ...(this.auth.isCps() && organizationId ? { organizationId } : {}),
+        // El punto es opcional: si no se marcó, no se manda.
+        ...(lat !== null && lng !== null ? { latitude: lat, longitude: lng } : {}),
       })
       .subscribe({
         next: () => void this.router.navigate(['/barrios']),

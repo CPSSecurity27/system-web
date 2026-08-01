@@ -65,11 +65,24 @@ export class Dashboard {
         visible: true,
       },
       {
-        route: '/contratos',
-        icon: 'bi-file-earmark-text-fill',
-        title: 'Contratos',
-        description: 'Lo comercial: organización → barrio',
+        // El stock: acá está el RECLAMO con el que se instalan las alarmas.
+        route: '/inventario/stock',
+        icon: 'bi-box-seam',
+        title: 'Inventario',
+        description: 'Los equipos que todavía no están en servicio',
         visible: this.auth.isManager(),
+      },
+      {
+        /**
+         * "Contratos" dejó de ser pantalla propia (2026-07-31): el contrato es
+         * de la CUENTA y vive en su ficha. Para el cliente, esa ficha es Mi
+         * organización — /clientes es solo-CPS y lo rebotaría.
+         */
+        route: '/mi-organizacion',
+        icon: 'bi-building',
+        title: 'Mi organización',
+        description: 'Su contrato, sus cupos y su gente',
+        visible: this.auth.isOrgManager(),
       },
       {
         route: '/clientes',

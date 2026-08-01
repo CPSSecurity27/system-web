@@ -1,4 +1,4 @@
-import { Component, inject, signal } from '@angular/core';
+import { Component, computed, inject, signal } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 import { debounceTime, distinctUntilChanged, switchMap } from 'rxjs';
@@ -6,10 +6,17 @@ import { debounceTime, distinctUntilChanged, switchMap } from 'rxjs';
 import { AccountsService } from '../../core/api/accounts.service';
 import { GeographyService } from '../../core/api/geography.service';
 import { PlansService } from '../../core/api/plans.service';
-import { UsersService } from '../../core/api/users.service';
 import { apiErrorMessage } from '../../core/http/api-error';
-import { ManagedBy, OrgSubtype, Plan } from '../../core/models/api.models';
-import { Locality } from '../../core/models/neighborhood';
+import {
+  JurisdictionLevel,
+  ManagedBy,
+  OrgSubtype,
+  Plan,
+} from '../../core/models/api.models';
+import { Department, Locality, Province } from '../../core/models/neighborhood';
+import { Map } from '../../shared/map/map';
+import { Alert } from '../../shared/ui/alert/alert';
+import { PageHeader } from '../../shared/ui/page-header/page-header';
 
 /** Lo que queda para mostrar una sola vez tras crear la cuenta: la clave no se puede volver a leer. */
 interface CreatedAccountResult {
@@ -18,378 +25,95 @@ interface CreatedAccountResult {
   temporaryPassword: string;
 }
 
+/** Los plazos de contrato que se ofrecen como atajo. */
+type Plazo = { label: string; meses: number };
+
+const PLAZOS: Plazo[] = [
+  { label: 'Trimestral', meses: 3 },
+  { label: 'Semestral', meses: 6 },
+  { label: 'Anual', meses: 12 },
+  { label: '2 años', meses: 24 },
+  { label: '3 años', meses: 36 },
+];
+
+/** Hoy en AAAA-MM-DD, para los <input type="date"> del contrato. */
+function hoy(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
 /**
- * Onboarding de un cliente (solo CPS): cuenta + cupos + OWNER institucional,
- * en un solo paso. El OWNER es un usuario SIN persona detrás (tipo cuenta
- * root): el personal municipal rota, la institución queda.
+ * Suma meses a una fecha AAAA-MM-DD.
  *
- * El OWNER nace con una clave TEMPORAL generada por el backend (no la elige
- * quien completa este form): se muestra UNA sola vez acá, antes de navegar a
- * la ficha de la cuenta, y hay que cambiarla en el primer login.
+ * El día se recorta al último del mes destino cuando no existe: 31/01 + 1 mes
+ * es 28/02, no el 3/03 que devolvería `setMonth` por su desborde automático.
+ */
+function sumarMeses(fecha: string, meses: number): string {
+  const [a, m, d] = fecha.split('-').map(Number);
+  const destino = new Date(a, m - 1 + meses, 1);
+  const ultimoDia = new Date(destino.getFullYear(), destino.getMonth() + 1, 0).getDate();
+  destino.setDate(Math.min(d, ultimoDia));
+  const mm = String(destino.getMonth() + 1).padStart(2, '0');
+  const dd = String(destino.getDate()).padStart(2, '0');
+  return `${destino.getFullYear()}-${mm}-${dd}`;
+}
+
+/**
+ * El username sugerido para el OWNER, derivado del nombre de la cuenta.
  *
- * Los CUPOS salen del PLAN, que los precarga en los inputs y se puede pisar a
- * mano: el plan es una plantilla, no una jaula. Se manda igual `planId` para
- * dejar registrado con qué se vendió, aunque los números finales sean otros.
+ * Espeja `backend/src/common/derive-username.ts`, que es la fuente de verdad y
+ * tiene los tests. Acá es solo comodidad de tipeo: el campo queda EDITABLE y el
+ * backend rebota con 409 si el usuario ya existe.
+ */
+const PALABRAS_VACIAS = new Set(['de', 'del', 'y']);
+const LARGO_MAXIMO = 30;
+
+function deriveUsername(name: string): string {
+  const palabras = name
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((p) => p.length > 0 && !PALABRAS_VACIAS.has(p));
+
+  const completo = palabras.join('_');
+  if (completo.length <= LARGO_MAXIMO) return completo;
+
+  const recortado: string[] = [];
+  let largo = 0;
+  for (const palabra of palabras) {
+    const suma = recortado.length === 0 ? palabra.length : largo + 1 + palabra.length;
+    if (suma > LARGO_MAXIMO) break;
+    recortado.push(palabra);
+    largo = suma;
+  }
+  return recortado.length > 0 ? recortado.join('_') : completo.slice(0, LARGO_MAXIMO);
+}
+
+/**
+ * Alta de un cliente (solo CPS). Un solo acto atómico que termina en un OWNER
+ * operativo:
  *
- * COMMUNITY es un caso aparte: gestiona un único barrio y no tiene sentido de
- * negocio sin él, así que el form pide el barrio en el MISMO paso y todo se
- * manda junto a `onboardCommunity()` (atómico en el backend — todo o nada).
- * Ahí también se elige la MODALIDAD: llave en mano (opera CPS) o autogestión.
- * MUNICIPAL carga sus barrios después, y decide la modalidad barrio por barrio.
+ *   cuenta + jurisdicción + plan/cupos + contrato + OWNER (+ barrio si es
+ *   comunitaria)
+ *
+ * Las dos ÚNICAS diferencias entre municipal y comunitaria:
+ *  - la comunitaria crea su único barrio acá mismo, y de ese barrio DERIVA su
+ *    jurisdicción y su GPS (son el mismo lugar);
+ *  - la comunitaria no tiene técnicos propios (cupo 0, no se pregunta).
+ *
+ * El CONTRATO va para las dos: es de la CUENTA, no del barrio, así que la muni
+ * puede firmarlo el día 1 aunque todavía no tenga ningún barrio.
+ *
+ * El OWNER nace con una clave TEMPORAL generada por el backend: se muestra UNA
+ * sola vez acá y hay que cambiarla en el primer login.
  */
 @Component({
   selector: 'app-account-form',
-  imports: [ReactiveFormsModule, RouterLink],
-  template: `
-    <div class="d-flex align-items-center mb-3">
-      <a routerLink="/clientes" class="btn btn-sm btn-outline-secondary me-2" title="Volver">
-        <i class="bi bi-arrow-left"></i>
-      </a>
-      <h2 class="h5 fw-bold mb-0">Nuevo cliente</h2>
-    </div>
-
-    <div class="row">
-      <div class="col-12 col-lg-7">
-        @if (created(); as result) {
-          <div class="card border">
-            <div class="card-body">
-              <p class="fw-semibold text-success mb-2">
-                <i class="bi bi-check-circle-fill me-1"></i> Cuenta creada
-              </p>
-              <p class="small text-muted">
-                Clave temporal para
-                <strong class="font-monospace">{{ result.ownerUsername }}</strong
-                >. Copiala ahora: no se va a volver a mostrar. El OWNER la va a tener que cambiar en
-                su primer login.
-              </p>
-              <div class="input-group mb-3">
-                <input
-                  type="text"
-                  class="form-control font-monospace"
-                  [value]="result.temporaryPassword"
-                  readonly
-                />
-                <button
-                  type="button"
-                  class="btn btn-outline-secondary"
-                  (click)="copyTemporaryPassword(result.temporaryPassword)"
-                >
-                  <i
-                    class="bi"
-                    [class.bi-clipboard]="!copied()"
-                    [class.bi-clipboard-check]="copied()"
-                  ></i>
-                  {{ copied() ? 'Copiada' : 'Copiar' }}
-                </button>
-              </div>
-              <button
-                type="button"
-                class="btn btn-brand"
-                (click)="continueToAccount(result.accountId)"
-              >
-                Continuar a la cuenta
-              </button>
-            </div>
-          </div>
-        } @else {
-          <div class="card border">
-            <div class="card-body">
-              <form [formGroup]="form" (ngSubmit)="submit()" novalidate>
-                <div class="mb-3">
-                  <label for="name" class="form-label small fw-medium">Nombre</label>
-                  <input
-                    id="name"
-                    type="text"
-                    class="form-control"
-                    formControlName="name"
-                    placeholder="Municipalidad de San Pedro / Comunidad Los Lapachos"
-                  />
-                </div>
-
-                <div class="mb-3">
-                  <label for="subtype" class="form-label small fw-medium"
-                    >Tipo de organización</label
-                  >
-                  <!-- El subtipo dice la ESCALA. Quién opera cada barrio es otra
-                       cosa (managedBy) y se elige más abajo. -->
-                  <select id="subtype" class="form-select" formControlName="subtype">
-                    <option value="MUNICIPAL">Municipal (varios barrios)</option>
-                    <option value="COMMUNITY">Comunitaria (un solo barrio)</option>
-                  </select>
-                  <div class="form-text">
-                    Define cuántos barrios gestiona. Quién los <em>opera</em> —CPS o el propio
-                    cliente— se decide por barrio, no acá.
-                  </div>
-                </div>
-
-                <div class="mb-3">
-                  <label for="planId" class="form-label small fw-medium">Plan</label>
-                  <select id="planId" class="form-select" formControlName="planId">
-                    <option [value]="null">Sin plan — cupos a mano</option>
-                    @for (plan of plansForSubtype(); track plan.id) {
-                      <option [value]="plan.id">{{ plan.name }}</option>
-                    }
-                  </select>
-                  <div class="form-text">
-                    El plan precarga los cupos de abajo; podés ajustarlos para esta venta sin crear
-                    un plan nuevo. Los cupos quedan copiados en la cuenta: si mañana se reconfigura
-                    el plan, este cliente no cambia.
-                  </div>
-                </div>
-
-                <div class="row g-3 mb-3">
-                  @if (!isCommunity()) {
-                    <div class="col-12 col-sm-6">
-                      <label for="maxNeighborhoods" class="form-label small fw-medium">
-                        Cupo de barrios
-                      </label>
-                      <input
-                        id="maxNeighborhoods"
-                        type="number"
-                        min="1"
-                        class="form-control"
-                        [class.is-invalid]="
-                          form.controls.maxNeighborhoods.touched &&
-                          form.controls.maxNeighborhoods.invalid
-                        "
-                        formControlName="maxNeighborhoods"
-                        placeholder="Ej: 5"
-                      />
-                      @if (
-                        form.controls.maxNeighborhoods.touched &&
-                        form.controls.maxNeighborhoods.invalid
-                      ) {
-                        <div class="invalid-feedback">Obligatorio, al menos 1.</div>
-                      }
-                    </div>
-                  }
-
-                  <div class="col-12 col-sm-6">
-                    <label for="maxAdminUsers" class="form-label small fw-medium">
-                      Cupo de administradores
-                    </label>
-                    <input
-                      id="maxAdminUsers"
-                      type="number"
-                      min="0"
-                      class="form-control"
-                      [class.is-invalid]="
-                        form.controls.maxAdminUsers.touched && form.controls.maxAdminUsers.invalid
-                      "
-                      formControlName="maxAdminUsers"
-                    />
-                    @if (
-                      form.controls.maxAdminUsers.touched && form.controls.maxAdminUsers.invalid
-                    ) {
-                      <div class="invalid-feedback">Obligatorio, 0 o más.</div>
-                    }
-                  </div>
-
-                  <div class="col-12 col-sm-6">
-                    <label for="maxTechnicianUsers" class="form-label small fw-medium">
-                      Cupo de técnicos
-                    </label>
-                    <input
-                      id="maxTechnicianUsers"
-                      type="number"
-                      min="0"
-                      class="form-control"
-                      [class.is-invalid]="
-                        form.controls.maxTechnicianUsers.touched &&
-                        form.controls.maxTechnicianUsers.invalid
-                      "
-                      formControlName="maxTechnicianUsers"
-                    />
-                    <div class="form-text">0 = sin técnicos propios: el campo lo hace CPS.</div>
-                  </div>
-
-                  <div class="col-12 col-sm-6">
-                    <label for="maxMonitorUsers" class="form-label small fw-medium">
-                      Cupo de monitores
-                    </label>
-                    <input
-                      id="maxMonitorUsers"
-                      type="number"
-                      min="0"
-                      class="form-control"
-                      [class.is-invalid]="
-                        form.controls.maxMonitorUsers.touched &&
-                        form.controls.maxMonitorUsers.invalid
-                      "
-                      formControlName="maxMonitorUsers"
-                    />
-                    @if (
-                      form.controls.maxMonitorUsers.touched && form.controls.maxMonitorUsers.invalid
-                    ) {
-                      <div class="invalid-feedback">Obligatorio, 0 o más.</div>
-                    }
-                  </div>
-
-                  <!-- Los cupos son la TARIFA: después solo se tocan por /quotas (auditado). -->
-                  <div class="form-text mt-1">
-                    Los cupos son parte de la tarifa: no existe "sin límite" para los barrios. En
-                    los de personal, <strong>0 significa que la cuenta no tiene ese rol</strong>.
-                    Después se cambian desde la ficha del cliente (solo CPS, queda auditado).
-                  </div>
-                </div>
-
-                @if (isCommunity()) {
-                  <hr />
-                  <p class="fw-semibold small mb-1">
-                    <i class="bi bi-houses me-1"></i> Barrio de la comunidad
-                  </p>
-                  <p class="text-muted small">
-                    Una organización comunitaria gestiona UN único barrio: sin él, la cuenta queda
-                    incompleta. Se crea en este mismo paso.
-                  </p>
-
-                  <div class="mb-3">
-                    <label for="managedBy" class="form-label small fw-medium">
-                      Modalidad del servicio
-                    </label>
-                    <select id="managedBy" class="form-select" formControlName="managedBy">
-                      <option value="CPS">Llave en mano — lo opera CPS</option>
-                      <option value="ORGANIZATION">Autogestión — lo opera la comunidad</option>
-                    </select>
-                    <div class="form-text">
-                      Llave en mano: CPS carga viviendas, vecinos y equipos, y la comunidad ve todo
-                      sin poder editarlo. Autogestión: sus administradores operan el barrio. Se
-                      puede cambiar después (solo CPS, auditado).
-                    </div>
-                  </div>
-
-                  <div class="mb-3">
-                    <label for="neighborhoodName" class="form-label small fw-medium">
-                      Nombre del barrio
-                    </label>
-                    <input
-                      id="neighborhoodName"
-                      type="text"
-                      class="form-control"
-                      formControlName="neighborhoodName"
-                      [class.is-invalid]="
-                        form.controls.neighborhoodName.touched &&
-                        form.controls.neighborhoodName.invalid
-                      "
-                    />
-                    @if (
-                      form.controls.neighborhoodName.touched &&
-                      form.controls.neighborhoodName.invalid
-                    ) {
-                      <div class="invalid-feedback">El nombre del barrio es obligatorio.</div>
-                    }
-                  </div>
-
-                  <div class="mb-3 position-relative">
-                    <label for="localitySearch" class="form-label small fw-medium">Localidad</label>
-                    <input
-                      id="localitySearch"
-                      type="text"
-                      class="form-control"
-                      formControlName="localitySearch"
-                      placeholder="Escribí al menos 2 letras…"
-                      autocomplete="off"
-                    />
-                    <div class="form-text">
-                      Se ignoran acentos y mayúsculas: “cordoba” encuentra “Córdoba”.
-                    </div>
-
-                    @if (searchingLocality()) {
-                      <div class="form-text text-muted">
-                        <span
-                          class="spinner-border spinner-border-sm me-1"
-                          aria-hidden="true"
-                        ></span>
-                        Buscando…
-                      </div>
-                    }
-
-                    @if (localityResults().length > 0) {
-                      <ul
-                        class="list-group position-absolute w-100 shadow-sm"
-                        style="z-index: 5; max-height: 260px; overflow-y: auto"
-                      >
-                        @for (locality of localityResults(); track locality.id) {
-                          <li>
-                            <button
-                              type="button"
-                              class="list-group-item list-group-item-action text-start"
-                              (click)="selectLocality(locality)"
-                            >
-                              {{ fullLocalityName(locality) }}
-                            </button>
-                          </li>
-                        }
-                      </ul>
-                    }
-                  </div>
-
-                  @if (selectedLocality(); as locality) {
-                    <div class="alert bg-success-soft border-0 py-2 small mb-3">
-                      <i class="bi bi-geo-alt-fill me-1"></i>
-                      Localidad elegida: <strong>{{ fullLocalityName(locality) }}</strong>
-                    </div>
-                  } @else {
-                    <div class="alert bg-warning-soft border-0 py-2 small mb-3">
-                      <i class="bi bi-info-circle me-1"></i>
-                      Elegí una localidad de la lista antes de crear la cuenta.
-                    </div>
-                  }
-                }
-
-                <hr />
-                <p class="fw-semibold small mb-1">
-                  <i class="bi bi-bank me-1"></i> Usuario institucional (OWNER)
-                </p>
-                <p class="text-muted small">
-                  Es la cuenta de la <strong>institución</strong>, no de una persona: el personal
-                  rota, este usuario queda. Con él, el cliente crea sus propios administradores.
-                </p>
-
-                <div class="mb-3">
-                  <label for="ownerUsername" class="form-label small fw-medium">Usuario</label>
-                  <input
-                    id="ownerUsername"
-                    type="text"
-                    class="form-control font-monospace"
-                    formControlName="ownerUsername"
-                    placeholder="muni_sanpedro"
-                    autocomplete="off"
-                  />
-                  <div class="form-text">
-                    Sin contraseña: el sistema genera una clave TEMPORAL que se muestra una sola vez
-                    al crear la cuenta. El OWNER la cambia en su primer login.
-                  </div>
-                </div>
-
-                @if (error()) {
-                  <div class="alert bg-brand-soft text-brand border-0 py-2 small" role="alert">
-                    <i class="bi bi-exclamation-triangle-fill me-1"></i> {{ error() }}
-                  </div>
-                }
-
-                <div class="d-flex gap-2">
-                  <button type="submit" class="btn btn-brand" [disabled]="saving() || form.invalid">
-                    @if (saving()) {
-                      <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
-                      Creando…
-                    } @else {
-                      Crear cliente con su OWNER
-                    }
-                  </button>
-                  <a routerLink="/clientes" class="btn btn-outline-secondary">Cancelar</a>
-                </div>
-              </form>
-            </div>
-          </div>
-        }
-      </div>
-    </div>
-  `,
+  imports: [ReactiveFormsModule, RouterLink, Alert, PageHeader, Map],
+  templateUrl: './account-form.html',
 })
 export class AccountForm {
   private readonly accounts = inject(AccountsService);
-  private readonly users = inject(UsersService);
   private readonly geography = inject(GeographyService);
   private readonly plans = inject(PlansService);
   private readonly router = inject(Router);
@@ -399,14 +123,70 @@ export class AccountForm {
   protected readonly error = signal<string | null>(null);
   protected readonly created = signal<CreatedAccountResult | null>(null);
   protected readonly copied = signal(false);
+  protected readonly plazos = PLAZOS;
+
+  /**
+   * El punto del BARRIO de la comunitaria. Opcional, y solo aplica ahí: la
+   * municipalidad no crea barrio en el alta.
+   *
+   * Es también el punto de la CUENTA: el consorcio y su barrio son el mismo
+   * lugar, así que el backend copia estas coordenadas a la cuenta
+   * (AccountsService#onboardCommunity).
+   */
+  protected readonly latitude = signal<number | null>(null);
+  protected readonly longitude = signal<number | null>(null);
+
+  protected setPosition(position: { latitude: number; longitude: number }): void {
+    this.latitude.set(position.latitude);
+    this.longitude.set(position.longitude);
+  }
+
+  protected clearPosition(): void {
+    this.latitude.set(null);
+    this.longitude.set(null);
+  }
 
   /** Solo los VIGENTES: un plan discontinuado no se puede vender (el backend lo rechaza). */
   private readonly plansCatalog = signal<Plan[]>([]);
 
-  /** Autocomplete de localidad (solo COMMUNITY). Mismo patrón que neighborhood-form. */
+  /**
+   * El buscador es un ATAJO: al elegir un resultado precarga los tres combos.
+   * Se puede ignorar y bajar a mano por provincia -> departamento -> localidad.
+   */
   protected readonly localityResults = signal<Locality[]>([]);
   protected readonly searchingLocality = signal(false);
-  protected readonly selectedLocality = signal<Locality | null>(null);
+
+  /** Los tres niveles de la geografía, en cascada. */
+  protected readonly provinces = signal<Province[]>([]);
+  protected readonly departments = signal<Department[]>([]);
+  protected readonly localities = signal<Locality[]>([]);
+
+  private readonly geoVersion = signal(0);
+
+  /**
+   * El texto de la localidad elegida, para el cartel de confirmación.
+   *
+   * Se COMPONE de los tres combos y no del árbol de la localidad: el endpoint
+   * en cascada (`/departments/:id/localities`) devuelve localidades PLANAS, sin
+   * `department.province`. Solo el buscador trae el árbol completo.
+   */
+  protected readonly selectedLocalityText = computed(() => {
+    this.geoVersion();
+    const localityId = this.form.controls.localityId.value;
+    if (!localityId) return '';
+
+    const locality = this.localities().find((l) => l.id === Number(localityId));
+    if (!locality) return '';
+
+    const department = this.departments().find(
+      (d) => d.id === Number(this.form.controls.departmentId.value),
+    );
+    const province = this.provinces().find(
+      (p) => p.id === Number(this.form.controls.provinceId.value),
+    );
+
+    return [locality.name, department?.name, province?.name].filter(Boolean).join(', ');
+  });
 
   protected readonly form = this.fb.nonNullable.group({
     name: ['', Validators.required],
@@ -418,18 +198,46 @@ export class AccountForm {
     maxAdminUsers: [null as number | null, [Validators.required, Validators.min(0)]],
     maxTechnicianUsers: [null as number | null, [Validators.required, Validators.min(0)]],
     maxMonitorUsers: [null as number | null, [Validators.required, Validators.min(0)]],
+
+    // Jurisdicción — solo MUNICIPAL. La comunitaria la deriva de su barrio.
+    jurisdictionLevel: ['LOCALITY' as JurisdictionLevel],
+    // Geografía en cascada. La localidad la usan la comunitaria (su barrio) y
+    // la muni con nivel LOCALITY; el departamento, la muni con nivel DEPARTMENT.
+    provinceId: [null as number | null],
+    departmentId: [null as number | null],
+    localityId: [null as number | null],
+
     ownerUsername: ['', [Validators.required, Validators.minLength(3)]],
-    // Solo aplican (con validators) cuando subtype = COMMUNITY, ver constructor.
+    ownerEmail: [''],
+
+    // Solo COMMUNITY (con validators, ver constructor).
     managedBy: ['CPS' as ManagedBy],
     neighborhoodName: [''],
     localitySearch: [''],
+
+    // El contrato va para los DOS tipos: es de la cuenta.
+    contractPrice: [null as number | null, [Validators.required, Validators.min(0)]],
+    contractStartDate: [hoy(), Validators.required],
+    contractEndDate: ['', Validators.required],
+    contractDescription: [''],
   });
 
   protected readonly isCommunity = () => this.form.controls.subtype.value === 'COMMUNITY';
 
+  /** La muni con nivel DEPARTMENT elige provincia + departamento; con LOCALITY, busca la localidad. */
+  protected readonly isDepartmentLevel = () =>
+    !this.isCommunity() && this.form.controls.jurisdictionLevel.value === 'DEPARTMENT';
+
+  protected readonly needsLocality = () =>
+    this.isCommunity() || this.form.controls.jurisdictionLevel.value === 'LOCALITY';
+
   /** El combo de planes se recorta por subtipo: un plan municipal no se le vende a una comunitaria. */
   protected readonly plansForSubtype = () =>
     this.plansCatalog().filter((p) => p.appliesTo === this.form.controls.subtype.value);
+
+  /** Cuánto dura el contrato, DERIVADO de las dos fechas: no se guarda en ningún lado. */
+  protected readonly duracion = computed(() => this.duracionTexto());
+  private readonly fechasVersion = signal(0);
 
   constructor() {
     this.plans.list({ active: true }).subscribe({
@@ -439,22 +247,38 @@ export class AccountForm {
       error: () => this.plansCatalog.set([]),
     });
 
-    // COMMUNITY gestiona un único barrio y ese barrio se crea acá mismo: el
-    // cupo de barrios deja de ser un input (lo fija el backend en 1) y en
-    // cambio hacen falta el nombre del barrio, su localidad y la modalidad.
+    this.geography.provinces().subscribe({
+      next: (provinces) => this.provinces.set(provinces),
+      error: () => this.provinces.set([]),
+    });
+
+    // El username se SUGIERE del nombre mientras se tipea, y deja de sugerirse
+    // apenas alguien lo toca a mano: pisarle lo que escribió sería peor que no
+    // sugerir nada.
+    this.form.controls.name.valueChanges.subscribe((name) => {
+      if (this.form.controls.ownerUsername.dirty) return;
+      this.form.controls.ownerUsername.setValue(deriveUsername(name ?? ''), {
+        emitEvent: false,
+      });
+    });
+
     this.form.controls.subtype.valueChanges.subscribe((subtype) => {
       const community = subtype === 'COMMUNITY';
 
       if (community) {
+        // COMMUNITY gestiona un único barrio, que se crea acá mismo: el cupo lo
+        // fija el backend en 1 y el de técnicos va en 0 (el campo lo hace CPS).
         this.form.controls.maxNeighborhoods.disable();
         this.form.controls.maxNeighborhoods.clearValidators();
+        this.form.controls.maxTechnicianUsers.setValue(0, { emitEvent: false });
         this.form.controls.neighborhoodName.setValidators(Validators.required);
       } else {
         this.form.controls.maxNeighborhoods.enable();
         this.form.controls.maxNeighborhoods.setValidators([Validators.required, Validators.min(1)]);
         this.form.controls.neighborhoodName.clearValidators();
-        this.selectedLocality.set(null);
-        this.form.controls.localitySearch.setValue('');
+        // Cambiar de tipo cambia qué significa la geografía cargada: la de una
+        // comunitaria es la de su barrio, la de una muni es su jurisdicción.
+        this.resetGeografia();
       }
       this.form.controls.maxNeighborhoods.updateValueAndValidity();
       this.form.controls.neighborhoodName.updateValueAndValidity();
@@ -464,6 +288,47 @@ export class AccountForm {
       const plan = this.selectedPlan();
       if (plan && plan.appliesTo !== subtype) this.form.controls.planId.setValue(null);
     });
+
+    // Cambiar de nivel de jurisdicción limpia la geografía: si no, se manda una
+    // localidad Y un departamento y el backend rebota (el CHECK exige uno solo).
+    this.form.controls.jurisdictionLevel.valueChanges.subscribe(() => this.resetGeografia());
+
+    // Los combos hijos arrancan deshabilitados. OJO: con `formControlName`,
+    // Angular IGNORA el binding [disabled] del template — hay que hacerlo acá.
+    this.form.controls.departmentId.disable({ emitEvent: false });
+    this.form.controls.localityId.disable({ emitEvent: false });
+
+    this.form.controls.provinceId.valueChanges.subscribe((provinceId) => {
+      this.resetDesde('department');
+      if (!provinceId) return;
+
+      this.geography.departments(Number(provinceId)).subscribe({
+        next: (departments) => {
+          this.departments.set(departments);
+          this.form.controls.departmentId.enable({ emitEvent: false });
+          this.geoVersion.update((v) => v + 1);
+        },
+        error: () => this.departments.set([]),
+      });
+    });
+
+    this.form.controls.departmentId.valueChanges.subscribe((departmentId) => {
+      this.resetDesde('locality');
+      if (!departmentId) return;
+
+      this.geography.localities(Number(departmentId)).subscribe({
+        next: (localities) => {
+          this.localities.set(localities);
+          this.form.controls.localityId.enable({ emitEvent: false });
+          this.geoVersion.update((v) => v + 1);
+        },
+        error: () => this.localities.set([]),
+      });
+    });
+
+    this.form.controls.localityId.valueChanges.subscribe(() =>
+      this.geoVersion.update((v) => v + 1),
+    );
 
     // Elegir un plan PRECARGA los cupos, no los congela: quedan editables para
     // el ajuste puntual de esa venta. Se manda igual el planId, para dejar
@@ -481,6 +346,13 @@ export class AccountForm {
         { emitEvent: false },
       );
     });
+
+    for (const control of [
+      this.form.controls.contractStartDate,
+      this.form.controls.contractEndDate,
+    ]) {
+      control.valueChanges.subscribe(() => this.fechasVersion.update((v) => v + 1));
+    }
 
     this.form.controls.localitySearch.valueChanges
       .pipe(
@@ -505,6 +377,31 @@ export class AccountForm {
       });
   }
 
+  /** Atajo de plazo: calcula la fecha de fin. El período NO se guarda. */
+  protected aplicarPlazo(meses: number): void {
+    const desde = this.form.controls.contractStartDate.value || hoy();
+    this.form.controls.contractEndDate.setValue(sumarMeses(desde, meses));
+  }
+
+  private duracionTexto(): string {
+    this.fechasVersion();
+    const desde = this.form.controls.contractStartDate.value;
+    const hasta = this.form.controls.contractEndDate.value;
+    if (!desde || !hasta || hasta < desde) return '';
+
+    const [a1, m1, d1] = desde.split('-').map(Number);
+    const [a2, m2, d2] = hasta.split('-').map(Number);
+    let meses = (a2 - a1) * 12 + (m2 - m1);
+    if (d2 < d1) meses -= 1;
+
+    if (meses < 1) return 'menos de un mes';
+    if (meses % 12 === 0) {
+      const anios = meses / 12;
+      return anios === 1 ? '1 año' : `${anios} años`;
+    }
+    return meses === 1 ? '1 mes' : `${meses} meses`;
+  }
+
   /** El `<select>` devuelve string aunque el valor sea numérico: se normaliza acá. */
   private selectedPlan(): Plan | null {
     const raw = this.form.controls.planId.value;
@@ -512,11 +409,65 @@ export class AccountForm {
     return this.plansCatalog().find((p) => p.id === Number(raw)) ?? null;
   }
 
+  /** Limpia los tres niveles a la vez. */
+  private resetGeografia(): void {
+    this.form.controls.localitySearch.setValue('', { emitEvent: false });
+    this.form.controls.provinceId.setValue(null, { emitEvent: false });
+    this.resetDesde('department');
+  }
+
+  /** Limpia de un nivel para abajo: cambiar el padre invalida a los hijos. */
+  private resetDesde(nivel: 'department' | 'locality'): void {
+    if (nivel === 'department') {
+      this.form.controls.departmentId.setValue(null, { emitEvent: false });
+      this.form.controls.departmentId.disable({ emitEvent: false });
+      this.departments.set([]);
+    }
+    this.form.controls.localityId.setValue(null, { emitEvent: false });
+    this.form.controls.localityId.disable({ emitEvent: false });
+    this.localities.set([]);
+    this.geoVersion.update((v) => v + 1);
+  }
+
+  /**
+   * El buscador es un atajo: elegir un resultado PRECARGA los tres combos, así
+   * quedan coherentes y el que carga puede seguir ajustando a mano desde ahí.
+   *
+   * El resultado ya trae el árbol completo (localidad -> depto -> provincia),
+   * así que los ids salen de ahí; lo que hay que pedir son las LISTAS, para que
+   * los combos tengan qué mostrar.
+   */
   protected selectLocality(locality: Locality): void {
-    this.selectedLocality.set(locality);
     this.localityResults.set([]);
     this.form.controls.localitySearch.setValue(this.fullLocalityName(locality), {
       emitEvent: false,
+    });
+
+    const department = locality.department;
+    const provinceId = department.province.id;
+
+    this.form.controls.provinceId.setValue(provinceId, { emitEvent: false });
+
+    // Cada id se setea DESPUÉS de que llegó su lista: un <select> no puede
+    // quedarse con un valor cuya <option> todavía no existe — se ve vacío.
+    this.geography.departments(provinceId).subscribe({
+      next: (departments) => {
+        this.departments.set(departments);
+        this.form.controls.departmentId.enable({ emitEvent: false });
+        this.form.controls.departmentId.setValue(department.id, { emitEvent: false });
+        this.geoVersion.update((v) => v + 1);
+      },
+      error: () => this.departments.set([]),
+    });
+
+    this.geography.localities(department.id).subscribe({
+      next: (localities) => {
+        this.localities.set(localities);
+        this.form.controls.localityId.enable({ emitEvent: false });
+        this.form.controls.localityId.setValue(locality.id, { emitEvent: false });
+        this.geoVersion.update((v) => v + 1);
+      },
+      error: () => this.localities.set([]),
     });
   }
 
@@ -534,9 +485,21 @@ export class AccountForm {
     const value = this.form.getRawValue();
     const planId = this.selectedPlan()?.id;
 
+    const contract = {
+      price: Number(value.contractPrice),
+      startDate: value.contractStartDate,
+      endDate: value.contractEndDate,
+      ...(value.contractDescription ? { description: value.contractDescription } : {}),
+    };
+
+    const owner = {
+      ownerUsername: value.ownerUsername,
+      ...(value.ownerEmail ? { ownerEmail: value.ownerEmail } : {}),
+    };
+
     if (this.isCommunity()) {
-      const locality = this.selectedLocality();
-      if (!locality) {
+      const localityId = value.localityId ? Number(value.localityId) : null;
+      if (!localityId) {
         this.form.markAllAsTouched();
         return;
       }
@@ -545,7 +508,7 @@ export class AccountForm {
       this.error.set(null);
 
       // Todo en un solo POST atómico: el backend lo hace todo o nada, así
-      // nunca queda una cuenta comunitaria sin su barrio.
+      // nunca queda una cuenta comunitaria sin su barrio ni sin su contrato.
       this.accounts
         .onboardCommunity({
           name: value.name,
@@ -554,82 +517,69 @@ export class AccountForm {
           maxAdminUsers: value.maxAdminUsers!,
           maxTechnicianUsers: value.maxTechnicianUsers!,
           maxMonitorUsers: value.maxMonitorUsers!,
-          ownerUsername: value.ownerUsername,
-          neighborhood: { name: value.neighborhoodName, localityId: locality.id },
+          ...owner,
+          neighborhood: {
+            name: value.neighborhoodName,
+            localityId,
+            // El punto es opcional; si se marcó, va al barrio Y a la cuenta.
+            ...(this.latitude() !== null && this.longitude() !== null
+              ? { latitude: this.latitude()!, longitude: this.longitude()! }
+              : {}),
+          },
+          contract,
         })
         .subscribe({
-          next: (result) => {
-            this.saving.set(false);
-            this.created.set({
-              accountId: result.account.id,
-              ownerUsername: result.ownerUsername,
-              temporaryPassword: result.temporaryPassword,
-            });
-          },
-          error: (err) => {
-            this.error.set(apiErrorMessage(err));
-            this.saving.set(false);
-          },
+          next: (result) => this.onCreated(result.account.id, result.ownerUsername, result.temporaryPassword),
+          error: (err) => this.onError(err),
         });
+      return;
+    }
+
+    // MUNICIPAL: la jurisdicción se elige. Va exactamente UNO de los dos ids,
+    // el que corresponde al nivel: el CHECK de la base no admite los dos.
+    const level = value.jurisdictionLevel;
+    if (level === 'LOCALITY' && !value.localityId) {
+      this.form.markAllAsTouched();
+      return;
+    }
+    if (level === 'DEPARTMENT' && !value.departmentId) {
+      this.form.markAllAsTouched();
       return;
     }
 
     this.saving.set(true);
     this.error.set(null);
 
-    // MUNICIPAL: tres pasos encadenados (carga sus barrios después, no los
-    // necesita en este paso). Si un paso del medio falla, el mensaje del
-    // backend dice exactamente cuál.
     this.accounts
-      .create({
+      .onboardMunicipal({
         name: value.name,
-        type: 'ORGANIZATION',
-        subtype: value.subtype,
+        jurisdiction:
+          level === 'LOCALITY'
+            ? { level, localityId: Number(value.localityId) }
+            : { level, departmentId: Number(value.departmentId) },
+        contract,
         ...(planId ? { planId } : {}),
         // El form ya validó que no son null (Validators.required + min).
         maxNeighborhoods: value.maxNeighborhoods!,
         maxAdminUsers: value.maxAdminUsers!,
         maxTechnicianUsers: value.maxTechnicianUsers!,
         maxMonitorUsers: value.maxMonitorUsers!,
+        ...owner,
       })
-      .pipe(
-        switchMap((account) =>
-          this.users
-            .create({
-              name: value.name,
-              kind: 'INSTITUTIONAL',
-              username: value.ownerUsername,
-            })
-            .pipe(
-              switchMap((owner) =>
-                this.accounts
-                  .addMember(account.id, { userId: owner.id, role: 'OWNER' })
-                  .pipe(switchMap(() => [{ account, owner }])),
-              ),
-            ),
-        ),
-      )
       .subscribe({
-        next: ({ account, owner }) => {
-          this.saving.set(false);
-          // Sin temporaryPassword no hay nada que mostrar: se navega directo
-          // (no debería pasar para un alta institucional, pero por las dudas
-          // no se deja al admin colgado en una pantalla sin salida).
-          if (!owner.temporaryPassword) {
-            void this.router.navigate(['/clientes', account.id]);
-            return;
-          }
-          this.created.set({
-            accountId: account.id,
-            ownerUsername: value.ownerUsername,
-            temporaryPassword: owner.temporaryPassword,
-          });
-        },
-        error: (err) => {
-          this.error.set(apiErrorMessage(err));
-          this.saving.set(false);
-        },
+        next: (result) => this.onCreated(result.account.id, result.ownerUsername, result.temporaryPassword),
+        error: (err) => this.onError(err),
       });
+  }
+
+  private onCreated(accountId: number, ownerUsername: string, temporaryPassword: string): void {
+    this.saving.set(false);
+    this.created.set({ accountId, ownerUsername, temporaryPassword });
+  }
+
+  private onError(err: unknown): void {
+    this.error.set(apiErrorMessage(err));
+    this.saving.set(false);
   }
 
   protected copyTemporaryPassword(value: string): void {

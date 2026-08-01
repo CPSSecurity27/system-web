@@ -12,12 +12,16 @@ import { PasswordService } from '../auth/password.service';
 import { AuditService } from '../common/audit.service';
 import {
   AccountType,
+  ContractStatus,
   EntityStatus,
+  JurisdictionLevel,
   OrgSubtype,
   UserKind,
   UserRole,
 } from '../common/enums';
 import { generateTemporaryPassword } from '../common/temporary-password';
+import { ServiceContract } from '../contracts/entities/service-contract.entity';
+import { Department } from '../geography/entities/department.entity';
 import { Locality } from '../geography/entities/locality.entity';
 import { Neighborhood } from '../neighborhoods/entities/neighborhood.entity';
 import { User } from '../users/entities/user.entity';
@@ -25,7 +29,9 @@ import {
   AddMemberDto,
   CreateAccountDto,
   FindAccountsQuery,
+  JurisdictionDto,
   OnboardCommunityDto,
+  OnboardMunicipalDto,
   SetStaffAssignmentsDto,
   UpdateMemberRoleDto,
   UpdateQuotasDto,
@@ -92,6 +98,19 @@ function pickQuotas(account: Account): Partial<AccountQuotas> {
 export interface OnboardCommunityResult {
   account: Account;
   neighborhoodId: number;
+  contractId: number;
+  ownerId: number;
+  ownerUsername: string;
+  temporaryPassword: string;
+}
+
+/**
+ * El alta municipal NO devuelve barrio: no lo crea. La muni carga sus barrios
+ * después, contra su cupo. El contrato SÍ, porque es de la cuenta.
+ */
+export interface OnboardMunicipalResult {
+  account: Account;
+  contractId: number;
   ownerId: number;
   ownerUsername: string;
   temporaryPassword: string;
@@ -141,6 +160,8 @@ export class AccountsService {
     private readonly assignments: Repository<StaffAssignment>,
     @InjectRepository(Locality)
     private readonly localities: Repository<Locality>,
+    @InjectRepository(Department)
+    private readonly departments: Repository<Department>,
     @InjectRepository(Plan) private readonly plans: Repository<Plan>,
     private readonly audit: AuditService,
     private readonly passwords: PasswordService,
@@ -244,7 +265,7 @@ export class AccountsService {
     const temporaryPassword = generateTemporaryPassword();
     const passwordHash = await this.passwords.hash(temporaryPassword);
 
-    const { account, neighborhood, owner, membership } =
+    const { account, neighborhood, owner, membership, contract } =
       await this.accounts.manager.transaction(async (manager) => {
         const account = await manager.save(
           manager.create(Account, {
@@ -256,6 +277,13 @@ export class AccountsService {
             ...quotas,
             // Invariante de negocio, no negociable (ver create()): COMMUNITY = 1.
             maxNeighborhoods: 1,
+            // La jurisdicción de una comunitaria NO se pregunta: es la de su
+            // único barrio. Son el mismo lugar, así que el GPS también.
+            jurisdictionLevel: JurisdictionLevel.LOCALITY,
+            localityId: dto.neighborhood.localityId,
+            departmentId: null,
+            latitude: dto.neighborhood.latitude ?? null,
+            longitude: dto.neighborhood.longitude ?? null,
             createdBy: actor.id,
           }),
         );
@@ -298,7 +326,24 @@ export class AccountsService {
           }),
         );
 
-        return { account, neighborhood, owner, membership };
+        // El contrato entra al MISMO acto: una comunitaria nace con su barrio,
+        // así que hay contra qué contratar. Sin esto se podía crear un
+        // consorcio completo —barrio y OWNER incluidos— sin contrato, y nada
+        // lo impedía ni lo avisaba.
+        const contract = await manager.save(
+          manager.create(ServiceContract, {
+            price: dto.contract.price,
+            description: dto.contract.description ?? null,
+            startDate: dto.contract.startDate,
+            endDate: dto.contract.endDate,
+            status: ContractStatus.ACTIVE,
+            accountId: account.id,
+            accountType: AccountType.ORGANIZATION,
+            createdBy: actor.id,
+          }),
+        );
+
+        return { account, neighborhood, owner, membership, contract };
       });
 
     // Auditoría DESPUÉS del commit: si algo de arriba revierte, no queda un
@@ -334,13 +379,239 @@ export class AccountsService {
       accountId: account.id,
       newValue: { userId: owner.id, role: UserRole.OWNER },
     });
+    // El contrato mueve plata: va al audit_log como toda acción sensible.
+    await this.audit.record({
+      actorUserId: actor.id,
+      action: 'contract.create',
+      entityType: 'service_contract',
+      entityId: contract.id,
+      accountId: account.id,
+      neighborhoodId: neighborhood.id,
+      newValue: {
+        price: contract.price,
+        startDate: contract.startDate,
+        endDate: contract.endDate,
+      },
+    });
 
     return {
       account,
       neighborhoodId: neighborhood.id,
+      contractId: contract.id,
       ownerId: owner.id,
       ownerUsername: owner.username!,
       temporaryPassword,
+    };
+  }
+
+  /**
+   * Alta atómica de una MUNICIPAL: cuenta + OWNER institucional + membresía.
+   *
+   * Sin barrio y sin contrato, a propósito: la muni crea sus barrios después,
+   * contra su cupo, y el contrato es del BARRIO (`neighborhood_id` NOT NULL).
+   * Un cliente municipal con cero barrios es un estado válido.
+   *
+   * Reemplaza el encadenamiento de tres llamadas que hacía el front: si fallaba
+   * la del OWNER, quedaba una cuenta que nadie podía administrar. Acá o pasa
+   * todo o no pasa nada.
+   */
+  async onboardMunicipal(
+    dto: OnboardMunicipalDto,
+    actor: AuthenticatedUser,
+  ): Promise<OnboardMunicipalResult> {
+    const jurisdiction = await this.resolveJurisdiction(dto.jurisdiction);
+
+    const quotas = await this.resolveQuotas({
+      ...dto,
+      type: AccountType.ORGANIZATION,
+      subtype: OrgSubtype.MUNICIPAL,
+    });
+
+    // Mismo chequeo previo que onboardCommunity y por el mismo motivo: un
+    // username repetido reventaría el INSERT a mitad de la transacción y el
+    // que carga el alta vería un 500 en vez de "el usuario ya existe". El
+    // rollback igual sería correcto; lo que se gana es el mensaje.
+    const usernameTomado = await this.users.findOne({
+      where: { username: dto.ownerUsername },
+    });
+    if (usernameTomado) {
+      throw new ConflictException(
+        `El usuario "${dto.ownerUsername}" ya existe`,
+      );
+    }
+
+    const temporaryPassword = generateTemporaryPassword();
+    const passwordHash = await this.passwords.hash(temporaryPassword);
+
+    const { account, owner, membership, contract } =
+      await this.accounts.manager.transaction(async (manager) => {
+        const account = await manager.save(
+          manager.create(Account, {
+            name: dto.name,
+            type: AccountType.ORGANIZATION,
+            subtype: OrgSubtype.MUNICIPAL,
+            status: EntityStatus.ACTIVE,
+            planId: dto.planId ?? null,
+            ...quotas,
+            ...jurisdiction,
+            createdBy: actor.id,
+          }),
+        );
+
+        const owner = await manager.save(
+          manager.create(User, {
+            name: dto.name,
+            kind: UserKind.INSTITUTIONAL,
+            username: dto.ownerUsername,
+            email: dto.ownerEmail ?? null,
+            passwordHash,
+            mustChangePassword: true,
+            status: EntityStatus.ACTIVE,
+            createdBy: actor.id,
+          }),
+        );
+
+        const membership = await manager.save(
+          manager.create(AccountUser, {
+            accountId: account.id,
+            userId: owner.id,
+            role: UserRole.OWNER,
+            createdBy: actor.id,
+          }),
+        );
+
+        // El contrato es de la CUENTA, no del barrio: por eso la muni puede
+        // firmarlo el día 1, sin tener todavía ningún barrio.
+        const contract = await manager.save(
+          manager.create(ServiceContract, {
+            price: dto.contract.price,
+            description: dto.contract.description ?? null,
+            startDate: dto.contract.startDate,
+            endDate: dto.contract.endDate,
+            status: ContractStatus.ACTIVE,
+            accountId: account.id,
+            accountType: AccountType.ORGANIZATION,
+            createdBy: actor.id,
+          }),
+        );
+
+        return { account, owner, membership, contract };
+      });
+
+    // Auditoría DESPUÉS del commit: si algo revierte, no queda registro de una
+    // acción que en definitiva no pasó.
+    await this.audit.record({
+      actorUserId: actor.id,
+      action: 'account.create',
+      entityType: 'account',
+      entityId: account.id,
+      accountId: account.id,
+      newValue: { name: account.name, subtype: account.subtype },
+    });
+    await this.audit.record({
+      actorUserId: actor.id,
+      action: 'user.temp_password_issued',
+      entityType: 'app_user',
+      entityId: owner.id,
+    });
+    await this.audit.record({
+      actorUserId: actor.id,
+      action: 'membership.add',
+      entityType: 'account_user',
+      entityId: membership.id,
+      accountId: account.id,
+      newValue: { userId: owner.id, role: UserRole.OWNER },
+    });
+    // El contrato mueve plata: va al audit_log como toda acción sensible.
+    await this.audit.record({
+      actorUserId: actor.id,
+      action: 'contract.create',
+      entityType: 'service_contract',
+      entityId: contract.id,
+      accountId: account.id,
+      newValue: {
+        price: contract.price,
+        startDate: contract.startDate,
+        endDate: contract.endDate,
+      },
+    });
+
+    return {
+      account,
+      contractId: contract.id,
+      ownerId: owner.id,
+      ownerUsername: owner.username!,
+      temporaryPassword,
+    };
+  }
+
+  /**
+   * Valida la jurisdicción y devuelve las columnas listas para el INSERT.
+   *
+   * El nivel dice CUÁL de los dos ids tiene que venir, y el otro tiene que
+   * quedar en NULL: el CHECK de la base lo exige, pero un 400 legible es mejor
+   * que un 23514 traducido a 500.
+   */
+  private async resolveJurisdiction(dto: JurisdictionDto): Promise<{
+    jurisdictionLevel: JurisdictionLevel;
+    localityId: number | null;
+    departmentId: number | null;
+    latitude: number | null;
+    longitude: number | null;
+  }> {
+    const gps = {
+      latitude: dto.latitude ?? null,
+      longitude: dto.longitude ?? null,
+    };
+
+    if (dto.level === JurisdictionLevel.LOCALITY) {
+      if (!dto.localityId) {
+        throw new BadRequestException(
+          'Con jurisdicción de LOCALIDAD hay que indicar la localidad',
+        );
+      }
+      if (dto.departmentId) {
+        throw new BadRequestException(
+          'Con jurisdicción de LOCALIDAD no se manda departamento',
+        );
+      }
+      const locality = await this.localities.findOne({
+        where: { id: dto.localityId },
+      });
+      if (!locality) {
+        throw new NotFoundException(`No existe la localidad ${dto.localityId}`);
+      }
+      return {
+        jurisdictionLevel: JurisdictionLevel.LOCALITY,
+        localityId: locality.id,
+        departmentId: null,
+        ...gps,
+      };
+    }
+
+    if (!dto.departmentId) {
+      throw new BadRequestException(
+        'Con jurisdicción de DEPARTAMENTO hay que indicar el departamento',
+      );
+    }
+    if (dto.localityId) {
+      throw new BadRequestException(
+        'Con jurisdicción de DEPARTAMENTO no se manda localidad',
+      );
+    }
+    const department = await this.departments.findOne({
+      where: { id: dto.departmentId },
+    });
+    if (!department) {
+      throw new NotFoundException(
+        `No existe el departamento ${dto.departmentId}`,
+      );
+    }
+    return {
+      jurisdictionLevel: JurisdictionLevel.DEPARTMENT,
+      localityId: null,
+      departmentId: department.id,
+      ...gps,
     };
   }
 

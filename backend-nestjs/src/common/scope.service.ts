@@ -32,6 +32,13 @@ export interface AccessScope {
   global: boolean;
   neighborhoodIds: number[];
   homeIds: number[];
+  /**
+   * Las cuentas ORGANIZATION a las que pertenece. Desde 2026-07-31 el CONTRATO
+   * es de la cuenta (el sistema se vende a nivel municipal), así que el alcance
+   * de contratos no se puede derivar de los barrios: una muni recién creada no
+   * tiene ninguno y su contrato existe igual.
+   */
+  accountIds: number[];
 }
 
 @Injectable()
@@ -48,13 +55,16 @@ export class ScopeService {
       (m) => m.accountType === AccountType.COMPANY,
     );
     if (isCompany) {
-      return { global: true, neighborhoodIds: [], homeIds: [] };
+      return { global: true, neighborhoodIds: [], homeIds: [], accountIds: [] };
     }
 
     const neighborhoodIds = new Set<number>();
+    const accountIds = new Set<number>();
 
     for (const membership of user.memberships) {
       if (membership.accountType !== AccountType.ORGANIZATION) continue;
+
+      accountIds.add(membership.accountId);
 
       const isStaff =
         membership.role === UserRole.TECHNICIAN ||
@@ -86,6 +96,7 @@ export class ScopeService {
       global: false,
       neighborhoodIds: [...neighborhoodIds],
       homeIds,
+      accountIds: [...accountIds],
     };
   }
 

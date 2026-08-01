@@ -1,0 +1,560 @@
+<cps-page-header title="Nuevo cliente" icon="bi-briefcase">
+  <a actions routerLink="/clientes" class="btn btn-sm btn-outline-secondary" title="Volver">
+    <i class="bi bi-arrow-left"></i> Volver
+  </a>
+</cps-page-header>
+
+<div class="row">
+  <div class="col-12 col-lg-8">
+    @if (created(); as result) {
+      <div class="card border">
+        <div class="card-body">
+          <p class="fw-semibold text-success mb-2">
+            <i class="bi bi-check-circle-fill me-1"></i> Cliente creado
+          </p>
+          <p class="small text-muted">
+            Clave temporal para <strong class="font-monospace">{{ result.ownerUsername }}</strong
+            >. Copiala ahora: no se va a volver a mostrar. El OWNER la va a tener que cambiar en su
+            primer login.
+          </p>
+          <div class="input-group mb-3">
+            <input
+              type="text"
+              class="form-control font-monospace"
+              [value]="result.temporaryPassword"
+              readonly
+            />
+            <button
+              type="button"
+              class="btn btn-outline-secondary"
+              (click)="copyTemporaryPassword(result.temporaryPassword)"
+            >
+              <i class="bi" [class.bi-clipboard]="!copied()" [class.bi-clipboard-check]="copied()"></i>
+              {{ copied() ? 'Copiada' : 'Copiar' }}
+            </button>
+          </div>
+          <button type="button" class="btn btn-brand" (click)="continueToAccount(result.accountId)">
+            Continuar a la ficha del cliente
+          </button>
+        </div>
+      </div>
+    } @else {
+      <div class="card border">
+        <div class="card-body">
+          <form [formGroup]="form" (ngSubmit)="submit()" novalidate>
+            <div class="mb-3">
+              <label for="name" class="form-label small fw-medium">Nombre</label>
+              <input
+                id="name"
+                type="text"
+                class="form-control"
+                formControlName="name"
+                placeholder="Municipalidad de San Pedro / Consorcio Los Lapachos"
+              />
+            </div>
+
+            <div class="mb-3">
+              <label for="subtype" class="form-label small fw-medium">Tipo de organización</label>
+              <!-- El subtipo dice la ESCALA. Quién opera cada barrio es otra
+                   cosa (managedBy) y se elige más abajo. -->
+              <select id="subtype" class="form-select" formControlName="subtype">
+                <option value="MUNICIPAL">Municipal (varios barrios)</option>
+                <option value="COMMUNITY">Comunitaria (un solo barrio)</option>
+              </select>
+              <div class="form-text">
+                Define cuántos barrios gestiona. Quién los <em>opera</em> —CPS o el propio cliente—
+                se decide por barrio, no acá.
+              </div>
+            </div>
+
+            <div class="mb-3">
+              <label for="planId" class="form-label small fw-medium">Plan</label>
+              <select id="planId" class="form-select" formControlName="planId">
+                <option [value]="null">Sin plan — cupos a mano</option>
+                @for (plan of plansForSubtype(); track plan.id) {
+                  <option [value]="plan.id">{{ plan.name }}</option>
+                }
+              </select>
+              <div class="form-text">
+                El plan precarga los cupos de abajo; podés ajustarlos para esta venta sin crear un
+                plan nuevo. Los cupos quedan copiados en la cuenta: si mañana se reconfigura el
+                plan, este cliente no cambia.
+              </div>
+            </div>
+
+            <div class="row g-3 mb-3">
+              @if (!isCommunity()) {
+                <div class="col-12 col-sm-6">
+                  <label for="maxNeighborhoods" class="form-label small fw-medium">
+                    Cupo de barrios
+                  </label>
+                  <input
+                    id="maxNeighborhoods"
+                    type="number"
+                    min="1"
+                    class="form-control"
+                    [class.is-invalid]="
+                      form.controls.maxNeighborhoods.touched &&
+                      form.controls.maxNeighborhoods.invalid
+                    "
+                    formControlName="maxNeighborhoods"
+                    placeholder="Ej: 5"
+                  />
+                  @if (
+                    form.controls.maxNeighborhoods.touched && form.controls.maxNeighborhoods.invalid
+                  ) {
+                    <div class="invalid-feedback">Obligatorio, al menos 1.</div>
+                  }
+                </div>
+              }
+
+              <div class="col-12 col-sm-6">
+                <label for="maxAdminUsers" class="form-label small fw-medium">
+                  Cupo de administradores
+                </label>
+                <input
+                  id="maxAdminUsers"
+                  type="number"
+                  min="0"
+                  class="form-control"
+                  [class.is-invalid]="
+                    form.controls.maxAdminUsers.touched && form.controls.maxAdminUsers.invalid
+                  "
+                  formControlName="maxAdminUsers"
+                />
+                @if (form.controls.maxAdminUsers.touched && form.controls.maxAdminUsers.invalid) {
+                  <div class="invalid-feedback">Obligatorio, 0 o más.</div>
+                }
+              </div>
+
+              <!--
+                Técnicos: la comunitaria no tiene propios (el campo lo hace CPS),
+                así que el campo NI APARECE y va en 0. No es un invariante duro:
+                si algún día un consorcio grande quiere el suyo, CPS le sube el
+                cupo desde la ficha del cliente.
+              -->
+              @if (!isCommunity()) {
+                <div class="col-12 col-sm-6">
+                  <label for="maxTechnicianUsers" class="form-label small fw-medium">
+                    Cupo de técnicos
+                  </label>
+                  <input
+                    id="maxTechnicianUsers"
+                    type="number"
+                    min="0"
+                    class="form-control"
+                    [class.is-invalid]="
+                      form.controls.maxTechnicianUsers.touched &&
+                      form.controls.maxTechnicianUsers.invalid
+                    "
+                    formControlName="maxTechnicianUsers"
+                  />
+                  <div class="form-text">0 = sin técnicos propios: el campo lo hace CPS.</div>
+                </div>
+              }
+
+              <div class="col-12 col-sm-6">
+                <label for="maxMonitorUsers" class="form-label small fw-medium">
+                  Cupo de monitores
+                </label>
+                <input
+                  id="maxMonitorUsers"
+                  type="number"
+                  min="0"
+                  class="form-control"
+                  [class.is-invalid]="
+                    form.controls.maxMonitorUsers.touched && form.controls.maxMonitorUsers.invalid
+                  "
+                  formControlName="maxMonitorUsers"
+                />
+                @if (
+                  form.controls.maxMonitorUsers.touched && form.controls.maxMonitorUsers.invalid
+                ) {
+                  <div class="invalid-feedback">Obligatorio, 0 o más.</div>
+                }
+              </div>
+
+              <!-- Los cupos son la TARIFA: después solo se tocan por /quotas (auditado). -->
+              <div class="form-text mt-1">
+                Los cupos son parte de la tarifa: no existe "sin límite" para los barrios. En los de
+                personal, <strong>0 significa que la cuenta no tiene ese rol</strong>. Después se
+                cambian desde la ficha del cliente (solo CPS, queda auditado).
+              </div>
+            </div>
+
+            @if (isCommunity()) {
+              <hr />
+              <p class="fw-semibold small mb-1">
+                <i class="bi bi-houses me-1"></i> Barrio de la comunidad
+              </p>
+              <p class="text-muted small">
+                Una organización comunitaria gestiona UN único barrio: sin él, la cuenta queda
+                incompleta. Se crea en este mismo paso, y de él sale la jurisdicción del cliente.
+              </p>
+
+              <div class="mb-3">
+                <label for="managedBy" class="form-label small fw-medium">
+                  Modalidad del servicio
+                </label>
+                <select id="managedBy" class="form-select" formControlName="managedBy">
+                  <option value="CPS">Llave en mano — lo opera CPS</option>
+                  <option value="ORGANIZATION">Autogestión — lo opera la comunidad</option>
+                </select>
+                <div class="form-text">
+                  Llave en mano: CPS carga viviendas, vecinos y equipos, y la comunidad ve todo sin
+                  poder editarlo. Autogestión: sus administradores operan el barrio. Se puede
+                  cambiar después (solo CPS, auditado).
+                </div>
+              </div>
+
+              <div class="mb-3">
+                <label for="neighborhoodName" class="form-label small fw-medium">
+                  Nombre del barrio
+                </label>
+                <input
+                  id="neighborhoodName"
+                  type="text"
+                  class="form-control"
+                  formControlName="neighborhoodName"
+                  [class.is-invalid]="
+                    form.controls.neighborhoodName.touched && form.controls.neighborhoodName.invalid
+                  "
+                />
+                @if (
+                  form.controls.neighborhoodName.touched && form.controls.neighborhoodName.invalid
+                ) {
+                  <div class="invalid-feedback">El nombre del barrio es obligatorio.</div>
+                }
+              </div>
+            }
+
+            <!--
+              JURISDICCIÓN — hasta dónde llega el cliente. Solo la municipal la
+              elige: la comunitaria la DERIVA de su único barrio, porque son el
+              mismo lugar. Va JUNTO a la geografía, que es donde se completa.
+            -->
+            @if (!isCommunity()) {
+              <hr />
+              <p class="fw-semibold small mb-1">
+                <i class="bi bi-geo-alt me-1"></i> Jurisdicción
+              </p>
+              <p class="text-muted small">
+                Hasta dónde llega el cliente. Sus barrios solo se van a poder crear
+                <strong>dentro</strong> de este límite.
+              </p>
+
+              <div class="mb-3">
+                <label for="jurisdictionLevel" class="form-label small fw-medium">Alcance</label>
+                <select id="jurisdictionLevel" class="form-select" formControlName="jurisdictionLevel">
+                  <option value="LOCALITY">Una localidad</option>
+                  <option value="DEPARTMENT">Un departamento entero</option>
+                </select>
+                <div class="form-text">
+                  Con <strong>una localidad</strong>, sus barrios van solo ahí. Con
+                  <strong>un departamento</strong>, en cualquiera de sus localidades.
+                </div>
+              </div>
+            }
+
+            <!--
+              GEOGRAFÍA. Dos caminos para lo mismo, y por eso el buscador va
+              primero: escribir "cordoba" es más rápido que bajar tres combos.
+              Elegir un resultado PRECARGA los tres, así quedan coherentes y se
+              pueden seguir ajustando a mano.
+            -->
+            <div class="mb-3 position-relative">
+              <label for="localitySearch" class="form-label small fw-medium">
+                Buscar localidad <span class="text-muted fw-normal">(atajo)</span>
+              </label>
+              <input
+                id="localitySearch"
+                type="text"
+                class="form-control"
+                formControlName="localitySearch"
+                placeholder="Escribí al menos 2 letras…"
+                autocomplete="off"
+              />
+              <div class="form-text">
+                Se ignoran acentos y mayúsculas: “cordoba” encuentra “Córdoba”. Al elegir una, se
+                completan los tres campos de abajo.
+              </div>
+
+              @if (searchingLocality()) {
+                <div class="form-text text-muted">
+                  <span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>
+                  Buscando…
+                </div>
+              }
+
+              @if (localityResults().length > 0) {
+                <ul
+                  class="list-group position-absolute w-100 shadow-sm"
+                  style="z-index: 5; max-height: 260px; overflow-y: auto"
+                >
+                  @for (locality of localityResults(); track locality.id) {
+                    <li>
+                      <button
+                        type="button"
+                        class="list-group-item list-group-item-action text-start"
+                        (click)="selectLocality(locality)"
+                      >
+                        {{ fullLocalityName(locality) }}
+                      </button>
+                    </li>
+                  }
+                </ul>
+              }
+            </div>
+
+            <div class="row g-3 mb-3">
+              <div class="col-12 col-sm-4">
+                <label for="provinceId" class="form-label small fw-medium">Provincia</label>
+                <select id="provinceId" class="form-select" formControlName="provinceId">
+                  <option [value]="null">Elegí una provincia…</option>
+                  @for (province of provinces(); track province.id) {
+                    <option [value]="province.id">{{ province.name }}</option>
+                  }
+                </select>
+              </div>
+
+              <!-- Sin [disabled] en el template: con formControlName Angular lo
+                   ignora. Se habilitan desde el componente al llegar la lista. -->
+              <div class="col-12 col-sm-4">
+                <label for="departmentId" class="form-label small fw-medium">Departamento</label>
+                <select id="departmentId" class="form-select" formControlName="departmentId">
+                  <option [value]="null">Elegí un departamento…</option>
+                  @for (department of departments(); track department.id) {
+                    <option [value]="department.id">{{ department.name }}</option>
+                  }
+                </select>
+              </div>
+
+              @if (needsLocality()) {
+                <div class="col-12 col-sm-4">
+                  <label for="localityId" class="form-label small fw-medium">Localidad</label>
+                  <select id="localityId" class="form-select" formControlName="localityId">
+                    <option [value]="null">Elegí una localidad…</option>
+                    @for (locality of localities(); track locality.id) {
+                      <option [value]="locality.id">{{ locality.name }}</option>
+                    }
+                  </select>
+                </div>
+              }
+            </div>
+
+            @if (needsLocality()) {
+              @if (selectedLocalityText(); as texto) {
+                <cps-alert variant="success" [dense]="true">
+                  Localidad elegida: <strong>{{ texto }}</strong>
+                </cps-alert>
+              } @else {
+                <cps-alert variant="warning" [dense]="true">
+                  Elegí una localidad antes de crear el cliente.
+                </cps-alert>
+              }
+            } @else if (!form.controls.departmentId.value) {
+              <cps-alert variant="warning" [dense]="true">
+                Elegí un departamento antes de crear el cliente.
+              </cps-alert>
+            }
+
+            <!--
+              El PUNTO del barrio de la comunidad. Solo acá: la municipalidad no
+              crea barrio en el alta, sus barrios se cargan después (y ahí tienen
+              su propio mapa).
+
+              El consorcio y su barrio son el mismo lugar, así que este punto
+              queda también como el domicilio de la cuenta.
+            -->
+            @if (isCommunity()) {
+              <div class="card border mb-3">
+                <div class="card-header bg-white border-bottom">
+                  <span class="fw-semibold small">
+                    <i class="bi bi-geo-alt me-1"></i> Ubicación del barrio en el mapa
+                    <span class="text-muted fw-normal">(opcional)</span>
+                  </span>
+                </div>
+                <div class="card-body">
+                  <!-- Nadie tipea coordenadas: se clickea el mapa y listo. -->
+                  <p class="text-muted small mb-2">Hacé click en el mapa para marcar el barrio.</p>
+                  <app-map [clickable]="true" (positionChange)="setPosition($event)" />
+                  @if (latitude() !== null) {
+                    <p class="small mb-0 mt-2">
+                      <i class="bi bi-check-circle text-success me-1"></i>
+                      <span class="font-monospace">{{ latitude() }}, {{ longitude() }}</span>
+                      <button
+                        type="button"
+                        class="btn btn-link btn-sm p-0 ms-2 align-baseline"
+                        (click)="clearPosition()"
+                      >
+                        Quitar
+                      </button>
+                    </p>
+                  }
+                </div>
+              </div>
+            }
+
+            <!--
+              EL CONTRATO va para los DOS tipos: es de la CUENTA, no del barrio.
+              El sistema se vende a nivel municipal — la muni paga por N barrios
+              y no le revende a cada uno — así que puede firmarlo el día 1
+              aunque todavía no tenga ningún barrio.
+            -->
+            <hr />
+            <p class="fw-semibold small mb-1">
+              <i class="bi bi-file-earmark-text me-1"></i> Contrato
+            </p>
+            <p class="text-muted small">
+              El precio es por <strong>el período del contrato</strong>. No existe un cliente sin
+              contrato.
+            </p>
+
+            <div class="mb-3">
+              <label for="contractPrice" class="form-label small fw-medium">
+                Precio del período
+              </label>
+              <input
+                id="contractPrice"
+                type="number"
+                min="0"
+                step="0.01"
+                class="form-control"
+                formControlName="contractPrice"
+                [class.is-invalid]="
+                  form.controls.contractPrice.touched && form.controls.contractPrice.invalid
+                "
+              />
+              @if (form.controls.contractPrice.touched && form.controls.contractPrice.invalid) {
+                <div class="invalid-feedback">El precio es obligatorio.</div>
+              }
+            </div>
+
+            <div class="mb-2">
+              <span class="form-label small fw-medium d-block">Plazo</span>
+              <div class="btn-group btn-group-sm flex-wrap" role="group">
+                @for (plazo of plazos; track plazo.meses) {
+                  <button
+                    type="button"
+                    class="btn btn-outline-secondary"
+                    (click)="aplicarPlazo(plazo.meses)"
+                  >
+                    {{ plazo.label }}
+                  </button>
+                }
+              </div>
+              <div class="form-text">
+                Calculan la fecha de fin desde la de inicio. Podés ajustarla a mano.
+              </div>
+            </div>
+
+            <div class="row g-3 mb-3">
+              <div class="col-12 col-sm-6">
+                <label for="contractStartDate" class="form-label small fw-medium">Desde</label>
+                <input
+                  id="contractStartDate"
+                  type="date"
+                  class="form-control"
+                  formControlName="contractStartDate"
+                  [class.is-invalid]="
+                    form.controls.contractStartDate.touched &&
+                    form.controls.contractStartDate.invalid
+                  "
+                />
+              </div>
+              <div class="col-12 col-sm-6">
+                <label for="contractEndDate" class="form-label small fw-medium">Hasta</label>
+                <input
+                  id="contractEndDate"
+                  type="date"
+                  class="form-control"
+                  formControlName="contractEndDate"
+                  [class.is-invalid]="
+                    form.controls.contractEndDate.touched && form.controls.contractEndDate.invalid
+                  "
+                />
+                @if (form.controls.contractEndDate.touched && form.controls.contractEndDate.invalid) {
+                  <div class="invalid-feedback">La fecha de fin es obligatoria.</div>
+                }
+              </div>
+              @if (duracion()) {
+                <div class="col-12">
+                  <span class="badge bg-brand-soft text-brand border">
+                    <i class="bi bi-clock-history me-1"></i> Duración: {{ duracion() }}
+                  </span>
+                </div>
+              }
+            </div>
+
+            <div class="mb-3">
+              <label for="contractDescription" class="form-label small fw-medium">
+                Descripción
+              </label>
+              <input
+                id="contractDescription"
+                type="text"
+                class="form-control"
+                formControlName="contractDescription"
+                placeholder="Opcional"
+              />
+            </div>
+
+            <hr />
+            <p class="fw-semibold small mb-1">
+              <i class="bi bi-bank me-1"></i> Usuario institucional (OWNER)
+            </p>
+            <p class="text-muted small">
+              Es la cuenta de la <strong>institución</strong>, no de una persona: el personal rota,
+              este usuario queda. Con él, el cliente crea sus propios administradores.
+            </p>
+
+            <div class="mb-3">
+              <label for="ownerUsername" class="form-label small fw-medium">Usuario</label>
+              <input
+                id="ownerUsername"
+                type="text"
+                class="form-control font-monospace"
+                formControlName="ownerUsername"
+                placeholder="municipalidad_san_pedro"
+                autocomplete="off"
+              />
+              <div class="form-text">
+                Se sugiere a partir del nombre y podés cambiarlo. Sin contraseña: el sistema genera
+                una clave TEMPORAL que se muestra una sola vez al crear el cliente.
+              </div>
+            </div>
+
+            <div class="mb-3">
+              <label for="ownerEmail" class="form-label small fw-medium">
+                Correo <span class="text-muted fw-normal">(opcional)</span>
+              </label>
+              <input
+                id="ownerEmail"
+                type="email"
+                class="form-control"
+                formControlName="ownerEmail"
+                placeholder="info@municipalidad.gob.ar"
+                autocomplete="off"
+              />
+              <div class="form-text">
+                Con correo, el cliente puede recuperar su contraseña solo. Sin correo, cada olvido
+                de clave lo resuelve CPS.
+              </div>
+            </div>
+
+            @if (error()) {
+              <cps-alert variant="error" [dense]="true">{{ error() }}</cps-alert>
+            }
+
+            <div class="d-flex gap-2">
+              <button type="submit" class="btn btn-brand" [disabled]="saving() || form.invalid">
+                {{ saving() ? 'Creando…' : 'Crear cliente con su OWNER' }}
+              </button>
+              <a routerLink="/clientes" class="btn btn-outline-secondary">Cancelar</a>
+            </div>
+          </form>
+        </div>
+      </div>
+    }
+  </div>
+</div>
