@@ -100,7 +100,8 @@ CREATE TABLE app_user (
   dni               TEXT UNIQUE,              -- identidad del vecino (NULL para panel puro)
   email             TEXT UNIQUE,
   telephone         TEXT,
-  password_hash     TEXT,                     -- argon2id; NULL para vecinos solo-OTP
+  birth_date        DATE,                     -- dato opcional del vecino
+  password_hash     TEXT,                     -- argon2id; NULL = cuenta sin activar
   status            entity_status NOT NULL DEFAULT 'ACTIVE',
   email_verified_at TIMESTAMPTZ,
   phone_verified_at TIMESTAMPTZ,
@@ -166,6 +167,7 @@ CREATE TABLE plan (
   -- Cupos de BARRIO que sugiere
   max_family_members      INT NOT NULL DEFAULT 3 CHECK (max_family_members >= 0),
   remote_controls_enabled BOOLEAN NOT NULL DEFAULT true,
+  community_scope_enabled BOOLEAN NOT NULL DEFAULT true,
 
   created_by              INT REFERENCES app_user(id) ON DELETE SET NULL,
   updated_by              INT REFERENCES app_user(id) ON DELETE SET NULL,
@@ -331,6 +333,9 @@ CREATE TABLE neighborhood (
   -- CUPOS del barrio (§5.2): SOLO CPS los escribe
   max_family_members      INT NOT NULL DEFAULT 3 CHECK (max_family_members >= 0),
   remote_controls_enabled BOOLEAN NOT NULL DEFAULT true,
+  -- Habilita eventos scope=COMMUNITY: que el vecino dispare TODAS las alarmas
+  -- del barrio desde la app, no solo la que responde por su casa.
+  community_scope_enabled BOOLEAN NOT NULL DEFAULT true,
 
   created_by              INT REFERENCES app_user(id) ON DELETE SET NULL,
   updated_by              INT REFERENCES app_user(id) ON DELETE SET NULL,
@@ -582,12 +587,14 @@ CREATE TRIGGER trg_maintenance_updated BEFORE UPDATE ON device_maintenance
 
 CREATE TABLE home (
   id                SERIAL PRIMARY KEY,
-  name              TEXT NOT NULL,
-  address           TEXT,
+  -- La dirección IDENTIFICA la vivienda: no hay un `name` aparte. Con los dos
+  -- campos el gestor escribía la dirección en el nombre y quedaban desfasados.
+  address           TEXT NOT NULL,          -- "Mza A Casa 5"
   contact_phone     TEXT,                   -- teléfono DEL HOGAR (sobrevive al titular)
   status            entity_status NOT NULL DEFAULT 'ACTIVE',
-  latitude          DOUBLE PRECISION,
-  longitude         DOUBLE PRECISION,
+  -- GPS OBLIGATORIO: sale en el mapa del monitoreo y en el `gps` del evento.
+  latitude          DOUBLE PRECISION NOT NULL,
+  longitude         DOUBLE PRECISION NOT NULL,
   neighborhood_id   INT NOT NULL REFERENCES neighborhood(id) ON DELETE RESTRICT,
   -- Alarma PREFERIDA para eventos SINGLE (preferencia, no propiedad).
   -- Servicio: debe ser un device del mismo barrio.
@@ -601,6 +608,10 @@ CREATE INDEX idx_home_neighborhood ON home(neighborhood_id);
 CREATE TRIGGER trg_home_updated BEFORE UPDATE ON home
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
+-- La relación vecino <-> vivienda NO vive en ninguna de las dos tablas: es una
+-- fila propia acá. Ni `home.members`, ni `user.home_id`, ni `home.owner_id`
+-- (los tres que tenía Firebase, diciendo lo mismo en tres lugares que nada
+-- obligaba a mantener de acuerdo).
 CREATE TABLE home_member (
   id         SERIAL PRIMARY KEY,
   home_id    INT NOT NULL REFERENCES home(id) ON DELETE CASCADE,
@@ -609,17 +620,17 @@ CREATE TABLE home_member (
   status     entity_status NOT NULL DEFAULT 'ACTIVE',
   created_by INT REFERENCES app_user(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-
-  CONSTRAINT uq_home_member UNIQUE (home_id, user_id)
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 -- Un solo TITULAR por hogar…
 CREATE UNIQUE INDEX uq_home_single_titular ON home_member(home_id)
   WHERE role = 'TITULAR';
--- …y una persona es titular de UN solo hogar (regla del PDF que se conserva)
-CREATE UNIQUE INDEX uq_user_single_titular ON home_member(user_id)
-  WHERE role = 'TITULAR';
-CREATE INDEX idx_home_member_user ON home_member(user_id);
+-- …y UNA PERSONA VIVE EN UNA SOLA CASA (titular o familiar, da igual). Es el
+-- `user.home_id` de Firebase pero garantizado por la base. Sin esto, un vecino
+-- en dos barrios hace ambiguo qué barrio despertar en un evento, y el cupo de
+-- familiares se esquiva repartiendo gente entre hogares.
+-- Subsume a uq_home_member (home_id,user_id) y a idx_home_member_user.
+CREATE UNIQUE INDEX uq_home_member_one_home ON home_member(user_id);
 CREATE TRIGGER trg_home_member_updated BEFORE UPDATE ON home_member
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 

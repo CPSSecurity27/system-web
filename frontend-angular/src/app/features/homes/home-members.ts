@@ -1,10 +1,9 @@
 import { Component, computed, inject, signal } from '@angular/core';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
-import { forkJoin, switchMap } from 'rxjs';
+import { forkJoin } from 'rxjs';
 
 import { HomesService } from '../../core/api/homes.service';
-import { UsersService } from '../../core/api/users.service';
 import { AuthService } from '../../core/auth/auth.service';
 import { HomeMemberRole } from '../../core/auth/auth.models';
 import { apiErrorMessage } from '../../core/http/api-error';
@@ -14,11 +13,15 @@ import { Home, HomeMember } from '../../core/models/api.models';
  * Los MIEMBROS del hogar (nuevo en v2): un TITULAR y sus FAMILIARES, hasta el
  * cupo del barrio. Reemplaza a las cuentas HOME del modelo viejo.
  *
- * El vecino se crea con EMAIL (v2.1: SMS/WhatsApp salían caros y no hay
- * proveedor contratado): nace sin contraseña y recibe un mail para activar
- * la cuenta y elegirla. El DNI queda como dato opcional. Las reglas duras
- * (titular único, cupo, titular no borrable) las impone el backend — acá
- * solo se muestran sus mensajes.
+ * v2.3 (2026-08-02): el vecino se crea con NOMBRE + DNI — el DNI es su
+ * identidad de login en la app. El email quedó como dato opcional (si está,
+ * le llega un mail de activación como atajo). Nace sin contraseña: la fija él
+ * la primera vez, y hasta entonces la lista lo muestra "sin activar".
+ *
+ * El alta es UNA sola llamada (`addPerson`): la persona y la membresía se
+ * crean juntas en el backend, en una transacción. Las reglas duras (titular
+ * único, una persona una casa, cupo, titular no borrable) las impone el
+ * backend — acá solo se muestran sus mensajes.
  */
 @Component({
   selector: 'app-home-members',
@@ -27,7 +30,6 @@ import { Home, HomeMember } from '../../core/models/api.models';
 })
 export class HomeMembers {
   private readonly homes = inject(HomesService);
-  private readonly users = inject(UsersService);
   private readonly route = inject(ActivatedRoute);
   private readonly fb = inject(FormBuilder);
   protected readonly auth = inject(AuthService);
@@ -45,15 +47,19 @@ export class HomeMembers {
   );
   protected readonly hasTitular = computed(() => this.titular() !== null);
 
+  /** Datos opcionales plegados: el alta normal es nombre + DNI y listo. */
+  protected readonly verOpcionales = signal(false);
+
   /**
-   * Alta de vecino + membresía en un paso: nombre + email (obligatorio, activa
-   * la cuenta por mail), DNI opcional. Sin contraseña: la fija el vecino.
+   * Alta de vecino + membresía en UNA llamada: nombre + DNI (su login),
+   * el resto opcional. Sin contraseña: la fija el vecino.
    */
   protected readonly form = this.fb.nonNullable.group({
     name: ['', Validators.required],
-    email: ['', [Validators.required, Validators.email]],
-    dni: ['', Validators.pattern(/^\d{7,9}$/)],
+    dni: ['', [Validators.required, Validators.pattern(/^\d{7,9}$/)]],
     telephone: [''],
+    birthDate: [''],
+    email: ['', Validators.email],
     role: ['FAMILIAR' as HomeMemberRole, Validators.required],
   });
 
@@ -99,24 +105,37 @@ export class HomeMembers {
     this.saving.set(true);
     this.error.set(null);
 
-    // Dos pasos: crear al vecino (email, sin password) y sumarlo al hogar.
-    this.users
-      .create({
-        name: value.name,
-        email: value.email,
-        dni: value.dni.trim() ? value.dni.trim() : undefined,
-        telephone: value.telephone.trim() ? value.telephone.trim() : undefined,
-      })
-      .pipe(switchMap((user) => this.homes.addMember(this.id, user.id, value.role)))
+    // UNA llamada: el backend crea la persona y la membresía en la misma
+    // transacción. Antes eran dos, y un fallo en la segunda dejaba un vecino
+    // suelto en el padrón sin casa.
+    this.homes
+      .addPerson(
+        this.id,
+        {
+          name: value.name.trim(),
+          dni: value.dni.trim(),
+          telephone: value.telephone.trim() || undefined,
+          birthDate: value.birthDate.trim() || undefined,
+          email: value.email.trim() || undefined,
+        },
+        value.role,
+      )
       .subscribe({
         next: () => {
           this.saving.set(false);
-          this.form.reset({ name: '', email: '', dni: '', telephone: '', role: 'FAMILIAR' });
+          this.form.reset({
+            name: '',
+            dni: '',
+            telephone: '',
+            birthDate: '',
+            email: '',
+            role: 'FAMILIAR',
+          });
           this.reloadMembers();
         },
         error: (err) => {
-          // 400 del cupo de familiares (mensaje comercial) o 409 de titular
-          // repetido: se muestran tal cual.
+          // 400 del cupo de familiares (mensaje comercial) o 409 de DNI ya
+          // cargado en otra vivienda: se muestran tal cual, dicen dónde está.
           this.error.set(apiErrorMessage(err));
           this.saving.set(false);
         },

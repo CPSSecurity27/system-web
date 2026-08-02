@@ -99,6 +99,7 @@ export interface Plan {
   maxMonitorUsers: number;
   maxFamilyMembers: number;
   remoteControlsEnabled: boolean;
+  communityScopeEnabled: boolean;
 }
 
 export interface Member {
@@ -114,15 +115,16 @@ export type ManagedBy = 'CPS' | 'ORGANIZATION';
 
 export interface Home {
   id: number;
-  name: string;
-  address: string | null;
+  /** IDENTIFICA la vivienda: no hay un `name` aparte (v2, 2026-08-02). */
+  address: string;
   /** Teléfono DEL HOGAR: sobrevive a los cambios de titular. */
   contactPhone: string | null;
   /** Alarma preferida para eventos SINGLE. Del mismo barrio. */
   defaultDeviceId: number | null;
   status: EntityStatus;
-  latitude: number | null;
-  longitude: number | null;
+  /** Obligatorios: salen en el mapa del monitoreo y en el `gps` del evento. */
+  latitude: number;
+  longitude: number;
   neighborhoodId: number;
 }
 
@@ -146,6 +148,11 @@ export interface HomeMember {
   role: HomeMemberRole;
   status: EntityStatus;
   user: User;
+  /**
+   * El vecino ya fijó su contraseña. Derivado de `password_hash IS NOT NULL`
+   * en el backend: mientras sea false, la cuenta existe pero nunca se usó.
+   */
+  activated: boolean;
 }
 
 /**

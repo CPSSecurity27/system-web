@@ -178,6 +178,18 @@ import { OrgSubtype, Plan } from '../../core/models/api.models';
                     Incluye controles remotos
                   </label>
                 </div>
+                <div class="form-check ms-3">
+                  <!-- Disparar TODAS las alarmas del barrio desde la app. -->
+                  <input
+                    id="pScope"
+                    type="checkbox"
+                    class="form-check-input"
+                    formControlName="communityScopeEnabled"
+                  />
+                  <label class="form-check-label small" for="pScope">
+                    Puede activar todo el barrio
+                  </label>
+                </div>
               </div>
 
               <div class="col-12">
@@ -293,6 +305,7 @@ export class PlanList {
     maxMonitorUsers: [1, [Validators.required, Validators.min(0)]],
     maxFamilyMembers: [3, [Validators.required, Validators.min(0)]],
     remoteControlsEnabled: [true],
+    communityScopeEnabled: [true],
   });
 
   protected readonly isCommunityPlan = computed(
@@ -336,6 +349,7 @@ export class PlanList {
       maxMonitorUsers: value.maxMonitorUsers,
       maxFamilyMembers: value.maxFamilyMembers,
       remoteControlsEnabled: value.remoteControlsEnabled,
+      communityScopeEnabled: value.communityScopeEnabled,
       ...(value.description ? { description: value.description } : {}),
       ...(value.priceReference ? { priceReference: value.priceReference } : {}),
     };

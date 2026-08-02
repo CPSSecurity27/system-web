@@ -81,6 +81,10 @@ export class CreatePlanDto {
 
   @IsBoolean()
   remoteControlsEnabled!: boolean;
+
+  /** Disparar TODAS las alarmas del barrio desde la app del vecino. */
+  @IsBoolean()
+  communityScopeEnabled!: boolean;
 }
 
 /**
@@ -141,4 +145,8 @@ export class UpdatePlanDto {
   @IsOptional()
   @IsBoolean()
   remoteControlsEnabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  communityScopeEnabled?: boolean;
 }

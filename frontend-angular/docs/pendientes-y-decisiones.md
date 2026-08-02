@@ -73,6 +73,11 @@ cambió entre v1 y v2.
 
 ## 4. Login del vecino: email + contraseña, no DNI+OTP (2026-07-21)
 
+> **Revertido en parte el 2026-08-02** (ver §5): el **DNI volvió a ser
+> obligatorio** y es la identidad del vecino; el email quedó opcional. Lo que
+> sigue vigente de esta sección es el mecanismo de activación por mail, que
+> ahora es un atajo y no el único camino.
+
 SMS/WhatsApp salían caros y no había proveedor contratado. Se pivoteó: el
 vecino se registra con **email** (obligatorio; DNI queda opcional) y activa su
 cuenta con un mail — misma pantalla que "olvidé mi contraseña"
@@ -89,7 +94,50 @@ sin SMTP) → activar → login por email → login por DNI con la misma clave.
 sin botones de gestión), pero falta crear un vecino de prueba, activarlo y
 loguear como tal para verlas en uso — es lo único que queda de este pendiente.
 
-## 5. Notas de entorno (siguen vigentes)
+## 5. Viviendas, vecinos y ubicación del barrio (2026-08-02)
+
+Diseño completo en `../../docs/superpowers/specs/2026-08-02-viviendas-y-vecinos-design.md`.
+
+- **`/viviendas/nueva` cambió de forma**: se fue el campo Nombre (la
+  **dirección** identifica la vivienda), el **GPS pasó a obligatorio** —el
+  botón queda deshabilitado hasta marcar el mapa— y entró la sección
+  **Titular** (nombre y DNI visibles, teléfono / nacimiento / correo plegados).
+  Es **una sola llamada**: el backend crea vivienda, persona y titularidad en
+  una transacción.
+- **Alarma preferida sugerida por cercanía**: al marcar la casa, el combo se
+  precarga con la alarma del barrio más cercana y muestra la distancia. El
+  cálculo es un haversine local (`metrosEntre` en `home-form.ts`), sin
+  librería nueva.
+- **Miembros del hogar**: el alta pide **nombre + DNI** (el DNI es el login del
+  vecino) y usa `addPerson` — una llamada en vez de las dos de antes, que
+  podían dejar un vecino suelto en el padrón si fallaba la segunda. Badge
+  **"Sin activar"** por miembro sin contraseña (`activated`, que el backend
+  deriva de `password_hash IS NOT NULL`).
+- **Listas**: la columna Nombre pasó a Dirección en `/viviendas`, en la ficha
+  del hogar, en el detalle del barrio y en los combos de controles.
+- **Cupos del barrio**: switch nuevo **"Puede activar todo el barrio"**
+  (`communityScopeEnabled`), al lado del de controles remotos. Solo CPS, como
+  el resto de los cupos. Ídem en el formulario de planes.
+- **Ubicación del barrio editable**: tarjeta nueva en el detalle del barrio con
+  mapa clickeable y botón "Guardar ubicación" (`PATCH /neighborhoods/:id`, que
+  ya existía en el backend pero no tenía UI ni método en el servicio del
+  front). La ve **CPS siempre**, y el OWNER/ADMIN de la organización **solo si
+  `managedBy === 'ORGANIZATION'`**: en un barrio vendido llave en mano el
+  cliente lo ve pero no lo mueve, y el backend devuelve 403 igual.
+- **Ubicación de la ALARMA editable**: el mapa del detalle del equipo pasó a ser
+  clickeable (`PATCH /devices/:id`, ídem: existía sin UI). Acá el permiso es más
+  ancho a propósito — **gestores y TÉCNICOS**, de CPS o de la organización: el
+  que subió a la escalera tiene que poder corregir el punto. Un equipo en
+  INVENTORY no se puede ubicar (no está en ningún lado todavía). Si la alarma no
+  tiene coordenadas, el mapa igual se muestra clickeable y **abre centrado en su
+  barrio** (una llamada extra a `/neighborhoods/:id`, que si falla no rompe
+  nada: cae al default).
+- **`app-map` distingue qué es cada punto**: `MapMarker.variant` opcional —
+  `device` (verde), `home` (azul), `center` (naranja, más chico y translúcido).
+  Antes todo era del mismo verde y una alarma y una casa eran indistinguibles.
+  El default sigue siendo `device`, así que los usos viejos no cambian.
+
+## 6. Notas de entorno (siguen vigentes)
 
 - Node 22/24 (los impares: warning de Angular + `localStorage` experimental
   rompe jsdom en tests — por eso el `InMemoryTokenStorage`).

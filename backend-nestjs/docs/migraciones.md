@@ -54,6 +54,15 @@ va en una migración *y* en la entidad, a mano, en los dos lados.
 | `1785100000000-VecinoEmailLogin` | El vecino deja el DNI+OTP (caro, sin proveedor) y pasa a registrarse con email + activación por mail, login con email o DNI + contraseña. `chk_user_login_identity` suma `OR email IS NOT NULL`; corrige también el `COMMENT` de `password_hash` que en InitialSchemaV2 decía "DNI + OTP" |
 | `1785200000000-SingleAccountMembership` | Una persona pertenece a UNA sola cuenta: `uq_account_user` (account_id, user_id) se reemplaza por `uq_account_user_single_account` UNIQUE(user_id); `idx_account_user_user` se borra por redundante |
 | `1785300000000-MustChangePassword` | `app_user.must_change_password` (default false): el OWNER institucional nace con clave TEMPORAL generada por el sistema (no la elige el admin de CPS) y tiene que cambiarla en su primer login |
+| `1785400000000-DeviceMacIdentity` | El `serial` se DERIVA de la MAC (`AV-<12 hex>`) en vez de elegirse — el mismo string es usuario MQTT, client_id y `<id>` del tópico. Rename `ALARM_PANEL` → `COMMUNITY_ALARM`, tabla `board_model` y `device.board_seq` |
+| `1785500000000-DeviceFactoryMilestones` | Hitos de puesta en marcha del equipo (`labeled_at`, `first_connection_at`): la etapa se DERIVA del último hito alcanzado, no es una columna de estado |
+| `1785600000000-AccountPlansAndRoleQuotas` | Rename `PRIVATE` → `COMMUNITY` (el subtipo dice la ESCALA, no quién opera), cupos por rol (`max_admin_users`, `max_technician_users`) y tabla `plan` como PLANTILLA que se copia al vender |
+| `1785700000000-AccountJurisdictionAndAccountContracts` | Jurisdicción de la cuenta (nivel LOCALITY o DEPARTMENT: hasta dónde puede crear barrios) y el contrato pasa a ser DE LA CUENTA, no del barrio |
+| `1785800000000-DeviceInstallationData` | Datos de instalación del equipo (poste, altura, esquina, punto de energía, notas), todos opcionales. Se elimina el estado `INSTALLED`, que era idéntico a `OPERATIONAL` y nadie escribía |
+| `1785900000000-HomeAddressAndNeighborResident` | Viviendas y vecinos: se va `home.name` (la DIRECCIÓN identifica la vivienda) y el GPS pasa a obligatorio; `uq_user_single_titular` (parcial) se reemplaza por `uq_home_member_one_home` UNIQUE(user_id) — **una persona vive en una sola casa**; `app_user.birth_date`; y el cupo `community_scope_enabled` en `neighborhood` y `plan` (disparar TODAS las alarmas del barrio desde la app) |
+
+> La tabla estuvo desactualizada entre la 4 y la 9: se completó el 2026-08-02
+> leyendo cada migración. Si agregás una, agregá su fila.
 
 Las tres migraciones del modelo v1 (`InitialSchema`, `EmailVerification`,
 `UnaccentSearch`) **fueron eliminadas**: se decidió base limpia, sin migración de

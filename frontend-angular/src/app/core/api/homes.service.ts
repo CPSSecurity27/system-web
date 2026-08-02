@@ -6,16 +6,32 @@ import { environment } from '../../../environments/environment';
 import { HomeMemberRole } from '../auth/auth.models';
 import { EntityStatus, Home, HomeMember } from '../models/api.models';
 
-export interface CreateHome {
+/**
+ * Una persona que vive en la casa. Nombre y DNI y nada más obligatorio: el
+ * DNI es la identidad de login del vecino en la app.
+ */
+export interface Resident {
   name: string;
+  dni: string;
+  telephone?: string;
+  birthDate?: string;
+  email?: string;
+}
+
+/**
+ * Alta de vivienda: UN SOLO ACTO que termina en una casa con titular. La
+ * dirección identifica la vivienda y el GPS es obligatorio.
+ */
+export interface CreateHome {
+  address: string;
   neighborhoodId: number;
-  address?: string;
+  latitude: number;
+  longitude: number;
   /** Teléfono DEL HOGAR (sobrevive a cambios de titular). */
   contactPhone?: string;
   /** Alarma preferida para eventos SINGLE. Del mismo barrio. */
   defaultDeviceId?: number;
-  latitude?: number;
-  longitude?: number;
+  titular: Resident;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -44,9 +60,19 @@ export class HomesService {
   }
 
   /**
-   * TITULAR: uno por hogar. FAMILIAR: hasta el cupo del barrio — el 400 de
-   * cupo trae el mensaje comercial, se muestra tal cual.
+   * Alta de un familiar QUE NO EXISTE todavía: se crea la persona y la
+   * membresía juntas. Es el caso normal — nadie carga un vecino "suelto" para
+   * después vincularlo.
+   *
+   * FAMILIAR: hasta el cupo del barrio — el 400 de cupo trae el mensaje
+   * comercial, se muestra tal cual. El 409 de DNI repetido dice en qué
+   * vivienda está ya esa persona.
    */
+  addPerson(homeId: number, person: Resident, role: HomeMemberRole): Observable<HomeMember> {
+    return this.http.post<HomeMember>(`${this.api}/homes/${homeId}/members`, { person, role });
+  }
+
+  /** Alta de un miembro que YA está en el padrón. */
   addMember(homeId: number, userId: number, role: HomeMemberRole): Observable<HomeMember> {
     return this.http.post<HomeMember>(`${this.api}/homes/${homeId}/members`, { userId, role });
   }

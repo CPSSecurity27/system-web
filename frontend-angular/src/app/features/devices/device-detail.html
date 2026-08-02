@@ -118,13 +118,77 @@
     </div>
 
     <div class="col-12 col-xl-7">
-      <div class="card border h-100">
+      <!-- Sin `h-100`: debajo del mapa van los botones de guardar, y con el
+           100% el mapa se comía el alto de la tarjeta y los empujaba fuera. -->
+      <div class="card border">
         <div class="card-header bg-white border-bottom">
           <span class="fw-semibold small"><i class="bi bi-map me-1"></i> Ubicación</span>
         </div>
         <div class="card-body">
-          @if (markers().length > 0) {
-            <app-map [markers]="markers()" [zoom]="16" />
+          <!--
+            Editable para gestores y técnicos: el que subió a la escalera tiene
+            que poder corregir el punto. Con permiso, el mapa se clickea aunque
+            la alarma todavía no tenga coordenadas — si no, no habría forma de
+            cargárselas desde acá.
+          -->
+          @if (puedeEditarUbicacion()) {
+            <p class="text-muted small mb-2">
+              Hacé click en el mapa para corregir dónde está la alarma.
+              @if (markers().length === 0) {
+                <strong>Todavía no tiene coordenadas cargadas.</strong>
+              }
+            </p>
+
+            <app-map
+              [markers]="markers()"
+              [center]="centroMapa()"
+              [zoom]="16"
+              [clickable]="true"
+              (positionChange)="setUbicacion($event)"
+            />
+
+            <div class="d-flex align-items-center gap-2 mt-2 flex-wrap">
+              @if (nuevaUbicacion(); as nueva) {
+                <span class="small font-monospace">
+                  <i class="bi bi-pin-map text-brand me-1"></i>
+                  {{ nueva.latitude }}, {{ nueva.longitude }}
+                </span>
+                <button
+                  type="button"
+                  class="btn btn-sm btn-brand"
+                  [disabled]="savingUbicacion()"
+                  (click)="saveUbicacion()"
+                >
+                  @if (savingUbicacion()) {
+                    <span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>
+                    Guardando…
+                  } @else {
+                    Guardar ubicación
+                  }
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-sm btn-outline-secondary"
+                  [disabled]="savingUbicacion()"
+                  (click)="nuevaUbicacion.set(null)"
+                >
+                  Descartar
+                </button>
+              }
+            </div>
+
+            @if (mensaje()) {
+              <p class="small text-success mb-0 mt-2">
+                <i class="bi bi-check-circle me-1"></i>{{ mensaje() }}
+              </p>
+            }
+            @if (errorUbicacion()) {
+              <p class="small text-brand mb-0 mt-2">
+                <i class="bi bi-exclamation-triangle-fill me-1"></i>{{ errorUbicacion() }}
+              </p>
+            }
+          } @else if (markers().length > 0) {
+            <app-map [markers]="markers()" [center]="centroMapa()" [zoom]="16" />
           } @else {
             <div class="text-center text-muted py-5 bg-light rounded">
               <i class="bi bi-geo-alt d-block mb-2" style="font-size: 2rem"></i>

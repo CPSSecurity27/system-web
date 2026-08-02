@@ -10,13 +10,28 @@ import {
 } from '@angular/core';
 import * as L from 'leaflet';
 
+/**
+ * Qué representa el punto. Cambia el color porque en un mismo mapa conviven
+ * cosas distintas: la alarma es del BARRIO (infraestructura en la vía pública)
+ * y la vivienda es de un vecino — pintarlas igual las hace indistinguibles.
+ */
+export type MapMarkerVariant = 'device' | 'home' | 'center';
+
 export interface MapMarker {
   latitude: number;
   longitude: number;
   label: string;
-  /** Emergencia activa: se pinta rojo y pulsa. */
+  /** Emergencia activa: se pinta rojo y pulsa. Gana sobre `variant`. */
   emergency?: boolean;
+  /** Default: 'device'. */
+  variant?: MapMarkerVariant;
 }
+
+const VARIANT_COLOR: Record<MapMarkerVariant, string> = {
+  device: '#388e3c', // verde: alarma del barrio
+  home: '#1565c0', // azul: vivienda
+  center: '#f57c00', // naranja: centro del barrio
+};
 
 /**
  * Leaflet sobre un bundler pierde los íconos por defecto: el CSS los busca en
@@ -24,16 +39,20 @@ export interface MapMarker {
  * Por eso los marcadores se dibujan con divIcon (HTML propio) y no se usa el
  * ícono que trae la librería. De paso permite pintarlos con los colores de marca.
  */
-function brandIcon(emergency: boolean): L.DivIcon {
-  const color = emergency ? '#d32f2f' : '#388e3c';
+function brandIcon(emergency: boolean, variant: MapMarkerVariant = 'device'): L.DivIcon {
+  const color = emergency ? '#d32f2f' : VARIANT_COLOR[variant];
   const pulse = emergency ? 'animate-pulse-emergency' : '';
+  // El centro del barrio es una referencia, no un objeto físico: va más chico
+  // y translúcido para que no compita con las alarmas y las casas.
+  const size = variant === 'center' ? 12 : 16;
+  const opacity = variant === 'center' ? '.75' : '1';
 
   return L.divIcon({
     className: '',
     html: `<span class="d-block rounded-circle border border-2 border-white ${pulse}"
-                 style="width:16px;height:16px;background:${color};box-shadow:0 0 0 1px rgba(0,0,0,.2)"></span>`,
-    iconSize: [16, 16],
-    iconAnchor: [8, 8],
+                 style="width:${size}px;height:${size}px;background:${color};opacity:${opacity};box-shadow:0 0 0 1px rgba(0,0,0,.2)"></span>`,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
   });
 }
 
@@ -64,6 +83,23 @@ export class Map implements AfterViewInit, OnDestroy {
       const markers = this.markers();
       if (this.map) {
         this.draw(markers);
+      }
+    });
+
+    /**
+     * El centro puede llegar DESPUÉS de que el mapa se creó: quien lo calcula
+     * suele necesitar una segunda llamada (la alarma sin coordenadas se centra
+     * en su barrio, y el barrio se pide aparte). Leerlo solo en
+     * `ngAfterViewInit` hacía que ese caso —justo el que importa— nunca
+     * funcionara.
+     *
+     * No pisa nada: con marcadores manda el `fitBounds` de `draw`, y si el
+     * usuario ya eligió un punto no se le mueve el mapa abajo del mouse.
+     */
+    effect(() => {
+      const center = this.center();
+      if (this.map && this.markers().length === 0 && !this.pickMarker) {
+        this.map.setView(center, this.zoom());
       }
     });
   }
@@ -107,7 +143,9 @@ export class Map implements AfterViewInit, OnDestroy {
     this.layer.clearLayers();
 
     for (const marker of markers) {
-      L.marker([marker.latitude, marker.longitude], { icon: brandIcon(marker.emergency ?? false) })
+      L.marker([marker.latitude, marker.longitude], {
+        icon: brandIcon(marker.emergency ?? false, marker.variant ?? 'device'),
+      })
         .bindPopup(marker.label)
         .addTo(this.layer);
     }

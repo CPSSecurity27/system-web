@@ -33,6 +33,13 @@ barrio. Ahora son ortogonales.
 2. **Panel y app son superficies distintas de una misma tabla de personas.**
    `app_user` + `account_user` (roles de panel) para administrar; `app_user` +
    `home_member` (TITULAR/FAMILIAR) para los vecinos. **No existen cuentas HOME.**
+
+   El vínculo vecino–vivienda **es la fila de `home_member`**: la vivienda no
+   guarda a sus miembros y el vecino no guarda su vivienda. El modelo viejo
+   (Firebase) tenía el mismo hecho en tres lugares —`user.home_id`,
+   `home.members{}` y `home.owner_id`— sin nada que los obligara a coincidir.
+   Desde 2026-08-02 un único total sobre `user_id` (`uq_home_member_one_home`)
+   garantiza que **una persona vive en una sola casa**.
 3. **Postgres guarda qué ES y qué PASÓ; `device_state` guarda qué está PASANDO**,
    y la escribe únicamente el servicio de alarmas (programa aparte que comparte
    solo esta base). Un solo escritor por tabla.

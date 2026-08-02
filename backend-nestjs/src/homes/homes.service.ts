@@ -19,9 +19,11 @@ import { AccessScope, ScopeService } from '../common/scope.service';
 import { Device } from '../devices/entities/device.entity';
 import { Neighborhood } from '../neighborhoods/entities/neighborhood.entity';
 import { User } from '../users/entities/user.entity';
+import { UsersService } from '../users/users.service';
 import {
   AddHomeMemberDto,
   CreateHomeDto,
+  ResidentDto,
   TransferHomeTitularDto,
   UpdateHomeDto,
 } from './dto/home.dto';
@@ -29,6 +31,18 @@ import { HomeMember } from './entities/home-member.entity';
 import { Home } from './entities/home.entity';
 
 const PG_UNIQUE_VIOLATION = '23505';
+
+/**
+ * Miembro + si el vecino ya ACTIVÓ su cuenta (fijó su contraseña). Es un
+ * booleano derivado de `password_hash IS NOT NULL`, no una copia guardada tipo
+ * el `credential_set` del modelo viejo: ese dato podía mentir.
+ *
+ * El gestor lo necesita para saber si el vecino ya entró a la app o hay que
+ * ir a buscarlo.
+ */
+export interface HomeMemberView extends HomeMember {
+  activated: boolean;
+}
 
 /**
  * Viviendas y sus miembros (v2).
@@ -55,6 +69,7 @@ export class HomesService {
     private readonly neighborhoods: Repository<Neighborhood>,
     @InjectRepository(Device) private readonly devices: Repository<Device>,
     @InjectRepository(User) private readonly users: Repository<User>,
+    private readonly usersService: UsersService,
     private readonly scopes: ScopeService,
     private readonly audit: AuditService,
   ) {}
@@ -67,7 +82,7 @@ export class HomesService {
     if (scope.global) {
       return this.homes.find({
         where: neighborhoodId ? { neighborhoodId } : {},
-        order: { name: 'ASC' },
+        order: { address: 'ASC' },
       });
     }
 
@@ -85,7 +100,7 @@ export class HomesService {
 
     return [...unicas.values()]
       .filter((h) => !neighborhoodId || h.neighborhoodId === neighborhoodId)
-      .sort((a, b) => a.name.localeCompare(b.name));
+      .sort((a, b) => a.address.localeCompare(b.address));
   }
 
   async findOne(id: number, scope: AccessScope): Promise<Home> {
@@ -99,6 +114,12 @@ export class HomesService {
     return home;
   }
 
+  /**
+   * Alta de vivienda: UN SOLO ACTO que termina en una casa con titular. Una
+   * vivienda sin dueño no sirve para nada y nadie vuelve después a completarla,
+   * así que el titular se crea acá mismo — usuario, casa y membresía en la
+   * MISMA transacción: si algo falla no queda ni la casa ni la persona a medias.
+   */
   async create(
     dto: CreateHomeDto,
     scope: AccessScope,
@@ -116,19 +137,60 @@ export class HomesService {
       );
     }
 
-    const home = await this.homes.save(
-      this.homes.create({
-        name: dto.name,
-        address: dto.address ?? null,
-        contactPhone: dto.contactPhone ?? null,
-        neighborhoodId: dto.neighborhoodId,
-        defaultDeviceId: dto.defaultDeviceId ?? null,
-        latitude: dto.latitude ?? null,
-        longitude: dto.longitude ?? null,
-        status: EntityStatus.ACTIVE,
-        createdBy,
-      }),
+    // Antes de abrir la transacción: si el DNI ya está, el mensaje dice DÓNDE.
+    // El gestor necesita distinguir un error de tipeo de alguien que se mudó.
+    await this.assertDniDisponible(dto.titular.dni);
+
+    const { home, titular } = await this.homes.manager.transaction(
+      async (manager) => {
+        const titular = await this.usersService.createResident(
+          manager,
+          dto.titular,
+          createdBy,
+        );
+
+        const home = await manager.save(
+          manager.create(Home, {
+            address: dto.address,
+            contactPhone: dto.contactPhone ?? null,
+            neighborhoodId: dto.neighborhoodId,
+            defaultDeviceId: dto.defaultDeviceId ?? null,
+            latitude: dto.latitude,
+            longitude: dto.longitude,
+            status: EntityStatus.ACTIVE,
+            createdBy,
+          }),
+        );
+
+        await manager.save(
+          manager.create(HomeMember, {
+            homeId: home.id,
+            userId: titular.id,
+            role: HomeMemberRole.TITULAR,
+            status: EntityStatus.ACTIVE,
+            createdBy,
+          }),
+        );
+
+        return { home, titular };
+      },
     );
+
+    // Fuera de la transacción a propósito: un mail no se puede deshacer.
+    if (titular.email) await this.usersService.sendActivationMail(titular);
+
+    await this.audit.record({
+      actorUserId: createdBy,
+      action: 'home.create',
+      entityType: 'home',
+      entityId: home.id,
+      neighborhoodId: home.neighborhoodId,
+      newValue: {
+        address: home.address,
+        titularUserId: titular.id,
+        titularDni: titular.dni,
+      },
+    });
 
     return this.findOne(home.id, scope);
   }
@@ -158,7 +220,6 @@ export class HomesService {
     }
 
     await this.homes.update(id, {
-      name: dto.name ?? home.name,
       address: dto.address ?? home.address,
       contactPhone: dto.contactPhone ?? home.contactPhone,
       neighborhoodId: barrioFinal,
@@ -180,15 +241,37 @@ export class HomesService {
   async findMembers(
     homeId: number,
     actor: AuthenticatedUser,
-  ): Promise<HomeMember[]> {
+  ): Promise<HomeMemberView[]> {
     const scope = await this.scopes.forUser(actor);
     await this.findOne(homeId, scope); // valida el acceso
 
-    return this.members.find({
+    return this.listMembers(homeId);
+  }
+
+  /**
+   * Los miembros con el flag de cuenta activada. `passwordHash` tiene
+   * select:false, así que se pide explícito y NUNCA sale de acá: lo único que
+   * viaja es el booleano.
+   */
+  private async listMembers(homeId: number): Promise<HomeMemberView[]> {
+    const members = await this.members.find({
       where: { homeId },
       relations: { user: true },
       order: { id: 'ASC' },
     });
+    if (!members.length) return [];
+
+    const claves = await this.users.find({
+      where: { id: In(members.map((m) => m.userId)) },
+      select: { id: true, passwordHash: true },
+    });
+    const activados = new Set(
+      claves.filter((u) => u.passwordHash).map((u) => u.id),
+    );
+
+    return members.map((member) =>
+      Object.assign(member, { activated: activados.has(member.userId) }),
+    );
   }
 
   /**
@@ -196,8 +279,12 @@ export class HomesService {
    *  - CPS / gestor del barrio: titular y familiares.
    *  - El TITULAR del hogar: solo FAMILIARES de su casa (regla del PDF).
    *
+   * Dos formas: `person` (la persona no existe todavía — el caso normal de un
+   * familiar) o `userId` (ya está en el padrón). Con `person`, el usuario y la
+   * membresía se escriben en una transacción.
+   *
    * Cupo: FAMILIAR ≤ neighborhood.max_family_members, impuesto AL CREAR.
-   * La base garantiza: un TITULAR por hogar, titular de un solo hogar.
+   * La base garantiza: un TITULAR por hogar, y una persona en UNA sola casa.
    */
   async addMember(
     homeId: number,
@@ -220,6 +307,23 @@ export class HomesService {
       );
     }
 
+    // class-validator no expresa bien "exactamente uno de estos dos campos".
+    if (Boolean(dto.person) === Boolean(dto.userId)) {
+      throw new BadRequestException(
+        'Mandá los datos de la persona (person) o el id de una existente (userId), no las dos cosas',
+      );
+    }
+
+    // El cupo se mira ANTES de crear a nadie: si no entra, no se crea el
+    // usuario para después tener que borrarlo.
+    if (dto.role === HomeMemberRole.FAMILIAR) {
+      await this.assertFamilyRoomLeft(home);
+    }
+
+    if (dto.person) {
+      return this.addNewPerson(home, dto.person, dto.role, actor);
+    }
+
     const user = await this.users.findOne({ where: { id: dto.userId } });
     if (!user)
       throw new NotFoundException(`No existe el usuario ${dto.userId}`);
@@ -227,10 +331,6 @@ export class HomesService {
       throw new BadRequestException(
         'Un usuario institucional no puede ser miembro de un hogar',
       );
-    }
-
-    if (dto.role === HomeMemberRole.FAMILIAR) {
-      await this.assertFamilyRoomLeft(home);
     }
 
     try {
@@ -244,25 +344,99 @@ export class HomesService {
         }),
       );
 
-      await this.audit.record({
-        actorUserId: actor.id,
-        action: 'home_member.add',
-        entityType: 'home_member',
-        entityId: member.id,
-        neighborhoodId: home.neighborhoodId,
-        newValue: { homeId, userId: dto.userId, role: dto.role },
-      });
-
+      await this.auditMemberAdd(member, home, actor.id);
       return member;
     } catch (error) {
-      // uq_home_single_titular / uq_user_single_titular / uq_home_member.
+      // uq_home_single_titular / uq_home_member_one_home.
       if (isUniqueViolation(error)) {
         throw new ConflictException(
-          'Esa persona ya es miembro, o el hogar ya tiene titular, o la persona ya es titular de otro hogar',
+          'Esa persona ya vive en una vivienda, o el hogar ya tiene titular',
         );
       }
       throw error;
     }
+  }
+
+  /** Persona nueva + membresía, juntas o nada. */
+  private async addNewPerson(
+    home: Home,
+    person: ResidentDto,
+    role: HomeMemberRole,
+    actor: AuthenticatedUser,
+  ): Promise<HomeMember> {
+    await this.assertDniDisponible(person.dni);
+
+    const { member, user } = await this.members.manager.transaction(
+      async (manager) => {
+        const user = await this.usersService.createResident(
+          manager,
+          person,
+          actor.id,
+        );
+        const member = await manager.save(
+          manager.create(HomeMember, {
+            homeId: home.id,
+            userId: user.id,
+            role,
+            status: EntityStatus.ACTIVE,
+            createdBy: actor.id,
+          }),
+        );
+        return { member, user };
+      },
+    );
+
+    if (user.email) await this.usersService.sendActivationMail(user);
+    await this.auditMemberAdd(member, home, actor.id);
+
+    return member;
+  }
+
+  private async auditMemberAdd(
+    member: HomeMember,
+    home: Home,
+    actorUserId: number,
+  ): Promise<void> {
+    await this.audit.record({
+      actorUserId,
+      action: 'home_member.add',
+      entityType: 'home_member',
+      entityId: member.id,
+      neighborhoodId: home.neighborhoodId,
+      newValue: {
+        homeId: member.homeId,
+        userId: member.userId,
+        role: member.role,
+      },
+    });
+  }
+
+  /**
+   * El DNI es único global, pero un 409 pelado no le sirve al gestor: necesita
+   * saber si se equivocó tipeando o si la persona ya está cargada en otra casa
+   * (se mudó, o alguien la cargó antes). Por eso el mensaje dice DÓNDE está.
+   */
+  private async assertDniDisponible(dni: string): Promise<void> {
+    const existente = await this.users.findOne({ where: { dni } });
+    if (!existente) return;
+
+    const membresia = await this.members.findOne({
+      where: { userId: existente.id },
+      relations: { home: { neighborhood: true } },
+    });
+
+    if (membresia) {
+      const rol =
+        membresia.role === HomeMemberRole.TITULAR ? 'titular' : 'familiar';
+      throw new ConflictException(
+        `El DNI ${dni} (${existente.name}) ya es ${rol} de ${membresia.home.address}, ` +
+          `barrio ${membresia.home.neighborhood.name}.`,
+      );
+    }
+
+    throw new ConflictException(
+      `Ya existe una persona con el DNI ${dni} (${existente.name}) fuera de toda vivienda.`,
+    );
   }
 
   async suspendMember(
@@ -361,7 +535,7 @@ export class HomesService {
     homeId: number,
     dto: TransferHomeTitularDto,
     actor: AuthenticatedUser,
-  ): Promise<HomeMember[]> {
+  ): Promise<HomeMemberView[]> {
     const scope = await this.scopes.forUser(actor);
     const home = await this.findOne(homeId, scope);
 
@@ -415,11 +589,7 @@ export class HomesService {
       newValue: { titularUserId: nuevo.userId },
     });
 
-    return this.members.find({
-      where: { homeId },
-      relations: { user: true },
-      order: { id: 'ASC' },
-    });
+    return this.listMembers(homeId);
   }
 
   // --- Invariantes y helpers --------------------------------------------------

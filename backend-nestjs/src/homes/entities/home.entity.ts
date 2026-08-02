@@ -26,6 +26,9 @@ import { HomeMember } from './home-member.entity';
  *  - default_device_id: la alarma PREFERIDA para eventos SINGLE. Preferencia,
  *    no propiedad: debe ser del mismo barrio (regla de servicio); NULL = el
  *    sistema elige.
+ *
+ * Desde 2026-08-02 (migración HomeAddressAndNeighborResident) NO hay `name`:
+ * la DIRECCIÓN identifica la vivienda, y el GPS es obligatorio.
  */
 @Entity('home')
 @Index('idx_home_neighborhood', ['neighborhoodId'])
@@ -33,11 +36,9 @@ export class Home {
   @PrimaryGeneratedColumn()
   id!: number;
 
+  /** Identifica la vivienda: "Mza A Casa 5". No hay un nombre aparte. */
   @Column({ type: 'text' })
-  name!: string;
-
-  @Column({ type: 'text', nullable: true })
-  address!: string | null;
+  address!: string;
 
   /** Teléfono del hogar, no del titular. */
   @Column({ name: 'contact_phone', type: 'text', nullable: true })
@@ -46,11 +47,12 @@ export class Home {
   @Column({ type: 'enum', enum: EntityStatus, enumName: 'entity_status' })
   status!: EntityStatus;
 
-  @Column({ type: 'double precision', nullable: true })
-  latitude!: number | null;
+  /** Obligatorio: sale en el mapa del monitoreo y en el `gps` del evento. */
+  @Column({ type: 'double precision' })
+  latitude!: number;
 
-  @Column({ type: 'double precision', nullable: true })
-  longitude!: number | null;
+  @Column({ type: 'double precision' })
+  longitude!: number;
 
   @Column({ name: 'neighborhood_id', type: 'int' })
   neighborhoodId!: number;

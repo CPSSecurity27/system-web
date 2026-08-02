@@ -78,6 +78,14 @@ export class Neighborhood {
   @Column({ name: 'remote_controls_enabled', type: 'boolean', default: true })
   remoteControlsEnabled!: boolean;
 
+  /**
+   * CUPO (solo CPS): habilita eventos `scope = COMMUNITY`, o sea que el vecino
+   * dispare TODAS las alarmas del barrio desde la app y no solo la que responde
+   * por su casa. Era `plan.community_mode_enabled` en el modelo viejo.
+   */
+  @Column({ name: 'community_scope_enabled', type: 'boolean', default: true })
+  communityScopeEnabled!: boolean;
+
   @Column({ type: 'double precision', nullable: true })
   latitude!: number | null;
 

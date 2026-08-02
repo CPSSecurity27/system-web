@@ -3,7 +3,12 @@
     <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
     Cargando…
   </div>
-} @else if (error()) {
+} @else if (error() && !neighborhood()) {
+  <!--
+    Solo cuando la ficha NO se pudo cargar. Sin el `&& !neighborhood()`, un
+    error de una ACCIÓN (guardar cupos, mover el barrio, transferirlo) hacía
+    desaparecer la pantalla entera en vez de mostrarse en su banner de adentro.
+  -->
   <div class="alert bg-brand-soft text-brand border-0" role="alert">
     <i class="bi bi-exclamation-triangle-fill me-2"></i>{{ error() }}
   </div>
@@ -43,19 +48,41 @@
   }
 
   <div class="row g-3">
-    <!-- Mapa: postes de alarma con coordenadas cargadas -->
+    <!-- Mapa del barrio: alarmas (verde), viviendas (azul) y el centro (naranja) -->
+    <!-- Sin `h-100`: abajo va otra tarjeta y el 100% la empujaba al pie de la página. -->
     <div class="col-12 col-xl-7">
-      <div class="card border h-100">
+      <div class="card border">
         <div class="card-header bg-white border-bottom">
-          <span class="fw-semibold small"> <i class="bi bi-map me-1"></i> Alarmas en el mapa </span>
+          <span class="fw-semibold small"> <i class="bi bi-map me-1"></i> El barrio en el mapa </span>
         </div>
         <div class="card-body">
           @if (markers().length > 0) {
-            <app-map [markers]="markers()" />
+            <app-map [markers]="markers()" [center]="centroMapa()" />
+
+            <div class="d-flex gap-3 flex-wrap mt-2 small text-muted">
+              <span>
+                <span class="d-inline-block rounded-circle align-middle me-1"
+                      style="width:10px;height:10px;background:#388e3c"></span>
+                Alarmas ({{ alarmMarkers().length }})
+              </span>
+              <span>
+                <span class="d-inline-block rounded-circle align-middle me-1"
+                      style="width:10px;height:10px;background:#1565c0"></span>
+                Viviendas ({{ homeMarkers().length }})
+              </span>
+              @if (ubicacionActual().length > 0) {
+                <span>
+                  <span class="d-inline-block rounded-circle align-middle me-1"
+                        style="width:10px;height:10px;background:#f57c00"></span>
+                  Centro del barrio
+                </span>
+              }
+            </div>
           } @else {
             <div class="text-center text-muted py-5 bg-light rounded">
               <i class="bi bi-map d-block mb-2" style="font-size: 2rem"></i>
-              Ninguna alarma de este barrio tiene coordenadas cargadas.
+              Este barrio todavía no tiene nada con coordenadas: ni alarmas, ni viviendas, ni
+              ubicación propia.
             </div>
           }
 
@@ -67,7 +94,7 @@
           }
 
           <!--
-            El mapa muestra DÓNDE están los postes, no cómo están. El estado vivo
+            El mapa muestra DÓNDE está cada cosa, no cómo está. El estado vivo
             (online / disparada) todavía no existe en el backend.
           -->
           <p class="text-muted small mb-0 mt-2">
@@ -76,6 +103,72 @@
           </p>
         </div>
       </div>
+
+      <!--
+        Ubicación DEL BARRIO (su centro), distinta de las alarmas: es la
+        referencia del mapa y el punto de partida al marcar una vivienda nueva.
+        La puede mover CPS o el cliente que gestiona el barrio.
+      -->
+      @if (puedeEditarUbicacion()) {
+        <div class="card border mt-3">
+          <div class="card-header bg-white border-bottom">
+            <span class="fw-semibold small">
+              <i class="bi bi-geo-alt me-1"></i> Ubicación del barrio
+            </span>
+          </div>
+          <div class="card-body">
+            <p class="text-muted small mb-2">
+              Hacé click en el mapa para mover el centro del barrio.
+              @if (barrio.latitude === null) {
+                <strong>Todavía no tiene ubicación cargada.</strong>
+              }
+            </p>
+
+            <!-- Abre donde ya está el barrio; si nunca se cargó, donde estén sus cosas. -->
+            <app-map
+              [markers]="ubicacionActual()"
+              [center]="centroMapa()"
+              [clickable]="true"
+              (positionChange)="setUbicacion($event)"
+            />
+
+            <div class="d-flex align-items-center gap-2 mt-2 flex-wrap">
+              @if (nuevaUbicacion(); as nueva) {
+                <span class="small font-monospace">
+                  <i class="bi bi-pin-map text-brand me-1"></i>
+                  {{ nueva.latitude }}, {{ nueva.longitude }}
+                </span>
+                <button
+                  type="button"
+                  class="btn btn-sm btn-brand"
+                  [disabled]="savingUbicacion()"
+                  (click)="saveUbicacion()"
+                >
+                  @if (savingUbicacion()) {
+                    <span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>
+                    Guardando…
+                  } @else {
+                    Guardar ubicación
+                  }
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-sm btn-outline-secondary"
+                  [disabled]="savingUbicacion()"
+                  (click)="nuevaUbicacion.set(null)"
+                >
+                  Descartar
+                </button>
+              } @else if (barrio.latitude !== null) {
+                <span class="small text-muted font-monospace">
+                  <i class="bi bi-check-circle text-success me-1"></i>
+                  {{ barrio.latitude }}, {{ barrio.longitude }}
+                </span>
+              }
+            </div>
+          </div>
+        </div>
+      }
     </div>
 
     <div class="col-12 col-xl-5">
@@ -91,9 +184,12 @@
           @for (home of homeList(); track home.id) {
             <li class="list-group-item d-flex align-items-center justify-content-between">
               <div>
-                <span class="fw-medium small">{{ home.name }}</span>
-                @if (home.address) {
-                  <span class="text-muted small d-block">{{ home.address }}</span>
+                <!-- La dirección IDENTIFICA la vivienda: no hay nombre aparte. -->
+                <span class="fw-medium small">{{ home.address }}</span>
+                @if (home.contactPhone) {
+                  <span class="text-muted small d-block">
+                    <i class="bi bi-telephone me-1"></i>{{ home.contactPhone }}
+                  </span>
                 }
               </div>
               <a [routerLink]="['/viviendas', home.id]" class="btn btn-sm btn-outline-brand">
@@ -168,6 +264,22 @@
                       formControlName="remoteControlsEnabled"
                     />
                     <label for="qRem" class="form-check-label small">Controles remotos</label>
+                  </div>
+                  <div class="form-check">
+                    <!-- Habilita el evento de scope COMMUNITY desde la app. -->
+                    <input
+                      id="qScope"
+                      type="checkbox"
+                      class="form-check-input"
+                      formControlName="communityScopeEnabled"
+                    />
+                    <label
+                      for="qScope"
+                      class="form-check-label small"
+                      title="El vecino puede disparar todas las alarmas del barrio, no solo la que responde por su casa"
+                    >
+                      Puede activar todo el barrio
+                    </label>
                   </div>
                 </div>
                 <div class="col-12 col-sm-3">

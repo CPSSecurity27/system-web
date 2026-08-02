@@ -37,6 +37,8 @@ export interface Neighborhood {
   /** Cupo de FAMILIARES por hogar (el titular no cuenta). null = sin límite. */
   maxFamilyMembers: number | null;
   remoteControlsEnabled: boolean;
+  /** Disparar TODAS las alarmas del barrio desde la app del vecino. */
+  communityScopeEnabled: boolean;
   latitude: number | null;
   longitude: number | null;
   localityId: number;

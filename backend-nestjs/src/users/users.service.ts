@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { EntityManager, In, Repository } from 'typeorm';
 import { AccountUser } from '../accounts/entities/account-user.entity';
 import type { AuthenticatedUser } from '../auth/auth.service';
 import { AuditService } from '../common/audit.service';
@@ -56,6 +56,21 @@ export interface CreatedUser extends Omit<User, 'emailVerified'> {
 }
 
 /**
+ * Los datos de un vecino que se carga junto con su vivienda. Nombre y DNI y
+ * nada más: el resto lo completa él desde la app.
+ *
+ * Se declara acá y no se importa el DTO de `homes` para que la dependencia
+ * vaya en un solo sentido (homes -> users). `ResidentDto` lo satisface solo.
+ */
+export interface NewResident {
+  name: string;
+  dni: string;
+  telephone?: string;
+  birthDate?: string;
+  email?: string;
+}
+
+/**
  * Sin urgencia real (nadie quedó afuera de una cuenta existente, todavía no
  * la usó): más margen que el PASSWORD_RESET_TTL_HOURS de auth.service (1h).
  */
@@ -72,9 +87,10 @@ const ACCOUNT_ACTIVATION_TTL_HOURS = 48;
  *    CPS lo crea) — nace con una clave TEMPORAL generada acá mismo, ver
  *    `generateTemporaryPassword`, y tiene que cambiarla en su primer login
  *    (`mustChangePassword`, impuesto por `MustChangePasswordGuard`).
- *  - vecino: email (obligatorio) + DNI opcional, SIN password al crearlo — se
- *    manda un mail de activación (fija contraseña + verifica el correo, ver
- *    auth.service#resetPassword) y desde ahí entra con email o DNI.
+ *  - vecino: **nombre + DNI** (el DNI es su identidad de login), email
+ *    opcional, SIN password al crearlo. Nace con `password_hash` NULL —
+ *    "cuenta sin activar" — y la fija él mismo: por mail si dejó correo (ver
+ *    auth.service#resetPassword), o desde la app si no.
  */
 @Injectable()
 export class UsersService {
@@ -94,9 +110,9 @@ export class UsersService {
     dto: CreateUserDto,
     actor: AuthenticatedUser,
   ): Promise<CreatedUser> {
-    if (!dto.username && !dto.email) {
+    if (!dto.username && !dto.dni) {
       throw new BadRequestException(
-        'Un usuario necesita username (panel) o email (vecino)',
+        'Un usuario necesita username (panel) o DNI (vecino)',
       );
     }
 
@@ -156,6 +172,7 @@ export class UsersService {
         dni: dto.dni ?? null,
         email: dto.email ?? null,
         telephone: dto.telephone ?? null,
+        birthDate: dto.birthDate ?? null,
         passwordHash: passwordToHash
           ? await this.passwords.hash(passwordToHash)
           : null,
@@ -165,7 +182,10 @@ export class UsersService {
       }),
     );
 
-    // Vecino nuevo (sin username): sin esto no tiene forma de entrar nunca.
+    // Vecino nuevo CON correo: se le manda el mail de activación como atajo.
+    // Sin correo no pasa nada acá — nace con password_hash NULL ("cuenta sin
+    // activar") y la activación por DNI la resuelve la app, que es el camino
+    // previsto para el vecino. Ver el spec de viviendas y vecinos.
     if (!dto.username && user.email) {
       await this.sendActivationMail(user);
     }
@@ -185,9 +205,57 @@ export class UsersService {
     return temporaryPassword ? { ...created, temporaryPassword } : created;
   }
 
+  /**
+   * Crea un VECINO dentro de una transacción ajena: la del alta de vivienda,
+   * donde el usuario, la casa y la membresía se escriben juntos o no se
+   * escribe nada.
+   *
+   * Nace con `password_hash` NULL — "cuenta sin activar" — y sin membresía de
+   * panel: un vecino no entra al panel. NO manda el mail de activación: eso va
+   * después del commit (ver `sendActivationMail`), porque un mail no se puede
+   * deshacer si la transacción rota.
+   */
+  async createResident(
+    manager: EntityManager,
+    data: NewResident,
+    actorId: number,
+  ): Promise<User> {
+    // Unicidad DENTRO de la transacción: el repositorio de afuera no ve lo que
+    // esta transacción todavía no commiteó.
+    const users = manager.getRepository(User);
+
+    if (await users.findOne({ where: { dni: data.dni } })) {
+      throw new ConflictException(
+        `Ya existe una persona con el DNI ${data.dni}`,
+      );
+    }
+    if (data.email && (await users.findOne({ where: { email: data.email } }))) {
+      throw new ConflictException(
+        `Ya hay un usuario con el correo ${data.email}`,
+      );
+    }
+
+    return users.save(
+      users.create({
+        name: data.name,
+        kind: UserKind.PERSON,
+        username: null,
+        dni: data.dni,
+        email: data.email ?? null,
+        telephone: data.telephone ?? null,
+        birthDate: data.birthDate ?? null,
+        passwordHash: null,
+        mustChangePassword: false,
+        status: EntityStatus.ACTIVE,
+        createdBy: actorId,
+      }),
+    );
+  }
+
   /** Mismo token que "olvidé mi contraseña": fijar la clave por primera vez
-   * es, para el modelo, la misma operación que resetearla. */
-  private async sendActivationMail(user: User): Promise<void> {
+   * es, para el modelo, la misma operación que resetearla. Es público porque
+   * el alta de vivienda lo llama DESPUÉS de commitear su transacción. */
+  async sendActivationMail(user: User): Promise<void> {
     if (!user.email) return;
     const token = await this.tokens.issueUserToken(
       user,
@@ -272,6 +340,7 @@ export class UsersService {
       name: dto.name ?? user.name,
       email: dto.email ?? user.email,
       telephone: dto.telephone ?? user.telephone,
+      birthDate: dto.birthDate ?? user.birthDate,
       status: dto.status ?? user.status,
       updatedBy: actor.id,
     });

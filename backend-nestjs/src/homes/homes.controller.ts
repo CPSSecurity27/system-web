@@ -28,7 +28,7 @@ import {
 } from './dto/home.dto';
 import { HomeMember } from './entities/home-member.entity';
 import { Home } from './entities/home.entity';
-import { HomesService } from './homes.service';
+import { HomeMemberView, HomesService } from './homes.service';
 
 class FindHomesQuery {
   @IsOptional()
@@ -116,14 +116,17 @@ export class HomesController {
   findMembers(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: AuthenticatedUser,
-  ): Promise<HomeMember[]> {
+  ): Promise<HomeMemberView[]> {
     return this.homes.findMembers(id, user);
   }
 
   /**
-   * POST /api/homes/:id/members    { userId, role }
+   * POST /api/homes/:id/members
+   *   { person: { name, dni, ... }, role }  -> crea la persona y la membresía
+   *   { userId, role }                      -> suma a alguien del padrón
+   *
    * Gestores: titular y familiares. El titular: solo familiares de SU casa,
-   * hasta el cupo del barrio.
+   * hasta el cupo del barrio (que se chequea ANTES de crear a nadie).
    */
   @Post(':id/members')
   addMember(
@@ -166,7 +169,7 @@ export class HomesController {
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: TransferHomeTitularDto,
     @CurrentUser() user: AuthenticatedUser,
-  ): Promise<HomeMember[]> {
+  ): Promise<HomeMemberView[]> {
     return this.homes.transferTitular(id, dto, user);
   }
 

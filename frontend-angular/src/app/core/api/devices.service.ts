@@ -31,6 +31,21 @@ export interface CreateDevice {
   tested?: boolean;
 }
 
+/**
+ * Edición del equipo ya instalado. La puede hacer CPS o la organización dueña
+ * —incluido su TÉCNICO—: el que subió a la escalera tiene que poder corregir
+ * el punto en el mapa sin pedirle permiso a nadie.
+ *
+ * Lo que queda para CPS (baja definitiva, entrega de stock, testeo) lo frena
+ * el backend con un 403, no este tipo.
+ */
+export interface UpdateDevice extends Partial<InstallationData> {
+  name?: string;
+  latitude?: number;
+  longitude?: number;
+  installedAt?: string;
+}
+
 /** Instalación por reclamo: serial + código de UN SOLO USO → queda en el barrio. */
 /**
  * El reclamo instala el equipo en un barrio. Lo hace un técnico —de CPS o de la
@@ -92,6 +107,14 @@ export class DevicesService {
   /** Solo CPS (fabricación). MAC o número de placa repetidos dan 409. */
   create(device: CreateDevice): Observable<Device> {
     return this.http.post<Device>(`${this.api}/devices`, device);
+  }
+
+  /**
+   * Editar el equipo: nombre, ubicación y datos de instalación. Gestores y
+   * TÉCNICOS, de CPS o de la organización dueña.
+   */
+  update(id: number, changes: UpdateDevice): Observable<Device> {
+    return this.http.patch<Device>(`${this.api}/devices/${id}`, changes);
   }
 
   /**

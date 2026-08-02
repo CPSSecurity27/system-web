@@ -227,12 +227,15 @@ export class NeighborhoodsService {
     const oldValue = {
       maxFamilyMembers: neighborhood.maxFamilyMembers,
       remoteControlsEnabled: neighborhood.remoteControlsEnabled,
+      communityScopeEnabled: neighborhood.communityScopeEnabled,
     };
 
     await this.neighborhoods.update(id, {
       maxFamilyMembers: dto.maxFamilyMembers ?? neighborhood.maxFamilyMembers,
       remoteControlsEnabled:
         dto.remoteControlsEnabled ?? neighborhood.remoteControlsEnabled,
+      communityScopeEnabled:
+        dto.communityScopeEnabled ?? neighborhood.communityScopeEnabled,
       updatedBy: actor.id,
     });
 
@@ -249,6 +252,7 @@ export class NeighborhoodsService {
       newValue: {
         maxFamilyMembers: updated.maxFamilyMembers,
         remoteControlsEnabled: updated.remoteControlsEnabled,
+        communityScopeEnabled: updated.communityScopeEnabled,
       },
     });
 

@@ -25,7 +25,7 @@
     >
       <option value="">Todas las viviendas</option>
       @for (home of homeList(); track home.id) {
-        <option [value]="home.id">{{ home.name }}</option>
+        <option [value]="home.id">{{ home.address }}</option>
       }
     </select>
   </div>
@@ -148,7 +148,7 @@
                 >
                   <option value="">Entregar a la vivienda…</option>
                   @for (home of homeList(); track home.id) {
-                    <option [value]="home.id">{{ home.name }}</option>
+                    <option [value]="home.id">{{ home.address }}</option>
                   }
                 </select>
                 <button

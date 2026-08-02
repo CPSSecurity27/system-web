@@ -113,17 +113,28 @@ POST /auth/reset-password   { token, newPassword } -> 200
 - El link del mail apunta a `FRONTEND_URL/reset-password?token=...`: el front muestra el
   formulario y desde ahí llama al endpoint.
 
-## Alta del vecino y activación de cuenta (v2.1)
+## Alta del vecino y activación de cuenta (v2.3, 2026-08-02)
 
-SMS y WhatsApp salían caros y no había proveedor contratado, así que el vecino
-**dejó el DNI + OTP** (quedó pospuesto, ver `docs/estado-proyecto.md`) y pasó a
-registrarse con **email**, entrando después con email o DNI + contraseña —
-el mismo mecanismo que el panel.
+**El vecino se identifica con su DNI.** Se carga con nombre + DNI (junto con su
+vivienda, ver el spec de viviendas y vecinos) y nace con `password_hash = NULL`
+— "cuenta sin activar". El email quedó como **dato de contacto opcional**.
 
-`UsersService.create` (`POST /api/users`, sin `username`): exige `email`,
+> Historia: en v2.1 el email era OBLIGATORIO. SMS y WhatsApp salían caros y no
+> había proveedor, así que el mail quedó como única forma de que el vecino
+> fijara su clave sin que el gestor la conociera. Pero en el alta real hay
+> vecinos sin correo, y el formulario se trababa ahí. Desde v2.3 el DNI es la
+> identidad y el mail es un atajo.
+
+**La activación por DNI la resuelve la app**, contra su propio backend (todavía
+sin definir). El panel solo deja al vecino *activable*: DNI único,
+`password_hash` NULL y su fila en `home_member`. La ficha de la vivienda
+muestra "cuenta sin activar" mientras siga sin clave — es un booleano DERIVADO
+de `password_hash IS NOT NULL`, no una columna guardada.
+
+`UsersService.create` (`POST /api/users`, sin `username`): exige **DNI**,
 rechaza que le manden `password` (el gestor no debe conocer la clave del
-vecino) y crea la fila con `password_hash = NULL`. Sin contraseña no hay forma
-de loguear, así que el mismo alta dispara el mail de activación.
+vecino) y crea la fila con `password_hash = NULL`. Si además vino un email,
+dispara el mail de activación como atajo.
 
 La activación **reutiliza `reset-password` sin cambios**: fijar la contraseña
 por primera vez y resetearla son, para ese método, la misma operación (pone

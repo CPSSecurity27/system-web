@@ -18,6 +18,7 @@ export interface CreatePlan {
   maxMonitorUsers: number;
   maxFamilyMembers: number;
   remoteControlsEnabled: boolean;
+  communityScopeEnabled: boolean;
 }
 
 /** `code` y `appliesTo` no se editan: son la identidad del plan. */

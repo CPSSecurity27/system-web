@@ -77,6 +77,11 @@ export class UpdateNeighborhoodQuotasDto {
   @IsOptional()
   @IsBoolean()
   remoteControlsEnabled?: boolean;
+
+  /** Disparar TODAS las alarmas del barrio desde la app del vecino. */
+  @IsOptional()
+  @IsBoolean()
+  communityScopeEnabled?: boolean;
 }
 
 /** Transferencia de comunidad. Solo CPS. La operación más sensible del negocio. */

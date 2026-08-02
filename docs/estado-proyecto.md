@@ -1,6 +1,6 @@
 # Estado del proyecto — CPS Security
 
-> **Actualizado:** 2026-07-21. Este es el documento de arranque para cualquier
+> **Actualizado:** 2026-08-02. Este es el documento de arranque para cualquier
 > sesión nueva (humana o con IA): qué está hecho, qué falta y en qué orden seguir.
 
 ---
@@ -22,8 +22,11 @@ dice la ESCALA y `managed_by` dice QUIÉN OPERA cada barrio (dos ejes, nunca uno
 derivado del otro); sin cuentas HOME ni contratos por vivienda (vecinos =
 `home_member`); cupos = tarifa solo-CPS con grandfathering, por rol, con 0 = "ese
 rol no existe acá"; el plan es plantilla que se copia, no fuente que se lee; CPS no
-es un cliente y vive en su propia sección; eventos ilimitados
-(`community_mode_enabled` eliminado);
+es un cliente y vive en su propia sección; **la CANTIDAD de eventos es ilimitada**
+(no hay cupo de eventos) — ojo, el `community_mode_enabled` de Firebase volvió el
+2026-08-02 como `neighborhood.community_scope_enabled`, pero es otra cosa: no
+limita cuántos eventos se disparan sino si el vecino puede hacer sonar TODO el
+barrio (ver punto 8);
 Firebase eliminado por completo; servicio de alarmas como programa separado que
 comparte solo la base; controles con 4 códigos RF; sin git por decisión del usuario.
 
@@ -161,7 +164,42 @@ comparte solo la base; controles con 4 códigos RF; sin git por decisión del us
    COMPANY no tiene barrios, así que hoy cualquier MONITOR o TECHNICIAN de CPS ve la
    flota entera de todos los clientes. Con los socios siendo empleados internos deja de
    ser urgente, pero sigue siendo un agujero de alcance.
-8. **Puente con el GtD** — diseñado, **sin implementar**. Decidido: una sola base
+8. ~~**Viviendas y vecinos**~~ — **HECHO (2026-08-02)**. Diseño en
+   `docs/superpowers/specs/2026-08-02-viviendas-y-vecinos-design.md`, migración
+   `HomeAddressAndNeighborResident` (probada up → down → up contra
+   `cps_security_v2`). Se auditó la base Firebase real (`cpssecurityarg`, RTDB:
+   16 viviendas, 21 usuarios) para decidir contra datos y no contra la memoria.
+   - **La DIRECCIÓN identifica la vivienda**: se elimina `home.name`. Firebase
+     nunca tuvo nombre de vivienda y no le hizo falta; con los dos campos el
+     gestor escribía la dirección en el nombre.
+   - **GPS obligatorio** (16 de 16 lo tenían). El teléfono del hogar queda
+     opcional (1 de 16 lo tenía) — el número que sirve es el de la persona, que
+     es el que viaja al evento como `activator_phone`.
+   - **El titular se carga en el mismo acto que la vivienda**: `POST /homes`
+     escribe `app_user` + `home` + `home_member(TITULAR)` en una transacción.
+     DNI repetido → 409 que dice **en qué vivienda y barrio** está esa persona.
+   - **El DNI vuelve a ser la identidad del vecino** y el email pasa a opcional
+     (revierte la decisión v2.1 de email obligatorio: en el alta real hay
+     vecinos sin correo y el formulario se trababa ahí). El vecino nace con
+     `password_hash` NULL y la ficha lo muestra **"sin activar"**.
+   - **Una persona vive en una sola casa**: `uq_user_single_titular` (parcial)
+     pasa a `uq_home_member_one_home` UNIQUE(user_id). Sin esto, un vecino en
+     dos barrios hacía ambiguo qué barrio despertar.
+   - **`community_scope_enabled`**, cupo nuevo del barrio (y del plan): habilita
+     `event.scope = COMMUNITY`, o sea disparar TODAS las alarmas del barrio
+     desde la app. Era `plan.community_mode_enabled` en Firebase y se había
+     perdido en el rediseño. Solo CPS lo escribe, con `audit_log`.
+   - `app_user.birth_date`, opcional. Sin parentesco: `home_member.role` sigue
+     siendo TITULAR/FAMILIAR y nada más. El usuario `guest` de Firebase no se
+     portó.
+
+   **Queda anotado, sin hacer**: (a) la **activación del vecino por DNI** es del
+   backend de la app, que todavía no está definido — el panel solo deja la
+   cuenta activable; (b) `plan.max_family_members` y `remote_controls_enabled`
+   **no se copian al crear un barrio** (nace con los defaults de la base), y
+   `community_scope_enabled` hereda el mismo hueco a propósito: arreglarlo toca
+   el alta de cliente y es un trabajo aparte.
+9. **Puente con el GtD** — diseñado, **sin implementar**. Decidido: una sola base
    compartida, tablas crudas del GtD en un esquema `gtd` y **contrato por
    funciones** (`gtd.ingest_status/tele/up`, `fetch_pending_commands`, …) en vez
    de tablas directas, para que un cambio de mapeo sea una migración nuestra y no
@@ -173,9 +211,9 @@ comparte solo la base; controles con 4 códigos RF; sin git por decisión del us
    (riesgo de llenar la cola de `pg_notify`, que hace fallar transacciones), y
    `device_state` se queda corta — el panel reporta `vbat`/`vpanel`/`vfuente`,
    que es el dato de mantenimiento más importante de un poste.
-9. **Servicio de alarmas** (programa separado, MQTT → `device_state` + `event` + FCM):
+10. **Servicio de alarmas** (programa separado, MQTT → `device_state` + `event` + FCM):
    diseñarlo recién cuando el resto esté estable.
-10. Más adelante: 2FA para OWNER, estado ACKNOWLEDGED del evento (pospuesto a
+11. Más adelante: 2FA para OWNER, estado ACKNOWLEDGED del evento (pospuesto a
     propósito), alcance del personal de CPS (ver punto 7), tests e2e del modelo v2.
 
 ## 4. Mapa de documentación

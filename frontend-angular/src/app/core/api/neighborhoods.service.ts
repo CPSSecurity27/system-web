@@ -3,7 +3,7 @@ import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 
 import { environment } from '../../../environments/environment';
-import { ManagedBy } from '../models/api.models';
+import { EntityStatus, ManagedBy } from '../models/api.models';
 import { Neighborhood } from '../models/neighborhood';
 
 export interface CreateNeighborhood {
@@ -21,6 +21,19 @@ export interface CreateNeighborhood {
 export interface UpdateNeighborhoodQuotas {
   maxFamilyMembers?: number;
   remoteControlsEnabled?: boolean;
+  communityScopeEnabled?: boolean;
+}
+
+/**
+ * Datos del barrio (NO los cupos: esos van por su propio endpoint porque son
+ * tarifa y solo los toca CPS).
+ */
+export interface UpdateNeighborhood {
+  name?: string;
+  localityId?: number;
+  latitude?: number;
+  longitude?: number;
+  status?: EntityStatus;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -48,6 +61,15 @@ export class NeighborhoodsService {
    */
   create(neighborhood: CreateNeighborhood): Observable<Neighborhood> {
     return this.http.post<Neighborhood>(`${this.api}/neighborhoods`, neighborhood);
+  }
+
+  /**
+   * Datos del barrio. Lo puede llamar CPS o el OWNER/ADMIN de la organización
+   * dueña, pero SOLO si gestiona ese barrio: con `managedBy = 'CPS'` (vendido
+   * llave en mano) el cliente lo VE y no lo toca — el backend responde 403.
+   */
+  update(id: number, changes: UpdateNeighborhood): Observable<Neighborhood> {
+    return this.http.patch<Neighborhood>(`${this.api}/neighborhoods/${id}`, changes);
   }
 
   /** SOLO CPS: los cupos del barrio son la tarifa. */

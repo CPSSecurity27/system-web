@@ -60,9 +60,14 @@ export class User {
   @Column({ type: 'text', nullable: true })
   telephone!: string | null;
 
+  /** Dato opcional del vecino. Los usuarios de panel no lo usan. */
+  @Column({ name: 'birth_date', type: 'date', nullable: true })
+  birthDate!: string | null;
+
   /**
    * Hash argon2id. La base NUNCA ve la contraseña en claro.
-   * NULL para vecinos que entran solo con DNI + OTP.
+   * NULL = cuenta sin activar: el vecino todavía no fijó su contraseña desde
+   * la app. Es el dato mismo, no una copia tipo `credential_set`.
    * `select: false` para que no salga en un find() por descuido.
    */
   @Column({

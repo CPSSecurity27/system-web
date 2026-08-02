@@ -251,6 +251,6 @@ export class RemoteList {
 
   protected homeName(id: number | null): string {
     if (id === null) return 'En stock';
-    return this.homeList().find((h) => h.id === id)?.name ?? `Vivienda #${id}`;
+    return this.homeList().find((h) => h.id === id)?.address ?? `Vivienda #${id}`;
   }
 }

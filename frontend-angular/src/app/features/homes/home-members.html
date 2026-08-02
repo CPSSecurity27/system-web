@@ -9,12 +9,10 @@
       <i class="bi bi-arrow-left"></i>
     </a>
     <div>
-      <h2 class="h5 fw-bold mb-0">{{ home()?.name ?? 'Vivienda #' + id }}</h2>
+      <!-- La DIRECCIÓN identifica la vivienda: no hay nombre aparte. -->
+      <h2 class="h5 fw-bold mb-0">{{ home()?.address ?? 'Vivienda #' + id }}</h2>
       <p class="text-muted small mb-0">
         Miembros del hogar
-        @if (home()?.address) {
-          · {{ home()?.address }}
-        }
         @if (home()?.contactPhone) {
           · <i class="bi bi-telephone me-1"></i>{{ home()?.contactPhone }}
         }
@@ -70,6 +68,15 @@
                     } @else {
                       <span class="badge bg-warning-soft text-warning border">
                         {{ member.status }}
+                      </span>
+                    }
+                    <!-- Nunca entró a la app: la cuenta existe, la clave no. -->
+                    @if (!member.activated) {
+                      <span
+                        class="badge text-bg-light border d-block mt-1"
+                        title="Todavía no fijó su contraseña desde la app"
+                      >
+                        Sin activar
                       </span>
                     }
                   </td>
@@ -140,51 +147,68 @@
         <div class="card-body">
           <form [formGroup]="form" (ngSubmit)="addMember()" novalidate>
             <div class="mb-2">
-              <label for="mName" class="form-label small fw-medium">Nombre y apellido</label>
+              <label for="mName" class="form-label small fw-medium">Nombre completo</label>
               <input id="mName" type="text" class="form-control" formControlName="name" />
             </div>
 
             <div class="mb-2">
-              <label for="mEmail" class="form-label small fw-medium">Email</label>
+              <!-- El DNI es la identidad de login del vecino en la app. -->
+              <label for="mDni" class="form-label small fw-medium">DNI</label>
               <input
-                id="mEmail"
-                type="email"
-                class="form-control"
-                formControlName="email"
-                placeholder="vecino@ejemplo.com"
+                id="mDni"
+                type="text"
+                inputmode="numeric"
+                class="form-control font-monospace"
+                formControlName="dni"
+                placeholder="30123456"
               />
-              @if (form.controls.email.touched && form.controls.email.invalid) {
-                <div class="form-text text-brand">Ingresá un email válido.</div>
+              @if (form.controls.dni.touched && form.controls.dni.invalid) {
+                <div class="form-text text-brand">Son 7 a 9 dígitos, sin puntos.</div>
+              } @else {
+                <div class="form-text">Con esto entra a la app. Sin puntos.</div>
               }
-              <div class="form-text">
-                Le llega un mail para activar la cuenta y elegir su contraseña.
-              </div>
             </div>
 
-            <div class="row g-2 mb-2">
-              <div class="col-6">
-                <label for="mDni" class="form-label small fw-medium">
-                  DNI <span class="text-muted fw-normal">(opcional)</span>
-                </label>
-                <input
-                  id="mDni"
-                  type="text"
-                  inputmode="numeric"
-                  class="form-control font-monospace"
-                  formControlName="dni"
-                  placeholder="30123456"
-                />
-                @if (form.controls.dni.touched && form.controls.dni.invalid) {
-                  <div class="form-text text-brand">7 a 9 dígitos, sin puntos.</div>
-                }
+            <button
+              type="button"
+              class="btn btn-link btn-sm p-0 mb-2"
+              (click)="verOpcionales.set(!verOpcionales())"
+            >
+              <i
+                class="bi"
+                [class.bi-chevron-right]="!verOpcionales()"
+                [class.bi-chevron-down]="verOpcionales()"
+              ></i>
+              Datos opcionales
+            </button>
+
+            @if (verOpcionales()) {
+              <div class="row g-2 mb-2">
+                <div class="col-6">
+                  <label for="mTel" class="form-label small fw-medium">Teléfono</label>
+                  <input id="mTel" type="tel" class="form-control" formControlName="telephone" />
+                </div>
+                <div class="col-6">
+                  <label for="mBirth" class="form-label small fw-medium">Nacimiento</label>
+                  <input id="mBirth" type="date" class="form-control" formControlName="birthDate" />
+                </div>
+                <div class="col-12">
+                  <label for="mEmail" class="form-label small fw-medium">Correo</label>
+                  <input
+                    id="mEmail"
+                    type="email"
+                    class="form-control"
+                    formControlName="email"
+                    placeholder="vecino@ejemplo.com"
+                  />
+                  @if (form.controls.email.touched && form.controls.email.invalid) {
+                    <div class="form-text text-brand">Ingresá un email válido.</div>
+                  } @else {
+                    <div class="form-text">Si lo cargás, le llega un mail para activar.</div>
+                  }
+                </div>
               </div>
-              <div class="col-6">
-                <label for="mTel" class="form-label small fw-medium">
-                  Teléfono <span class="text-muted fw-normal">(opcional)</span>
-                </label>
-                <input id="mTel" type="tel" class="form-control" formControlName="telephone" />
-              </div>
-            </div>
+            }
 
             <div class="mb-3">
               <label for="mRole" class="form-label small fw-medium">Rol en el hogar</label>
@@ -210,11 +234,11 @@
             </button>
           </form>
 
-          <!-- El vecino nace SIN contraseña: la fija al activar la cuenta por mail. -->
+          <!-- El vecino nace SIN contraseña: la fija él la primera vez. -->
           <p class="text-muted small mb-0 mt-3 border-top pt-3">
             <i class="bi bi-info-circle me-1"></i>
-            El vecino recibe un mail para <strong>activar su cuenta</strong> y elegir su contraseña.
-            Después entra con su email o su DNI.
+            El vecino entra a la app con su <strong>DNI</strong> y elige ahí su contraseña. Hasta
+            que lo haga figura como <strong>sin activar</strong> en la lista.
           </p>
         </div>
       </div>

@@ -59,7 +59,7 @@ import { Account, Device, Home, Remote } from '../../core/models/api.models';
                   <select id="homeId" class="form-select" formControlName="homeId">
                     <option [ngValue]="null">Elegí una vivienda…</option>
                     @for (home of homes(); track home.id) {
-                      <option [ngValue]="home.id">{{ home.name }}</option>
+                      <option [ngValue]="home.id">{{ home.address }}</option>
                     }
                   </select>
                   <!-- El dueño no se cambia después: es la casa, no la persona. -->
@@ -160,7 +160,7 @@ import { Account, Device, Home, Remote } from '../../core/models/api.models';
                       >
                         <option [ngValue]="undefined">Entregar a…</option>
                         @for (home of homes(); track home.id) {
-                          <option [ngValue]="home.id">{{ home.name }}</option>
+                          <option [ngValue]="home.id">{{ home.address }}</option>
                         }
                       </select>
                       <button
@@ -243,7 +243,7 @@ export class RemoteForm {
         this.saving.set(false);
         this.assignTo[remoteId] = undefined;
         const home = this.homes().find((h) => h.id === homeId);
-        this.assignMessage.set(`Control entregado a ${home?.name ?? 'la vivienda'}.`);
+        this.assignMessage.set(`Control entregado a ${home?.address ?? 'la vivienda'}.`);
         this.loadStock();
       },
       error: (err) => {

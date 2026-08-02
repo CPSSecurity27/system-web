@@ -6,7 +6,6 @@ import {
   JoinColumn,
   ManyToOne,
   PrimaryGeneratedColumn,
-  Unique,
   UpdateDateColumn,
 } from 'typeorm';
 import { EntityStatus, HomeMemberRole } from '../../common/enums';
@@ -19,20 +18,28 @@ import { Home } from './home.entity';
  * hogar + persona + rol (TITULAR | FAMILIAR). Es la puerta de la app de
  * vecinos: el acceso del vecino se deriva de acá, no de contratos.
  *
+ * La relación NO vive en `home` ni en `app_user`: es esta fila. Ni
+ * `home.members`, ni `user.home_id`, ni `home.owner_id` — los tres que tenía
+ * Firebase, diciendo lo mismo en tres lugares que nada obligaba a mantener de
+ * acuerdo.
+ *
  * La base impone (migración):
  *  - UN TITULAR por hogar        (único parcial uq_home_single_titular)
- *  - una persona es titular de   (único parcial uq_user_single_titular)
- *    UN solo hogar
- *  - una persona no se repite en (UNIQUE compuesto uq_home_member)
- *    el mismo hogar
+ *  - UNA PERSONA VIVE EN UNA     (único TOTAL uq_home_member_one_home)
+ *    SOLA CASA, sea titular o
+ *    familiar
+ *
+ * Ese único total subsume al viejo uq_home_member (home_id, user_id) y al
+ * parcial uq_user_single_titular, los dos eliminados en 2026-08-02. Sin él, un
+ * vecino podía ser familiar en dos casas de dos barrios: el evento no sabría
+ * qué barrio despertar y el cupo de familiares se esquivaba repartiendo gente.
  *
  * El servicio impone: FAMILIAR nunca supera neighborhood.max_family_members al
  * CREAR (si CPS baja el cupo: grandfathering, nadie se suspende). Un usuario
  * INSTITUTIONAL no puede ser miembro de un hogar.
  */
 @Entity('home_member')
-@Unique('uq_home_member', ['homeId', 'userId'])
-@Index('idx_home_member_user', ['userId'])
+@Index('uq_home_member_one_home', ['userId'], { unique: true })
 export class HomeMember {
   @PrimaryGeneratedColumn()
   id!: number;
