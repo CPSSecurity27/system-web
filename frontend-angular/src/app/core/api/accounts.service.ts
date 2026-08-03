@@ -27,6 +27,12 @@ export interface CreateAccount {
   maxAdminUsers?: number;
   maxTechnicianUsers?: number;
   maxMonitorUsers?: number;
+  /**
+   * CUPOS DE BARRIO: se definen al vender y se COPIAN a cada barrio nuevo de
+   * la cuenta. Con plan salen del plan; sin plan hay que mandarlos.
+   */
+  maxFamilyMembers?: number;
+  communityScopeEnabled?: boolean;
 }
 
 export interface UpdateAccountQuotas {
@@ -35,6 +41,12 @@ export interface UpdateAccountQuotas {
   maxAdminUsers?: number;
   maxTechnicianUsers?: number;
   maxMonitorUsers?: number;
+  /**
+   * CUPOS DE BARRIO: se definen al vender y se COPIAN a cada barrio nuevo de
+   * la cuenta. Con plan salen del plan; sin plan hay que mandarlos.
+   */
+  maxFamilyMembers?: number;
+  communityScopeEnabled?: boolean;
 }
 
 export interface OnboardCommunity {
@@ -54,6 +66,12 @@ export interface OnboardCommunity {
   maxAdminUsers?: number;
   maxTechnicianUsers?: number;
   maxMonitorUsers?: number;
+  /**
+   * CUPOS DE BARRIO: se definen al vender y se COPIAN a cada barrio nuevo de
+   * la cuenta. Con plan salen del plan; sin plan hay que mandarlos.
+   */
+  maxFamilyMembers?: number;
+  communityScopeEnabled?: boolean;
   ownerUsername: string;
   neighborhood: {
     name: string;
@@ -123,6 +141,12 @@ export interface OnboardMunicipal {
   maxAdminUsers?: number;
   maxTechnicianUsers?: number;
   maxMonitorUsers?: number;
+  /**
+   * CUPOS DE BARRIO: se definen al vender y se COPIAN a cada barrio nuevo de
+   * la cuenta. Con plan salen del plan; sin plan hay que mandarlos.
+   */
+  maxFamilyMembers?: number;
+  communityScopeEnabled?: boolean;
   ownerUsername: string;
   /** Opcional: si está, el OWNER puede recuperar su contraseña solo. */
   ownerEmail?: string;

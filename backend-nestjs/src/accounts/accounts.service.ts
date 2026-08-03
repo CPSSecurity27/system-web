@@ -42,12 +42,25 @@ import { Account } from './entities/account.entity';
 import { Plan } from './entities/plan.entity';
 import { StaffAssignment } from './entities/staff-assignment.entity';
 
-/** Los cuatro cupos de una organización, siempre juntos. */
+/**
+ * Los cupos de una organización, siempre juntos. Dos familias:
+ *
+ *  - DE LA CUENTA (barrios y personal): son un techo que se controla al crear
+ *    cada barrio o cada membresía.
+ *  - DE BARRIO (familiares y alarma comunitaria): NO son un techo de
+ *    la cuenta, son el valor que se COPIA a cada barrio nuevo. Después, cada
+ *    barrio puede apartarse por `PATCH /neighborhoods/:id/quotas`.
+ *
+ * Van en la misma estructura porque se venden juntos, se copian juntos desde el
+ * plan y se auditan juntos: separarlos duplicaría toda esa maquinaria.
+ */
 export interface AccountQuotas {
   maxNeighborhoods: number;
   maxAdminUsers: number;
   maxTechnicianUsers: number;
   maxMonitorUsers: number;
+  maxFamilyMembers: number;
+  communityScopeEnabled: boolean;
 }
 
 const QUOTA_FIELDS = [
@@ -55,7 +68,29 @@ const QUOTA_FIELDS = [
   'maxAdminUsers',
   'maxTechnicianUsers',
   'maxMonitorUsers',
+  'maxFamilyMembers',
+  'communityScopeEnabled',
 ] as const satisfies readonly (keyof AccountQuotas)[];
+
+/**
+ * Lo que un BARRIO hereda de su cuenta al nacer. Es un subconjunto de
+ * `AccountQuotas` y existe para que el alta de barrio no tenga que saber qué
+ * campos copiar: si mañana se suma un cupo de barrio, se agrega acá y los dos
+ * caminos de alta (suelta y onboarding de comunitaria) lo toman solos.
+ */
+export interface NeighborhoodQuotas {
+  maxFamilyMembers: number;
+  communityScopeEnabled: boolean;
+}
+
+export function neighborhoodQuotasFrom(account: Account): NeighborhoodQuotas {
+  // Los `!` son seguros: el CHECK `chk_subtype_by_type` los exige en toda
+  // ORGANIZATION, y un barrio siempre cuelga de una.
+  return {
+    maxFamilyMembers: account.maxFamilyMembers!,
+    communityScopeEnabled: account.communityScopeEnabled!,
+  };
+}
 
 /** Para los mensajes de cupo, en el idioma del que los lee. */
 const ROLE_LABELS: Record<UserRole, string> = {
@@ -85,13 +120,15 @@ function quotaForRole(account: Account, role: UserRole): number | null {
   }
 }
 
-/** La foto de los cuatro cupos, para el audit_log. */
+/** La foto COMPLETA de los cupos, para el audit_log. */
 function pickQuotas(account: Account): Partial<AccountQuotas> {
   return {
     maxNeighborhoods: account.maxNeighborhoods ?? undefined,
     maxAdminUsers: account.maxAdminUsers ?? undefined,
     maxTechnicianUsers: account.maxTechnicianUsers ?? undefined,
     maxMonitorUsers: account.maxMonitorUsers ?? undefined,
+    maxFamilyMembers: account.maxFamilyMembers ?? undefined,
+    communityScopeEnabled: account.communityScopeEnabled ?? undefined,
   };
 }
 
@@ -348,6 +385,12 @@ export class AccountsService {
             // autogestión (ORGANIZATION): las dos son ventas legítimas y el
             // que carga el alta es el que sabe cuál se firmó.
             managedBy: dto.managedBy,
+            // Los cupos de barrio se COPIAN de la cuenta recién creada, igual
+            // que en el alta suelta (NeighborhoodsService#create). Se toman de
+            // `quotas` y no de `account` porque acá la cuenta se está guardando
+            // en la misma transacción y ya tenemos los valores resueltos.
+            maxFamilyMembers: quotas.maxFamilyMembers,
+            communityScopeEnabled: quotas.communityScopeEnabled,
             createdBy: actor.id,
           }),
         );
@@ -357,6 +400,14 @@ export class AccountsService {
             name: dto.name,
             kind: UserKind.INSTITUTIONAL,
             username: dto.ownerUsername,
+            // El DTO lo acepta y lo valida, así que TIENE que guardarse. Sin
+            // esta línea el correo se descartaba en silencio y el OWNER de toda
+            // comunitaria nacía inutilizable: con clave temporal, obligado a
+            // cambiarla, y sin poder hacerlo porque cambiarla exige un correo
+            // cargado — el guard de clave temporal le bloquea TODOS los
+            // endpoints. La rama municipal sí lo guardaba; eran dos caminos
+            // paralelos y uno se quedó atrás.
+            email: dto.ownerEmail ?? null,
             passwordHash,
             mustChangePassword: true,
             status: EntityStatus.ACTIVE,
@@ -694,6 +745,13 @@ export class AccountsService {
       maxTechnicianUsers:
         dto.maxTechnicianUsers ?? oldValue.maxTechnicianUsers!,
       maxMonitorUsers: dto.maxMonitorUsers ?? oldValue.maxMonitorUsers!,
+      // OJO: cambiar estos NO toca los barrios que ya existen. Son el valor que
+      // heredarán los PRÓXIMOS — los de ahora ya tienen su copia, y pisarla
+      // desharía los ajustes que CPS haya hecho barrio por barrio. Es el mismo
+      // grandfathering que aplica al resto de la tarifa.
+      maxFamilyMembers: dto.maxFamilyMembers ?? oldValue.maxFamilyMembers!,
+      communityScopeEnabled:
+        dto.communityScopeEnabled ?? oldValue.communityScopeEnabled!,
     };
 
     await this.accounts.update(accountId, { ...newValue, updatedBy: actor.id });
@@ -747,6 +805,15 @@ export class AccountsService {
 
     const [items, total] = await this.accounts.findAndCount({
       where,
+      // El árbol geográfico viaja con la cuenta porque su JURISDICCIÓN decide
+      // dónde pueden estar sus barrios: el alta de barrio la usa para no
+      // preguntar una localidad que ya está determinada (jurisdicción LOCALITY)
+      // o para acotar el combo al departamento correcto (jurisdicción
+      // DEPARTMENT). Con solo los ids habría que resolver los nombres aparte.
+      relations: {
+        locality: { department: { province: true } },
+        department: { province: true },
+      },
       order: { id: 'ASC' },
       take: query.limit,
       skip: query.offset,
@@ -1160,6 +1227,8 @@ export class AccountsService {
         maxAdminUsers: dto.maxAdminUsers!,
         maxTechnicianUsers: dto.maxTechnicianUsers!,
         maxMonitorUsers: dto.maxMonitorUsers!,
+        maxFamilyMembers: dto.maxFamilyMembers!,
+        communityScopeEnabled: dto.communityScopeEnabled!,
       };
     }
 
@@ -1181,6 +1250,12 @@ export class AccountsService {
       maxAdminUsers: dto.maxAdminUsers ?? plan.maxAdminUsers,
       maxTechnicianUsers: dto.maxTechnicianUsers ?? plan.maxTechnicianUsers,
       maxMonitorUsers: dto.maxMonitorUsers ?? plan.maxMonitorUsers,
+      // Los de BARRIO se copian del plan igual que el resto: esta es la única
+      // lectura del plan en toda su vida — al VENDER. Después el barrio los
+      // toma de la cuenta, nunca de acá.
+      maxFamilyMembers: dto.maxFamilyMembers ?? plan.maxFamilyMembers,
+      communityScopeEnabled:
+        dto.communityScopeEnabled ?? plan.communityScopeEnabled,
     };
   }
 

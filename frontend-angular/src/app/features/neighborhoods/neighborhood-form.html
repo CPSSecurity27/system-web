@@ -13,31 +13,37 @@
           <div class="mb-3">
             <label for="name" class="form-label small fw-medium">Nombre del barrio</label>
             <input id="name" type="text" class="form-control" formControlName="name" />
-            @if (form.controls.name.touched && form.controls.name.invalid) {
-              <div class="form-text text-emergency">El nombre es obligatorio.</div>
-            }
           </div>
 
           <!-- Solo CPS elige el cliente; una organización siempre crea para sí. -->
           @if (auth.isCps()) {
             <div class="mb-3">
               <label for="organizationId" class="form-label small fw-medium">
-                Organización dueña
+                Municipalidad dueña
               </label>
               <!-- Solo MUNICIPALES: una comunitaria ya tiene su único barrio,
                    creado con la cuenta. Ver `organizations()`. -->
-              <select id="organizationId" class="form-select" formControlName="organizationId">
+              <select
+                id="organizationId"
+                class="form-select"
+                formControlName="organizationId"
+                [class.is-invalid]="
+                  form.controls.organizationId.touched && form.controls.organizationId.invalid
+                "
+              >
                 <option [ngValue]="null">Elegí la municipalidad…</option>
                 @for (org of organizations(); track org.id) {
                   <option [ngValue]="org.id">{{ org.name }}</option>
                 }
               </select>
+              @if (form.controls.organizationId.touched && form.controls.organizationId.invalid) {
+                <div class="invalid-feedback">Elegí la municipalidad dueña del barrio.</div>
+              }
               <div class="form-text">
-                El barrio nace a nombre de la municipalidad y descuenta de SU cupo de barrios.
-                <strong>Solo municipalidades:</strong> una comunitaria gestiona un único barrio y ya
-                lo tiene desde que se creó.
+                El barrio nace a su nombre y descuenta de SU cupo. Al elegirla, el mapa vuela hasta
+                su jurisdicción.
               </div>
-              @if (organizations().length === 0) {
+              @if (!cargandoCuentas() && organizations().length === 0) {
                 <div class="alert bg-warning-soft border-0 py-2 small mt-2">
                   <i class="icon-info me-1"></i>
                   No hay ninguna municipalidad cargada todavía.
@@ -53,66 +59,106 @@
             </div>
           }
 
-          <div class="mb-3 position-relative">
-            <label for="search" class="form-label small fw-medium">Localidad</label>
-            <input
-              id="search"
-              type="text"
-              class="form-control"
-              formControlName="search"
-              placeholder="Escribí al menos 2 letras…"
-              autocomplete="off"
-            />
-            <div class="form-text">
-              Se ignoran acentos y mayúsculas: “cordoba” encuentra “Córdoba”.
-            </div>
+          <!--
+            LA LOCALIDAD SALE DE LA JURISDICCIÓN, no de un buscador libre.
 
-            @if (searching()) {
-              <div class="form-text text-muted">
-                <span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>
-                Buscando…
+            Antes se buscaba a mano entre todas las del país y el backend
+            rechazaba después la que estuviera fuera del límite del cliente.
+            Ahora el formulario solo ofrece lo que es válido.
+          -->
+          @if (localidadFijada(); as locality) {
+            <div class="mb-3">
+              <span class="form-label small fw-medium d-block">Localidad</span>
+              <p class="mb-1">
+                <i class="icon-map-pin me-1 text-brand"></i>
+                <strong>{{ fullName(locality) }}</strong>
+              </p>
+              <div class="form-text">
+                Es la jurisdicción del cliente: sus barrios solo pueden estar ahí, así que no hay
+                nada que elegir.
               </div>
-            }
-
-            @if (results().length > 0) {
-              <ul
-                class="list-group position-absolute w-100 shadow-sm"
-                style="z-index: 5; max-height: 260px; overflow-y: auto"
-              >
-                @for (locality of results(); track locality.id) {
-                  <li>
-                    <button
-                      type="button"
-                      class="list-group-item list-group-item-action text-start"
-                      (click)="select(locality)"
-                    >
-                      <!-- El árbol completo, para desambiguar homónimos -->
-                      {{ fullName(locality) }}
-                    </button>
-                  </li>
-                }
-              </ul>
-            }
-          </div>
-
-          @if (selected(); as locality) {
-            <div class="alert bg-success-soft border-0 py-2 small mb-3">
-              <i class="icon-map-pin me-1"></i>
-              Localidad elegida: <strong>{{ fullName(locality) }}</strong>
             </div>
-          } @else {
-            <div class="alert bg-warning-soft border-0 py-2 small mb-3">
+          } @else if (eligeLocalidad()) {
+            <div class="mb-3">
+              <label for="localityId" class="form-label small fw-medium">Localidad</label>
+              <select
+                id="localityId"
+                class="form-select"
+                formControlName="localityId"
+                (change)="onLocalidad()"
+              >
+                <option [ngValue]="null">Elegí una localidad…</option>
+                @for (loc of localidadesDelDepartamento(); track loc.id) {
+                  <option [ngValue]="loc.id">{{ loc.name }}</option>
+                }
+              </select>
+              <div class="form-text">
+                Solo las del departamento <strong>{{ organizacion()?.department?.name }}</strong
+                >: la jurisdicción del cliente llega hasta ahí.
+              </div>
+            </div>
+          } @else if (auth.isCps()) {
+            <div class="alert bg-light border py-2 small mb-3">
               <i class="icon-info me-1"></i>
-              Elegí una localidad de la lista. Ojo: <strong>CABA no tiene localidades</strong>
-              en el padrón oficial, así que no se puede crear un barrio ahí.
+              Elegí la municipalidad y la localidad se resuelve sola con su jurisdicción.
+            </div>
+          }
+
+          <!--
+            REGLAS DE ALARMA. El mismo permiso que se elige al crear una
+            comunidad, acá por barrio.
+
+            Es un CUPO (regla 4), así que SOLO CPS lo fija: a una organización
+            se le muestra lo que su barrio hereda de la cuenta, sin poder
+            tocarlo. El backend responde 403 igual — esto evita ofrecer un
+            control que va a fallar.
+          -->
+          @if (organizacion(); as org) {
+            <div class="mb-3">
+              <span class="form-label small fw-medium d-block">
+                <i class="icon-radio-tower me-1"></i> Reglas de alarma
+              </span>
+
+              @if (auth.isCps()) {
+                <div class="form-check form-switch">
+                  <input
+                    id="communityScopeEnabled"
+                    class="form-check-input"
+                    type="checkbox"
+                    formControlName="communityScopeEnabled"
+                  />
+                  <label class="form-check-label small" for="communityScopeEnabled">
+                    <strong>Activación comunitaria</strong>
+                  </label>
+                  <div class="form-text mb-0">
+                    El vecino puede activar <strong>todas</strong> las alarmas del barrio, o
+                    <strong>una distinta</strong> de la de su vivienda. Apagado, solo puede
+                    disparar la suya. Viene de lo contratado por
+                    <strong>{{ org.name }}</strong> y podés ajustarlo para este barrio.
+                  </div>
+                </div>
+              } @else {
+                <p class="mb-1 small">
+                  @if (org.communityScopeEnabled) {
+                    <i class="icon-circle-check text-success me-1"></i>
+                    Activación comunitaria <strong>habilitada</strong>
+                  } @else {
+                    <i class="icon-circle-x text-muted me-1"></i>
+                    Activación comunitaria <strong>deshabilitada</strong>
+                  }
+                </p>
+                <div class="form-text">
+                  Es parte de lo que tenés contratado, así que la define CPS. Tu barrio la hereda
+                  de tu cuenta.
+                </div>
+              }
             </div>
           }
 
           <!--
             El PUNTO en el mapa: OBLIGATORIO, ubica al barrio en el tablero de
             clientes y en el monitoreo. NO decide dónde puede estar — eso lo
-            dice la LOCALIDAD, que el backend valida contra la jurisdicción del
-            cliente.
+            dice la LOCALIDAD, que el backend valida contra la jurisdicción.
           -->
           <div class="card border mb-3" [class.border-danger]="puntoFaltante()">
             <div class="card-header bg-white border-bottom">
@@ -123,7 +169,15 @@
             <div class="card-body">
               <!-- Nadie tipea coordenadas: se clickea el mapa y listo. -->
               <p class="text-muted small mb-2">Hacé click en el mapa para marcar el barrio.</p>
-              <app-map [clickable]="true" (positionChange)="setPosition($event)" />
+              <!-- `focusOn` sigue al cliente elegido arriba: el mapa vuela solo
+                   hasta su jurisdicción. `pickVariant` hace que el pin sea el de
+                   un BARRIO y no el de una alarma, que es otra cosa del modelo. -->
+              <app-map
+                [clickable]="true"
+                pickVariant="neighborhood"
+                [focusOn]="focoGeo()"
+                (positionChange)="setPosition($event)"
+              />
               @if (tienePunto()) {
                 <p class="small mb-0 mt-2">
                   <i class="icon-circle-check text-success me-1"></i>
@@ -139,6 +193,20 @@
             </div>
           </div>
 
+          <!-- Nada bloquea sin decir qué falta (mismo criterio que el alta de cliente). -->
+          @if (intento() && faltantes().length > 0) {
+            <div class="alert bg-emergency-soft text-emergency border-0" role="alert">
+              <p class="fw-semibold small mb-1">
+                <i class="icon-triangle-alert me-1"></i> Para crear el barrio falta:
+              </p>
+              <ul class="small mb-0 ps-3">
+                @for (falta of faltantes(); track falta) {
+                  <li>{{ falta }}</li>
+                }
+              </ul>
+            </div>
+          }
+
           @if (error()) {
             <div class="alert bg-emergency-soft text-emergency border-0 py-2 small" role="alert">
               <i class="icon-triangle-alert me-1"></i> {{ error() }}
@@ -146,6 +214,8 @@
           }
 
           <div class="d-flex gap-2">
+            <!-- No se deshabilita por datos incompletos: si algo falta, `submit()`
+                 lo dice. Un botón gris que no explica nada es peor. -->
             <button type="submit" class="btn btn-brand" [disabled]="saving()">
               @if (saving()) {
                 <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>

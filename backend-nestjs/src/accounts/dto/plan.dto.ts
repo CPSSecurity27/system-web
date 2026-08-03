@@ -79,9 +79,6 @@ export class CreatePlanDto {
   @Min(0, { message: 'El cupo de familiares no puede ser negativo' })
   maxFamilyMembers!: number;
 
-  @IsBoolean()
-  remoteControlsEnabled!: boolean;
-
   /** Disparar TODAS las alarmas del barrio desde la app del vecino. */
   @IsBoolean()
   communityScopeEnabled!: boolean;
@@ -141,10 +138,6 @@ export class UpdatePlanDto {
   @IsInt()
   @Min(0, { message: 'El cupo de familiares no puede ser negativo' })
   maxFamilyMembers?: number;
-
-  @IsOptional()
-  @IsBoolean()
-  remoteControlsEnabled?: boolean;
 
   @IsOptional()
   @IsBoolean()

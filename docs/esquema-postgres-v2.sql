@@ -166,7 +166,6 @@ CREATE TABLE plan (
 
   -- Cupos de BARRIO que sugiere
   max_family_members      INT NOT NULL DEFAULT 3 CHECK (max_family_members >= 0),
-  remote_controls_enabled BOOLEAN NOT NULL DEFAULT true,
   community_scope_enabled BOOLEAN NOT NULL DEFAULT true,
 
   created_by              INT REFERENCES app_user(id) ON DELETE SET NULL,
@@ -221,6 +220,18 @@ CREATE TABLE account (
   max_technician_users INT CHECK (max_technician_users >= 0),
   max_monitor_users    INT CHECK (max_monitor_users >= 0),
 
+  -- CUPOS DE BARRIO (migración AccountNeighborhoodQuotas). No son un techo de
+  -- la cuenta: son el valor que se COPIA a cada barrio nuevo suyo. Después,
+  -- cada barrio puede apartarse por PATCH /neighborhoods/:id/quotas.
+  --
+  -- Viven acá, en el medio, y NO se leen del plan al crear el barrio: el plan
+  -- es una plantilla que se copia al vender y nunca se lee en vivo (regla 4).
+  --   plan (plantilla) -> account (lo vendido) -> neighborhood (lo aplicado)
+  max_family_members      INT,
+  community_scope_enabled BOOLEAN,
+  CONSTRAINT chk_account_max_family_members
+    CHECK (max_family_members IS NULL OR max_family_members >= 0),
+
   -- JURISDICCIÓN (migración AccountJurisdictionAndAccountContracts): hasta
   -- dónde llega el cliente. Sus barrios solo se crean DENTRO de este límite.
   -- Va exactamente uno de los dos ids, el que corresponda al nivel.
@@ -259,6 +270,8 @@ CREATE TABLE account (
       AND max_admin_users IS NOT NULL
       AND max_technician_users IS NOT NULL
       AND max_monitor_users IS NOT NULL
+      AND max_family_members IS NOT NULL
+      AND community_scope_enabled IS NOT NULL
       AND latitude IS NOT NULL
       AND longitude IS NOT NULL)
     OR
@@ -268,7 +281,9 @@ CREATE TABLE account (
       AND max_neighborhoods IS NULL
       AND max_admin_users IS NULL
       AND max_technician_users IS NULL
-      AND max_monitor_users IS NULL)
+      AND max_monitor_users IS NULL
+      AND max_family_members IS NULL
+      AND community_scope_enabled IS NULL)
   ),
   -- Toda ORGANIZATION tiene jurisdicción, y va EXACTAMENTE uno de los dos ids
   -- según el nivel. CPS (COMPANY) no tiene ninguno: no tiene territorio.
@@ -378,9 +393,14 @@ CREATE TABLE neighborhood (
 
   -- CUPOS del barrio (§5.2): SOLO CPS los escribe
   max_family_members      INT NOT NULL DEFAULT 3 CHECK (max_family_members >= 0),
-  remote_controls_enabled BOOLEAN NOT NULL DEFAULT true,
-  -- Habilita eventos scope=COMMUNITY: que el vecino dispare TODAS las alarmas
-  -- del barrio desde la app, no solo la que responde por su casa.
+  -- ACTIVACIÓN COMUNITARIA: el permiso del vecino para salirse de la alarma
+  -- preferida de su hogar. Cubre las dos formas de hacerlo — disparar TODAS
+  -- las del barrio a la vez (eventos scope=COMMUNITY) o elegir UNA distinta de
+  -- la suya. Apagado, el vecino solo puede disparar la de su vivienda.
+  --
+  -- Es UN permiso y no dos (2026-08-03): separarlos permitía la combinación
+  -- incoherente "no puede elegir una alarma lejana, pero sí dispararla junto
+  -- con todas las demás".
   community_scope_enabled BOOLEAN NOT NULL DEFAULT true,
 
   created_by              INT REFERENCES app_user(id) ON DELETE SET NULL,
@@ -721,7 +741,8 @@ CREATE TRIGGER trg_remote_updated BEFORE UPDATE ON remote
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 -- Servicio: portador ∈ miembros del hogar; device del mismo barrio que el hogar;
--- alta bloqueada si neighborhood.remote_controls_enabled = false.
+-- (el cupo remote_controls_enabled se eliminó el 2026-08-03: cualquier barrio
+--  puede tener controles. Migración DropRemoteControlsQuota.)
 
 CREATE TABLE remote_code (
   id             SERIAL PRIMARY KEY,

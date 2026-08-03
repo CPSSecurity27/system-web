@@ -17,7 +17,6 @@ export interface CreatePlan {
   maxTechnicianUsers: number;
   maxMonitorUsers: number;
   maxFamilyMembers: number;
-  remoteControlsEnabled: boolean;
   communityScopeEnabled: boolean;
 }
 

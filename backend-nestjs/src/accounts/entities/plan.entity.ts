@@ -88,9 +88,6 @@ export class Plan {
   @Column({ name: 'max_family_members', type: 'int', default: 3 })
   maxFamilyMembers!: number;
 
-  @Column({ name: 'remote_controls_enabled', type: 'boolean', default: true })
-  remoteControlsEnabled!: boolean;
-
   /** Disparar TODAS las alarmas del barrio desde la app del vecino. */
   @Column({ name: 'community_scope_enabled', type: 'boolean', default: true })
   communityScopeEnabled!: boolean;

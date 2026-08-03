@@ -1,11 +1,7 @@
-import { ManagedBy } from './api.models';
+import { ManagedBy, OrgSubtype } from './api.models';
 
 export type NeighborhoodStatus = 'ACTIVE' | 'SUSPENDED' | 'CLOSED';
 
-/**
- * El backend devuelve el árbol geográfico COMPLETO (localidad + departamento +
- * provincia) porque hace falta para desambiguar: hay 3 "Villa María" en el país.
- */
 /**
  * El CENTROIDE que trae georef en cada nivel (`geography:sync` lo guarda).
  * Nullable porque la columna lo es: georef no siempre lo publica.
@@ -37,19 +33,31 @@ export interface Locality extends Centroide {
 }
 
 /**
+ * El cliente dueño, tal como lo necesita la lista de barrios: CPS ve barrios de
+ * TODAS las cuentas mezclados y sin esto no hay forma de saber de quién es
+ * cada uno. Es un recorte de `Account`, no la cuenta entera: acá solo hace
+ * falta identificarla, no sus cupos ni su jurisdicción.
+ */
+export interface NeighborhoodOrganization {
+  id: number;
+  name: string;
+  subtype: OrgSubtype;
+}
+
+/**
  * v2: el barrio pertenece a una ORGANIZACIÓN (municipio o comunidad) y sabe
  * quién lo opera (managedBy). Sus CUPOS (maxFamilyMembers,
- * remoteControlsEnabled) son tarifa: solo CPS los modifica.
+ * communityScopeEnabled) son tarifa: solo CPS los modifica.
  */
 export interface Neighborhood {
   id: number;
   name: string;
   status: NeighborhoodStatus;
   organizationId: number;
+  organization: NeighborhoodOrganization;
   managedBy: ManagedBy;
   /** Cupo de FAMILIARES por hogar (el titular no cuenta). null = sin límite. */
   maxFamilyMembers: number | null;
-  remoteControlsEnabled: boolean;
   /** Disparar TODAS las alarmas del barrio desde la app del vecino. */
   communityScopeEnabled: boolean;
   /** Obligatorias: el barrio sale en el tablero de clientes y en el monitoreo. */

@@ -4,16 +4,13 @@
       <i class="icon-map-pinned text-brand me-2"></i
       >{{ auth.isCommunityOrg() ? 'Barrio' : 'Barrios' }}
     </h2>
-    <p class="text-muted small mb-0">
-      {{ auth.isCommunityOrg() ? 'Barrio' : 'Barrios' }} bajo monitoreo
-    </p>
+    <p class="text-muted small mb-0">Dónde está cada barrio bajo monitoreo</p>
   </div>
 
   <!--
-    v2: CPS o la organización MUNICIPAL (autogestión, contra su cupo). Un
+    v2: CPS o la organización MUNICIPAL (autogestión, contra su cupo). Una
     organización COMMUNITY gestiona un único barrio y ese barrio nace con la
     cuenta, así que su cupo ya está usado: el botón solo la llevaría a un 400.
-    El vecino solo mira.
   -->
   @if (auth.isManager() && !auth.isCommunityOrg()) {
     <a routerLink="/barrios/nuevo" class="btn btn-brand btn-sm">
@@ -28,13 +25,11 @@
     Cargando barrios…
   </div>
 } @else if (error()) {
-  <div
-    class="alert bg-emergency-soft text-emergency border-0 d-flex align-items-center"
-    role="alert"
-  >
-    <i class="icon-triangle-alert me-2"></i>
-    <span class="flex-grow-1">{{ error() }}</span>
-    <button type="button" class="btn btn-sm btn-outline-brand" (click)="load()">Reintentar</button>
+  <div class="alert bg-emergency-soft text-emergency border-0" role="alert">
+    <i class="icon-triangle-alert me-2"></i>{{ error() }}
+    <button type="button" class="btn btn-sm btn-outline-secondary ms-2" (click)="load()">
+      Reintentar
+    </button>
   </div>
 } @else if (items().length === 0) {
   <div class="text-center text-muted py-5 bg-light rounded">
@@ -42,40 +37,231 @@
     {{ auth.isCommunityOrg() ? 'CPS todavía no cargó tu barrio.' : 'No hay barrios para mostrar.' }}
   </div>
 } @else {
-  <div class="row g-3">
-    @for (barrio of items(); track barrio.id) {
-      <div class="col-12 col-md-6 col-xl-4">
-        <a
-          [routerLink]="['/barrios', barrio.id]"
-          class="card h-100 border text-decoration-none text-reset"
-        >
-          <div class="card-body">
-            <div class="d-flex align-items-start justify-content-between">
-              <h3 class="h6 fw-semibold mb-1">{{ barrio.name }}</h3>
+  <!--
+    BUSCADOR Y FILTROS. El de CLIENTE solo aparece para CPS: una organización
+    ve nada más que sus propios barrios, así que filtrar "por cliente" ahí no
+    aporta nada. Recortan el mapa Y la lista con el mismo `visibles()`.
+  -->
+  <div class="card border mb-3">
+    <div class="card-body py-3">
+      <div class="row g-2 align-items-end">
+        <div [class.col-lg-5]="auth.isCps()" [class.col-lg-7]="!auth.isCps()" class="col-12">
+          <label for="busqueda" class="form-label small fw-medium mb-1">Buscar</label>
+          <div class="input-group input-group-sm">
+            <span class="input-group-text bg-white"><i class="icon-search"></i></span>
+            <input
+              id="busqueda"
+              type="search"
+              class="form-control"
+              placeholder="Barrio, cliente o localidad…"
+              autocomplete="off"
+              [ngModel]="busqueda()"
+              (ngModelChange)="busqueda.set($event)"
+            />
+          </div>
+        </div>
 
-              @if (barrio.status === 'ACTIVE') {
-                <span class="badge bg-success-soft text-success border">Activo</span>
-              } @else {
-                <span class="badge bg-light text-muted border">{{ barrio.status }}</span>
+        @if (auth.isCps()) {
+          <div class="col-6 col-lg-4">
+            <label for="filtroCliente" class="form-label small fw-medium mb-1">Cliente</label>
+            <select
+              id="filtroCliente"
+              class="form-select form-select-sm"
+              [ngModel]="filtroCliente()"
+              (ngModelChange)="filtroCliente.set($event)"
+            >
+              <option [ngValue]="null">Todos</option>
+              @for (cliente of clientesFiltro(); track cliente.id) {
+                <option [ngValue]="cliente.id">{{ cliente.name }}</option>
+              }
+            </select>
+          </div>
+        }
+
+        <div class="col-6 col-lg-3">
+          <label for="filtroOpera" class="form-label small fw-medium mb-1">Lo opera</label>
+          <select
+            id="filtroOpera"
+            class="form-select form-select-sm"
+            [ngModel]="filtroOpera()"
+            (ngModelChange)="filtroOpera.set($event)"
+          >
+            <option value="TODOS">Todos</option>
+            <option value="CPS">Llave en mano (CPS)</option>
+            <option value="ORGANIZATION">Autogestión</option>
+          </select>
+        </div>
+
+        @if (hayFiltros()) {
+          <div class="col-12 col-lg-auto d-grid">
+            <button
+              type="button"
+              class="btn btn-sm btn-outline-secondary"
+              (click)="limpiarFiltros()"
+            >
+              Limpiar
+            </button>
+          </div>
+        }
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-3">
+    <!-- LA LISTA -->
+    <div class="col-12 col-lg-7 col-xl-8">
+      <div class="card border">
+        <div class="card-body p-0">
+          @if (visibles().length === 0) {
+            <p class="text-muted small text-center py-4 mb-0">Sin resultados.</p>
+          } @else {
+            <div class="list-group list-group-flush">
+              @for (barrio of visibles(); track barrio.id) {
+                <div
+                  class="list-group-item"
+                  [class.bg-brand-soft]="barrioElegido()?.id === barrio.id"
+                >
+                  <div class="d-flex align-items-start gap-2">
+                    <button
+                      type="button"
+                      class="btn btn-link p-0 text-start flex-grow-1 text-decoration-none"
+                      (click)="elegir(barrio)"
+                    >
+                      <span class="fw-medium text-body">{{ barrio.name }}</span>
+                      @if (barrio.status !== 'ACTIVE') {
+                        <span class="badge text-bg-warning ms-2">{{ barrio.status }}</span>
+                      }
+                      <!-- El árbol completo: hay 3 "Villa María" en el país. -->
+                      <span class="d-block small text-muted">
+                        <i class="icon-map-pin me-1"></i>{{ barrio.locality.name }},
+                        {{ barrio.locality.department.name }},
+                        {{ barrio.locality.department.province.name }}
+                      </span>
+                      @if (auth.isCps()) {
+                        <span class="d-block small text-muted">
+                          <i class="icon-briefcase me-1"></i>{{ barrio.organization.name }}
+                        </span>
+                      }
+                    </button>
+
+                    <div class="text-end flex-shrink-0">
+                      @if (barrio.managedBy === 'CPS') {
+                        <span class="badge bg-brand-soft text-brand border d-block mb-1">
+                          Llave en mano
+                        </span>
+                      } @else {
+                        <span class="badge text-bg-light border d-block mb-1">Autogestión</span>
+                      }
+                      <a [routerLink]="['/barrios', barrio.id]" class="btn btn-sm btn-outline-brand">
+                        Abrir
+                      </a>
+                    </div>
+                  </div>
+                </div>
               }
             </div>
-
-            <!-- El árbol completo: hay 3 "Villa María" en el país, la localidad sola no alcanza -->
-            <p class="text-muted small mb-1">
-              <i class="icon-map-pin me-1"></i>
-              {{ barrio.locality.name }}, {{ barrio.locality.department.name }},
-              {{ barrio.locality.department.province.name }}
-            </p>
-
-            <!-- Quién lo opera: la organización (autogestión) o CPS. -->
-            @if (barrio.managedBy === 'ORGANIZATION') {
-              <span class="badge text-bg-light border">Autogestionado</span>
-            } @else {
-              <span class="badge bg-brand-soft text-brand border">Gestiona CPS</span>
-            }
-          </div>
-        </a>
+          }
+        </div>
       </div>
-    }
+    </div>
+
+    <!--
+      COLUMNA DERECHA, pegada: mapa arriba, detalle abajo. El mapa está SIEMPRE
+      (no aparece y desaparece con la selección), así no cambia de tamaño ni se
+      mueve de lugar cuando elegís algo.
+    -->
+    <div class="col-12 col-lg-5 col-xl-4">
+      <div class="position-sticky" style="top: 1rem">
+        <div class="card border mb-3">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center mb-2 gap-2">
+              <span class="fw-semibold small"><i class="icon-map-pin me-1"></i> Mapa</span>
+              <button
+                type="button"
+                class="btn btn-sm btn-link p-0 text-decoration-none"
+                (click)="verTodo()"
+                title="Volver a la vista general"
+              >
+                Ver todo
+              </button>
+            </div>
+
+            @if (marcadores().length > 0) {
+              <!-- `popups` apagado: el pin ES el botón que abre el detalle de
+                   acá abajo, y un globo encima taparía justo eso. -->
+              <app-map
+                height="300px"
+                [markers]="marcadores()"
+                [popups]="false"
+                [focusOn]="foco()"
+                [refit]="refit()"
+                (markerClick)="onMarcador($event)"
+              />
+            } @else {
+              <p class="text-muted small text-center py-4 mb-0">
+                <i class="icon-map-pin d-block mb-2 fs-4"></i>
+                Ningún barrio coincide con la búsqueda.
+              </p>
+            }
+
+            <div class="mt-2">
+              <cps-map-legend [items]="leyenda()" />
+            </div>
+          </div>
+        </div>
+
+        <!-- EL DETALLE: aparece al elegir, y se va al volver a clickear. -->
+        @if (barrioElegido(); as barrio) {
+          <div class="card border">
+            <div class="card-header bg-white border-bottom d-flex justify-content-between">
+              <span class="fw-semibold small"><i class="icon-map-pinned me-1"></i> Barrio</span>
+              <button
+                type="button"
+                class="btn-close btn-sm"
+                aria-label="Cerrar"
+                (click)="seleccion.set(null)"
+              ></button>
+            </div>
+            <div class="card-body">
+              <p class="fw-semibold mb-1">{{ barrio.name }}</p>
+              <p class="small text-muted mb-3">
+                {{ barrio.locality.name }} · de {{ barrio.organization.name }}
+              </p>
+
+              <dl class="row small mb-3">
+                <dt class="col-5 fw-normal text-muted">Estado</dt>
+                <dd class="col-7">{{ barrio.status }}</dd>
+
+                <!--
+                  QUIÉN OPERA se muestra en el BARRIO y no en el cliente: es una
+                  decisión comercial que se toma barrio por barrio, así que una
+                  muni puede tener uno llave en mano y otro autogestionado.
+                -->
+                <dt class="col-5 fw-normal text-muted">Lo opera</dt>
+                <dd class="col-7">
+                  @if (barrio.managedBy === 'CPS') {
+                    <span class="badge bg-brand-soft text-brand border">Llave en mano (CPS)</span>
+                  } @else {
+                    <span class="badge text-bg-light border">Autogestión</span>
+                  }
+                </dd>
+              </dl>
+
+              <a [routerLink]="['/barrios', barrio.id]" class="btn btn-sm btn-brand w-100">
+                Abrir el barrio
+              </a>
+            </div>
+          </div>
+        }
+      </div>
+    </div>
   </div>
+
+  <p class="text-muted small mt-3 mb-0">
+    {{ visibles().length }}
+    {{ visibles().length === 1 ? 'barrio' : 'barrios' }}
+    @if (hayFiltros()) {
+      de {{ items().length }}
+    }
+  </p>
 }

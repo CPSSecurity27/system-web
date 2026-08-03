@@ -74,14 +74,15 @@ export class Neighborhood {
   @Column({ name: 'max_family_members', type: 'int', default: 3 })
   maxFamilyMembers!: number;
 
-  /** CUPO (solo CPS): habilita controles remotos en el barrio. */
-  @Column({ name: 'remote_controls_enabled', type: 'boolean', default: true })
-  remoteControlsEnabled!: boolean;
-
   /**
-   * CUPO (solo CPS): habilita eventos `scope = COMMUNITY`, o sea que el vecino
-   * dispare TODAS las alarmas del barrio desde la app y no solo la que responde
-   * por su casa. Era `plan.community_mode_enabled` en el modelo viejo.
+   * ACTIVACIÓN COMUNITARIA (cupo, solo CPS): el permiso del vecino para salirse
+   * de la alarma preferida de su hogar. Cubre las DOS formas de hacerlo:
+   * disparar TODAS las del barrio a la vez (`scope = COMMUNITY`) o elegir UNA
+   * distinta de la suya. Apagado, solo puede disparar la de su vivienda.
+   *
+   * Es UN permiso y no dos (2026-08-03): partirlo habilitaba la combinación
+   * incoherente "no puede elegir una alarma lejana, pero sí dispararla junto
+   * con todas las demás". Era `plan.community_mode_enabled` en el modelo viejo.
    */
   @Column({ name: 'community_scope_enabled', type: 'boolean', default: true })
   communityScopeEnabled!: boolean;

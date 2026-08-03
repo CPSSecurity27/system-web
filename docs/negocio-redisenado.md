@@ -119,7 +119,6 @@ contrato activo por barrio; el historial de contratos vencidos se conserva.
 | `max_technician_users` | cuántos técnicos de campo propios puede tener | organización |
 | `max_monitor_users` | cuántos operadores de monitoreo puede tener | organización |
 | `max_family_members` | cuántos familiares por hogar | barrio |
-| `remote_controls_enabled` | si el barrio usa controles remotos | barrio |
 
 Reglas de los cupos (uniformes, sin excepciones):
 
@@ -260,3 +259,15 @@ por completo del diseño.
 8. Nada sensible ocurre sin dejar rastro.
 9. La web y el servicio de alarmas viven separados: la caída de uno no voltea al otro.
 10. No se toca código hasta que el diseño esté cerrado — y el diseño ya está cerrado.
+
+---
+
+## Decisiones posteriores
+
+**2026-08-03 — se elimina el cupo `remote_controls_enabled`.** Los controles
+remotos (llaveros) dejan de habilitarse barrio por barrio: el producto los
+tiene y punto, y cómo se manejan se define aparte. Antes era un cupo de
+tarifa y `RemotesService` lo usaba como puerta al asignar un control; ahora
+**cualquier barrio puede tener controles**. Migración `DropRemoteControlsQuota`.
+Los llaveros en sí (`remote`, `remote_code`, custodia de tres niveles,
+códigos RF) no cambian.

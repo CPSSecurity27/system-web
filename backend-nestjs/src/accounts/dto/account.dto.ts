@@ -1,6 +1,7 @@
 import { Type } from 'class-transformer';
 import {
   IsArray,
+  IsBoolean,
   IsDateString,
   IsDefined,
   IsEmail,
@@ -26,6 +27,31 @@ import {
   OrgSubtype,
   UserRole,
 } from '../../common/enums';
+
+/**
+ * Los cupos DE BARRIO que se definen al vender la cuenta y se COPIAN a cada
+ * barrio nuevo suyo. Clase base porque los comparten las cuatro vías de alta y
+ * el PATCH de cupos: repetidos a mano, el día que se agregue uno se agrega en
+ * tres de los cinco lugares.
+ *
+ * Todos opcionales: con `planId` salen del plan, y sin plan el servicio exige
+ * los que falten y dice cuáles son (`resolveQuotas`).
+ */
+export class NeighborhoodQuotaFields {
+  /** Familiares por hogar, sin contar al titular. 0 = solo el titular. */
+  @ValidateIf((_, value) => value !== undefined)
+  @IsInt()
+  @Min(0, { message: 'El cupo de familiares no puede ser negativo' })
+  maxFamilyMembers?: number;
+
+  /**
+   * ACTIVACIÓN COMUNITARIA: si el vecino puede salirse de la alarma preferida
+   * de su hogar — disparar todas a la vez o elegir una distinta.
+   */
+  @ValidateIf((_, value) => value !== undefined)
+  @IsBoolean({ message: 'Activación comunitaria: verdadero o falso' })
+  communityScopeEnabled?: boolean;
+}
 
 export class FindAccountsQuery {
   /** Busca por nombre. Ojo: los nombres se repiten. */
@@ -56,7 +82,7 @@ export class FindAccountsQuery {
   offset = 0;
 }
 
-export class CreateAccountDto {
+export class CreateAccountDto extends NeighborhoodQuotaFields {
   @IsString()
   @IsNotEmpty({ message: 'El nombre es obligatorio' })
   name!: string;
@@ -216,7 +242,7 @@ export class JurisdictionDto {
  * así que hay contra qué contratar. Una MUNICIPAL nace sin barrios y por eso su
  * alta (OnboardMunicipalDto) no lo pide.
  */
-export class OnboardCommunityDto {
+export class OnboardCommunityDto extends NeighborhoodQuotaFields {
   /** Nombre de la cuenta (la comunidad/consorcio) Y del usuario institucional OWNER. */
   @IsString()
   @IsNotEmpty({ message: 'El nombre es obligatorio' })
@@ -293,7 +319,7 @@ export class OnboardCommunityDto {
  * (cuenta -> usuario -> membresía) y si fallaba una del medio quedaba una
  * cuenta creada SIN OWNER, que nadie podía administrar.
  */
-export class OnboardMunicipalDto {
+export class OnboardMunicipalDto extends NeighborhoodQuotaFields {
   /** Nombre de la cuenta Y del usuario institucional OWNER. */
   @IsString()
   @IsNotEmpty({ message: 'El nombre es obligatorio' })
@@ -372,7 +398,7 @@ export class OnboardMunicipalDto {
  * reintroduciría el "sin límite" que se acaba de sacar. `@ValidateIf` con
  * `!== undefined` es lo que hace que `null` SÍ se valide (y lo rechaza).
  */
-export class UpdateQuotasDto {
+export class UpdateQuotasDto extends NeighborhoodQuotaFields {
   @ValidateIf((_, value) => value !== undefined)
   @IsInt()
   @Min(1, {

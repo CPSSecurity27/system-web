@@ -17,11 +17,16 @@ export interface CreateNeighborhood {
   /** OBLIGATORIAS: el barrio sale en el tablero de clientes y en el monitoreo. */
   latitude: number;
   longitude: number;
+  /**
+   * Activación comunitaria con la que nace el barrio. Ausente = hereda la de
+   * su cuenta. SOLO CPS puede mandarla: es un cupo, y el backend responde 403
+   * al admin de una organización que lo intente.
+   */
+  communityScopeEnabled?: boolean;
 }
 
 export interface UpdateNeighborhoodQuotas {
   maxFamilyMembers?: number;
-  remoteControlsEnabled?: boolean;
   communityScopeEnabled?: boolean;
 }
 

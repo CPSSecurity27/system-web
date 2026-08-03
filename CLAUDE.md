@@ -33,7 +33,7 @@ que comparte SOLO la base de datos con la web. Aún no se diseñó: no meterse a
    `neighborhood.managed_by` (ORGANIZATION / CPS) dice QUIÉN OPERA **cada barrio**, y
    es una decisión comercial que se toma barrio por barrio. Nunca derivar uno del otro.
 4. **Los cupos son tarifa y SOLO CPS los modifica** (max_neighborhoods, max_admin_users,
-   max_technician_users, max_monitor_users, max_family_members, remote_controls_enabled),
+   max_technician_users, max_monitor_users, max_family_members, community_scope_enabled),
    siempre con `audit_log`. Se imponen al crear; reducirlos aplica grandfathering. En los
    cupos de personal, **0 = ese rol no existe en la cuenta**. La tabla `plan` es una
    PLANTILLA que se copia al vender, nunca una fuente que se lea en vivo. **Los eventos

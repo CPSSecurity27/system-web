@@ -16,6 +16,7 @@ import {
   UserRole,
 } from '../common/enums';
 import { AccessScope, ScopeService } from '../common/scope.service';
+import { neighborhoodQuotasFrom } from '../accounts/accounts.service';
 import { Account } from '../accounts/entities/account.entity';
 import { Locality } from '../geography/entities/locality.entity';
 import {
@@ -41,7 +42,7 @@ import { Neighborhood } from './entities/neighborhood.entity';
  * - Alta: la COMMUNITY tiene UN barrio (cupo 1, invariante) y lo crea CPS en
  *   el onboarding atómico. Que después lo opere ella o CPS es la modalidad
  *   que se elige al venderlo.
- * - Los CUPOS del barrio (max_family_members, remote_controls_enabled) los
+ * - Los CUPOS del barrio (max_family_members, community_scope_enabled) los
  *   toca SOLO CPS: son tarifa.
  * - TRANSFERIR una comunidad (comunitaria -> municipal o viceversa) = cambiar
  *   organization_id y/o managed_by. SOLO CPS, siempre auditado. Hogares,
@@ -63,9 +64,16 @@ export class NeighborhoodsService {
   /**
    * Lista SOLO los barrios que el usuario alcanza. `localityId` filtra ENCIMA
    * del alcance, nunca en lugar de él.
+   *
+   * Carga `organization`: CPS ve barrios de TODAS las cuentas mezclados, y sin
+   * saber de quién es cada uno la lista es ilegible. El tablero de clientes
+   * filtra por eso en el front (nombre y subtipo del dueño).
    */
   findAll(scope: AccessScope, localityId?: number): Promise<Neighborhood[]> {
-    const relations = { locality: { department: { province: true } } };
+    const relations = {
+      locality: { department: { province: true } },
+      organization: true,
+    };
 
     if (scope.global) {
       return this.neighborhoods.find({
@@ -139,6 +147,15 @@ export class NeighborhoodsService {
       organizationId = propia.accountId;
     }
 
+    // La ACTIVACIÓN COMUNITARIA es un CUPO: solo CPS la fija (regla 4). Sin
+    // este chequeo, el admin de una municipalidad se la auto-otorgaría en el
+    // alta — justo lo que `PATCH /neighborhoods/:id/quotas` le impide después.
+    if (dto.communityScopeEnabled !== undefined && !esCps) {
+      throw new ForbiddenException(
+        'La activación comunitaria es parte de la tarifa: la define CPS. Tu barrio la hereda de tu cuenta.',
+      );
+    }
+
     const organization = await this.getOrganization(organizationId);
 
     // Ya no hay puerta por subtipo acá: la COMMUNITY tiene cupo 1 y su barrio
@@ -163,6 +180,18 @@ export class NeighborhoodsService {
         // fuera el default silencioso de algún subtipo, un cliente terminaría
         // sin poder tocar su propio barrio sin que nadie lo haya decidido.
         managedBy: dto.managedBy ?? ManagedBy.ORGANIZATION,
+        // Los CUPOS DE BARRIO se COPIAN de la cuenta, que es donde quedó lo que
+        // se vendió. Antes no los copiaba nadie y el barrio nacía con los
+        // DEFAULT de la base (3 familiares, controles sí, scope sí) sin mirar
+        // el contrato: un cliente que pagó por 6 familiares recibía 3.
+        //
+        // De la CUENTA y no del plan a propósito: el plan es una plantilla que
+        // se lee una sola vez, al vender (regla 4). Ver `neighborhoodQuotasFrom`.
+        ...neighborhoodQuotasFrom(organization),
+        // ...salvo la activación comunitaria, que CPS puede fijar barrio por
+        // barrio en el alta. Ausente = lo que herede de la cuenta.
+        communityScopeEnabled:
+          dto.communityScopeEnabled ?? organization.communityScopeEnabled!,
         createdBy: actor.id,
       }),
     );
@@ -226,14 +255,11 @@ export class NeighborhoodsService {
 
     const oldValue = {
       maxFamilyMembers: neighborhood.maxFamilyMembers,
-      remoteControlsEnabled: neighborhood.remoteControlsEnabled,
       communityScopeEnabled: neighborhood.communityScopeEnabled,
     };
 
     await this.neighborhoods.update(id, {
       maxFamilyMembers: dto.maxFamilyMembers ?? neighborhood.maxFamilyMembers,
-      remoteControlsEnabled:
-        dto.remoteControlsEnabled ?? neighborhood.remoteControlsEnabled,
       communityScopeEnabled:
         dto.communityScopeEnabled ?? neighborhood.communityScopeEnabled,
       updatedBy: actor.id,
@@ -251,7 +277,6 @@ export class NeighborhoodsService {
       oldValue,
       newValue: {
         maxFamilyMembers: updated.maxFamilyMembers,
-        remoteControlsEnabled: updated.remoteControlsEnabled,
         communityScopeEnabled: updated.communityScopeEnabled,
       },
     });

@@ -49,10 +49,15 @@ import { Plan } from './plan.entity';
   'chk_subtype_by_type',
   "(type = 'ORGANIZATION' AND subtype IS NOT NULL " +
     'AND max_neighborhoods IS NOT NULL AND max_admin_users IS NOT NULL ' +
-    'AND max_technician_users IS NOT NULL AND max_monitor_users IS NOT NULL) OR ' +
+    'AND max_technician_users IS NOT NULL AND max_monitor_users IS NOT NULL ' +
+    'AND max_family_members IS NOT NULL ' +
+    'AND community_scope_enabled IS NOT NULL ' +
+    'AND latitude IS NOT NULL AND longitude IS NOT NULL) OR ' +
     "(type = 'COMPANY' AND subtype IS NULL AND plan_id IS NULL " +
     'AND max_neighborhoods IS NULL AND max_admin_users IS NULL ' +
-    'AND max_technician_users IS NULL AND max_monitor_users IS NULL)',
+    'AND max_technician_users IS NULL AND max_monitor_users IS NULL ' +
+    'AND max_family_members IS NULL ' +
+    'AND community_scope_enabled IS NULL)',
 )
 @Check(
   'chk_account_jurisdiction',
@@ -116,6 +121,27 @@ export class Account {
   /** CUPO (solo CPS lo escribe): membresías MONITOR que puede tener. */
   @Column({ name: 'max_monitor_users', type: 'int', nullable: true })
   maxMonitorUsers!: number | null;
+
+  /**
+   * CUPOS DE BARRIO. Son lo que se le VENDIÓ a esta cuenta y se COPIA a cada
+   * barrio nuevo suyo (`NeighborhoodsService#create`).
+   *
+   * Viven acá, en el medio de la cadena, y no se leen del plan al crear el
+   * barrio: `plan` es una plantilla que se copia al vender y jamás se lee en
+   * vivo (regla 4). Un barrio creado meses después heredaría un plan ya
+   * reconfigurado, que es justo el grandfathering que la regla protege.
+   *
+   *     plan (plantilla) -> account (lo vendido) -> neighborhood (lo aplicado)
+   *
+   * Cada barrio puede después apartarse del valor de su cuenta por
+   * `PATCH /neighborhoods/:id/quotas`: esto es el default del alta, no un techo.
+   */
+  @Column({ name: 'max_family_members', type: 'int', nullable: true })
+  maxFamilyMembers!: number | null;
+
+  /** Disparar TODAS las alarmas del barrio desde la app del vecino. */
+  @Column({ name: 'community_scope_enabled', type: 'boolean', nullable: true })
+  communityScopeEnabled!: boolean | null;
 
   /**
    * JURISDICCIÓN — hasta dónde llega el cliente. Es lo que se le VENDIÓ, y de

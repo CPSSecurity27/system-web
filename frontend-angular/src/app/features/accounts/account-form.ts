@@ -281,6 +281,19 @@ export class AccountForm {
     maxTechnicianUsers: [null as number | null, [Validators.required, Validators.min(0)]],
     maxMonitorUsers: [null as number | null, [Validators.required, Validators.min(0)]],
 
+    // CUPOS DE BARRIO. No son un techo de la cuenta: es lo que va a heredar
+    // CADA barrio nuevo de este cliente.
+    maxFamilyMembers: [null as number | null, [Validators.required, Validators.min(0)]],
+
+
+    /**
+     * ACTIVACIÓN COMUNITARIA: el permiso del vecino para salirse de la alarma
+     * de su vivienda — disparar todas a la vez o elegir una distinta. Es UN
+     * permiso: partirlo en dos habilitaba la combinación incoherente "no puede
+     * elegir una alarma lejana, pero sí dispararla con todas las demás".
+     */
+    communityScopeEnabled: [true],
+
     // Jurisdicción — solo MUNICIPAL. La comunitaria la deriva de su barrio.
     jurisdictionLevel: ['LOCALITY' as JurisdictionLevel],
     // Geografía en cascada. La localidad la usan la comunitaria (su barrio) y
@@ -388,6 +401,7 @@ export class AccountForm {
         faltan.push('El cupo de técnicos');
       }
       if (c.maxMonitorUsers.invalid) faltan.push('El cupo de monitores');
+      if (c.maxFamilyMembers.invalid) faltan.push('El cupo de familiares por hogar');
     }
 
     if (paso === 'ubicacion') {
@@ -697,6 +711,8 @@ export class AccountForm {
           maxAdminUsers: plan.maxAdminUsers,
           maxTechnicianUsers: plan.maxTechnicianUsers,
           maxMonitorUsers: plan.maxMonitorUsers,
+          maxFamilyMembers: plan.maxFamilyMembers,
+          communityScopeEnabled: plan.communityScopeEnabled,
         },
         { emitEvent: false },
       );
@@ -893,6 +909,9 @@ export class AccountForm {
           maxAdminUsers: value.maxAdminUsers!,
           maxTechnicianUsers: value.maxTechnicianUsers!,
           maxMonitorUsers: value.maxMonitorUsers!,
+          // Cupos DE BARRIO: los hereda cada barrio de esta cuenta.
+          maxFamilyMembers: value.maxFamilyMembers!,
+          communityScopeEnabled: value.communityScopeEnabled,
           ...owner,
           neighborhood: {
             // Igual que el cliente: en un consorcio son la misma cosa.
@@ -937,6 +956,9 @@ export class AccountForm {
         maxAdminUsers: value.maxAdminUsers!,
         maxTechnicianUsers: value.maxTechnicianUsers!,
         maxMonitorUsers: value.maxMonitorUsers!,
+        // Cupos DE BARRIO: los hereda cada barrio de esta cuenta.
+        maxFamilyMembers: value.maxFamilyMembers!,
+        communityScopeEnabled: value.communityScopeEnabled,
         ...owner,
       })
       .subscribe({

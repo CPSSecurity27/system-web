@@ -438,11 +438,10 @@ export class RemotesService {
     if (!barrio) {
       throw new NotFoundException(`No existe el barrio ${neighborhoodId}`);
     }
-    if (!barrio.remoteControlsEnabled) {
-      throw new BadRequestException(
-        'Este barrio no tiene controles remotos habilitados. Para incluirlos, contactá a CPS.',
-      );
-    }
+    // Antes acá había una puerta: si el barrio no tenía `remote_controls_enabled`
+    // se rechazaba la asignación. El cupo se eliminó (2026-08-03, migración
+    // DropRemoteControlsQuota): los controles dejaron de habilitarse barrio por
+    // barrio, así que CUALQUIER barrio puede tenerlos.
   }
 
   /**

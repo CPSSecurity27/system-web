@@ -86,7 +86,6 @@ export class NeighborhoodDetail {
   /** CUPOS del barrio (tarifa, solo CPS). */
   protected readonly quotasForm = this.fb.group({
     maxFamilyMembers: [null as number | null],
-    remoteControlsEnabled: [false],
     communityScopeEnabled: [false],
   });
 
@@ -176,7 +175,6 @@ export class NeighborhoodDetail {
         this.deviceList.set(devices);
         this.quotasForm.reset({
           maxFamilyMembers: neighborhood.maxFamilyMembers,
-          remoteControlsEnabled: neighborhood.remoteControlsEnabled,
           communityScopeEnabled: neighborhood.communityScopeEnabled,
         });
         this.loading.set(false);
@@ -240,7 +238,6 @@ export class NeighborhoodDetail {
     this.neighborhoods
       .updateQuotas(this.id, {
         ...(value.maxFamilyMembers !== null ? { maxFamilyMembers: value.maxFamilyMembers } : {}),
-        remoteControlsEnabled: value.remoteControlsEnabled ?? false,
         communityScopeEnabled: value.communityScopeEnabled ?? false,
       })
       .subscribe({

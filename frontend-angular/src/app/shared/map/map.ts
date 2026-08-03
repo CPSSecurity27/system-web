@@ -24,7 +24,10 @@ export type MapMarkerVariant =
   // Tablero de clientes. Son otra escala: no son objetos dentro de un barrio
   // sino clientes repartidos por el país.
   | 'municipal'
-  | 'community';
+  | 'community'
+  // Tablero de BARRIOS (/barrios). Mismo violeta que dejó libre 'community' al
+  // sacar los barrios del mapa de clientes: ahí ya no compite con nada.
+  | 'neighborhood';
 
 export interface MapVariantLook {
   /** El texto de la leyenda. */
@@ -72,6 +75,15 @@ export const MAP_VARIANTS: Record<MapMarkerVariant, MapVariantLook> = {
     color: 'var(--map-community)',
     icon: 'icon-fence',
     size: 34,
+  },
+  // Un solo color: acá no conviven dos tipos de cosa, así que codificar algo
+  // más con el color (como managedBy) mentiría o sobraría. Ese dato va en el
+  // panel de detalle, que es donde hace falta leerlo con precisión.
+  neighborhood: {
+    label: 'Barrios',
+    color: 'var(--map-neighborhood)',
+    icon: 'icon-land-plot',
+    size: 30,
   },
 };
 
@@ -298,11 +310,20 @@ export class Map implements AfterViewInit, OnDestroy {
      *
      * Los subdominios a–d paralelizan la descarga de tiles. Cambiar
      * `voyager` por `dark_all` da el basemap oscuro para la sala de monitoreo.
+     *
+     * `detectRetina`: sin esto, en cualquier pantalla con escalado de Windows
+     * (125%/150%, el caso común de una notebook) el navegador de por sí
+     * ESTIRA el tile de 256px para llenar los píxeles físicos de más que hay
+     * — el resultado es el mapa lavado y borroso donde los límites finos de
+     * provincia y departamento casi desaparecen. Con la opción activa,
+     * Leaflet pide más tiles a un zoom mayor y los achica, en vez de agrandar
+     * uno solo: funciona con cualquier proveedor XYZ, sin tocar la URL.
      */
     L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png', {
       attribution: '© OpenStreetMap · CARTO',
       subdomains: 'abcd',
       maxZoom: 20,
+      detectRetina: true,
     }).addTo(this.map);
 
     this.layer = L.layerGroup().addTo(this.map);

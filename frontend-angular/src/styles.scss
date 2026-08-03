@@ -162,6 +162,11 @@ $c-border: #e3e8f2;
   --map-municipal: var(--brand); // el cliente institucional: azul de marca
   --map-community: #0d9488; // verde azulado
 
+  // Mapa del TABLERO DE BARRIOS (/barrios). Violeta: es el color que el
+  // tablero de CLIENTES dejó libre al sacar los barrios de su mapa, así que acá
+  // no compite con nada. Un solo color porque acá solo hay un tipo de cosa.
+  --map-neighborhood: #7c3aed;
+
   // Espaciado y radios (escala de la app)
   --sp-xs: 4px;
   --sp-sm: 8px;

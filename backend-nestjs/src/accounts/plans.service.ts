@@ -115,8 +115,6 @@ export class PlansService {
       maxTechnicianUsers: dto.maxTechnicianUsers ?? plan.maxTechnicianUsers,
       maxMonitorUsers: dto.maxMonitorUsers ?? plan.maxMonitorUsers,
       maxFamilyMembers: dto.maxFamilyMembers ?? plan.maxFamilyMembers,
-      remoteControlsEnabled:
-        dto.remoteControlsEnabled ?? plan.remoteControlsEnabled,
       communityScopeEnabled:
         dto.communityScopeEnabled ?? plan.communityScopeEnabled,
       updatedBy: actor.id,
@@ -167,7 +165,6 @@ function quotasOf(plan: Plan) {
     maxTechnicianUsers: plan.maxTechnicianUsers,
     maxMonitorUsers: plan.maxMonitorUsers,
     maxFamilyMembers: plan.maxFamilyMembers,
-    remoteControlsEnabled: plan.remoteControlsEnabled,
     communityScopeEnabled: plan.communityScopeEnabled,
   };
 }

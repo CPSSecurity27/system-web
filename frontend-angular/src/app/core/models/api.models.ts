@@ -1,4 +1,5 @@
 import { AccountType, HomeMemberRole, OrgSubtype, UserRole } from '../auth/auth.models';
+import type { Department, Locality } from './neighborhood';
 // esbuild compila cada archivo aislado (isolatedModules): un import solo no
 // alcanza para que OTRO archivo pueda traer OrgSubtype desde ACÁ, hace falta
 // re-exportarlo explícito.
@@ -64,6 +65,13 @@ export interface Account {
   maxTechnicianUsers: number | null;
   maxMonitorUsers: number | null;
   /**
+   * CUPOS DE BARRIO: no son un techo de la cuenta, son lo que se COPIA a cada
+   * barrio nuevo suyo. Después cada barrio puede apartarse por sus propios
+   * /quotas — esto es el default del alta, no un límite.
+   */
+  maxFamilyMembers: number | null;
+  communityScopeEnabled: boolean | null;
+  /**
    * JURISDICCIÓN: hasta dónde llega el cliente. Es lo que se le VENDIÓ, y de
    * eso depende dónde puede crear barrios:
    *   LOCALITY   → solo en esa localidad
@@ -73,6 +81,13 @@ export interface Account {
   jurisdictionLevel: JurisdictionLevel | null;
   localityId: number | null;
   departmentId: number | null;
+  /**
+   * El árbol de la jurisdicción, ya resuelto por el backend. Va exactamente
+   * uno de los dos, según el nivel (lo exige `chk_account_jurisdiction`).
+   * Lo usa el alta de barrio para saber DÓNDE puede estar ese barrio.
+   */
+  locality: Locality | null;
+  department: Department | null;
   /** Domicilio en el mapa. Opcional: ubica al cliente, no valida nada. */
   latitude: number | null;
   longitude: number | null;
@@ -98,7 +113,6 @@ export interface Plan {
   maxTechnicianUsers: number;
   maxMonitorUsers: number;
   maxFamilyMembers: number;
-  remoteControlsEnabled: boolean;
   communityScopeEnabled: boolean;
 }
 

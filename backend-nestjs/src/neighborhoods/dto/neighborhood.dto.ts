@@ -45,6 +45,21 @@ export class CreateNeighborhoodDto {
 
   @IsLongitude({ message: 'Marcá el barrio en el mapa (longitud inválida)' })
   longitude!: number;
+
+  /**
+   * ACTIVACIÓN COMUNITARIA con la que nace el barrio: si el vecino puede
+   * activar todas las alarmas o una distinta de la de su vivienda.
+   *
+   * Ausente = hereda el valor de la cuenta, que es lo que se le vendió.
+   *
+   * Es un CUPO, así que SOLO CPS puede mandarlo (regla 4): el servicio rechaza
+   * con 403 al admin de una organización que intente fijarlo. Sin ese chequeo,
+   * un cliente se auto-otorgaría en el alta lo que no puede cambiar después
+   * por `/quotas`.
+   */
+  @IsOptional()
+  @IsBoolean({ message: 'Activación comunitaria: verdadero o falso' })
+  communityScopeEnabled?: boolean;
 }
 
 export class UpdateNeighborhoodDto {
@@ -77,10 +92,6 @@ export class UpdateNeighborhoodQuotasDto {
   @IsInt()
   @Min(0)
   maxFamilyMembers?: number;
-
-  @IsOptional()
-  @IsBoolean()
-  remoteControlsEnabled?: boolean;
 
   /** Disparar TODAS las alarmas del barrio desde la app del vecino. */
   @IsOptional()

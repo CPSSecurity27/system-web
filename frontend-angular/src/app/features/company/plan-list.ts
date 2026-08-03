@@ -169,17 +169,6 @@ import { OrgSubtype, Plan } from '../../core/models/api.models';
               </div>
               <div class="col-12 col-sm-6 d-flex align-items-end">
                 <div class="form-check">
-                  <input
-                    id="pRemotes"
-                    type="checkbox"
-                    class="form-check-input"
-                    formControlName="remoteControlsEnabled"
-                  />
-                  <label class="form-check-label small" for="pRemotes">
-                    Incluye controles remotos
-                  </label>
-                </div>
-                <div class="form-check ms-3">
                   <!-- Disparar TODAS las alarmas del barrio desde la app. -->
                   <input
                     id="pScope"
@@ -305,7 +294,6 @@ export class PlanList {
     maxTechnicianUsers: [0, [Validators.required, Validators.min(0)]],
     maxMonitorUsers: [1, [Validators.required, Validators.min(0)]],
     maxFamilyMembers: [3, [Validators.required, Validators.min(0)]],
-    remoteControlsEnabled: [true],
     communityScopeEnabled: [true],
   });
 
@@ -349,7 +337,6 @@ export class PlanList {
       maxTechnicianUsers: value.maxTechnicianUsers,
       maxMonitorUsers: value.maxMonitorUsers,
       maxFamilyMembers: value.maxFamilyMembers,
-      remoteControlsEnabled: value.remoteControlsEnabled,
       communityScopeEnabled: value.communityScopeEnabled,
       ...(value.description ? { description: value.description } : {}),
       ...(value.priceReference ? { priceReference: value.priceReference } : {}),
