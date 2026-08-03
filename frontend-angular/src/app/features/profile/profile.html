@@ -1,8 +1,8 @@
-<h2 class="h5 fw-bold mb-3"><i class="bi bi-person-circle text-brand me-2"></i>Mi perfil</h2>
+<h2 class="h5 fw-bold mb-3"><i class="icon-circle-user text-brand me-2"></i>Mi perfil</h2>
 
 @if (auth.mustChangePassword()) {
-  <div class="alert bg-brand-soft text-brand border-0 py-2 small mb-3" role="alert">
-    <i class="bi bi-key-fill me-1"></i>
+  <div class="alert bg-emergency-soft text-emergency border-0 py-2 small mb-3" role="alert">
+    <i class="icon-key-round me-1"></i>
     Estás usando una contraseña <strong>temporal</strong>. Tenés que cambiarla antes de poder usar
     el resto del sistema.
   </div>
@@ -25,12 +25,12 @@
             @if (auth.user()?.email) {
               {{ auth.user()?.email }}
               @if (auth.user()?.emailVerified) {
-                <i class="bi bi-patch-check-fill text-success ms-1" title="Verificado"></i>
+                <i class="icon-badge-check text-success ms-1" title="Verificado"></i>
               } @else {
                 <span class="badge bg-warning-soft text-warning border ms-1">Sin verificar</span>
                 @if (verificationSent()) {
                   <span class="text-success d-block mt-1">
-                    <i class="bi bi-check-circle me-1"></i>Mail enviado: revisá tu casilla.
+                    <i class="icon-circle-check me-1"></i>Mail enviado: revisá tu casilla.
                   </span>
                 } @else {
                   <button
@@ -71,8 +71,9 @@
 
         <hr />
 
-        <button type="button" class="btn btn-outline-brand btn-sm w-100" (click)="logoutAll()">
-          <i class="bi bi-box-arrow-right me-1"></i> Cerrar sesión en todos los dispositivos
+        <!-- Destructivo: te saca de todos lados. Va con la familia de emergencia. -->
+        <button type="button" class="btn btn-outline-emergency btn-sm w-100" (click)="logoutAll()">
+          <i class="icon-log-out me-1"></i> Cerrar sesión en todos los dispositivos
         </button>
       </div>
     </div>
@@ -81,7 +82,7 @@
   <div class="col-12 col-lg-7">
     <div class="card border h-100">
       <div class="card-header bg-white border-bottom">
-        <span class="fw-semibold small"><i class="bi bi-key me-1"></i> Cambiar contraseña</span>
+        <span class="fw-semibold small"><i class="icon-key me-1"></i> Cambiar contraseña</span>
       </div>
       <div class="card-body">
         <form [formGroup]="form" (ngSubmit)="submit()" novalidate>
@@ -133,7 +134,7 @@
               autocomplete="new-password"
             />
             @if (form.controls.newPassword.touched && form.controls.newPassword.invalid) {
-              <div class="form-text text-brand">Mínimo 8 caracteres.</div>
+              <div class="form-text text-emergency">Mínimo 8 caracteres.</div>
             }
           </div>
 
@@ -147,20 +148,20 @@
               autocomplete="new-password"
             />
             @if (form.controls.repeat.touched && form.hasError('mismatch')) {
-              <div class="form-text text-brand">Las contraseñas no coinciden.</div>
+              <div class="form-text text-emergency">Las contraseñas no coinciden.</div>
             }
           </div>
 
           <!-- Avisar ANTES, no sorprender después: el cambio te desloguea acá también. -->
           <div class="alert bg-warning-soft border-0 py-2 small">
-            <i class="bi bi-exclamation-triangle me-1"></i>
+            <i class="icon-triangle-alert me-1"></i>
             Cambiar la contraseña <strong>cierra todas las sesiones</strong>, incluida esta: vas a
             tener que volver a ingresar.
           </div>
 
           @if (error()) {
-            <div class="alert bg-brand-soft text-brand border-0 py-2 small" role="alert">
-              <i class="bi bi-exclamation-triangle-fill me-1"></i> {{ error() }}
+            <div class="alert bg-emergency-soft text-emergency border-0 py-2 small" role="alert">
+              <i class="icon-triangle-alert me-1"></i> {{ error() }}
             </div>
           }
 

@@ -22,7 +22,7 @@ interface DeviceConDistancia {
   template: `
     <div class="d-flex align-items-center mb-3">
       <a routerLink="/viviendas" class="btn btn-sm btn-outline-secondary me-2" title="Volver">
-        <i class="bi bi-arrow-left"></i>
+        <i class="icon-arrow-left"></i>
       </a>
       <h2 class="h5 fw-bold mb-0">Nueva vivienda</h2>
     </div>
@@ -32,7 +32,7 @@ interface DeviceConDistancia {
         <div class="col-12 col-lg-6">
           <div class="card border mb-3">
             <div class="card-header bg-white border-bottom">
-              <span class="fw-semibold small"><i class="bi bi-house me-1"></i> La vivienda</span>
+              <span class="fw-semibold small"><i class="icon-house me-1"></i> La vivienda</span>
             </div>
             <div class="card-body">
               <div class="mb-3">
@@ -96,8 +96,8 @@ interface DeviceConDistancia {
                     Sugerida por cercanía: <strong>{{ sugerida() }}</strong
                     >. Podés cambiarla.
                   } @else {
-                    La alarma del barrio que responde primero por esta casa. Elegí el barrio y
-                    marcá la casa en el mapa.
+                    La alarma del barrio que responde primero por esta casa. Elegí el barrio y marcá
+                    la casa en el mapa.
                   }
                 </div>
               </div>
@@ -106,9 +106,7 @@ interface DeviceConDistancia {
 
           <div class="card border">
             <div class="card-header bg-white border-bottom">
-              <span class="fw-semibold small">
-                <i class="bi bi-person-badge me-1"></i> El titular
-              </span>
+              <span class="fw-semibold small"> <i class="icon-id-card me-1"></i> El titular </span>
             </div>
             <div class="card-body" formGroupName="titular">
               <!-- Una vivienda sin titular no sirve: se cargan juntos, en un acto. -->
@@ -132,7 +130,7 @@ interface DeviceConDistancia {
                   placeholder="30123456"
                 />
                 @if (dniInvalido()) {
-                  <div class="form-text text-brand">Son 7 a 9 dígitos, sin puntos.</div>
+                  <div class="form-text text-emergency">Son 7 a 9 dígitos, sin puntos.</div>
                 } @else {
                   <div class="form-text">Sin puntos.</div>
                 }
@@ -143,7 +141,10 @@ interface DeviceConDistancia {
                 class="btn btn-link btn-sm p-0 mb-2"
                 (click)="verOpcionales.set(!verOpcionales())"
               >
-                <i class="bi" [class.bi-chevron-right]="!verOpcionales()" [class.bi-chevron-down]="verOpcionales()"></i>
+                <i
+                  [class.icon-chevron-right]="!verOpcionales()"
+                  [class.icon-chevron-down]="verOpcionales()"
+                ></i>
                 Datos opcionales
               </button>
 
@@ -177,7 +178,9 @@ interface DeviceConDistancia {
                       class="form-control"
                       formControlName="email"
                     />
-                    <div class="form-text">Si lo cargás, le llega un mail para activar la cuenta.</div>
+                    <div class="form-text">
+                      Si lo cargás, le llega un mail para activar la cuenta.
+                    </div>
                   </div>
                 </div>
               }
@@ -188,7 +191,7 @@ interface DeviceConDistancia {
         <div class="col-12 col-lg-6">
           <div class="card border">
             <div class="card-header bg-white border-bottom">
-              <span class="fw-semibold small"><i class="bi bi-geo-alt me-1"></i> Ubicación</span>
+              <span class="fw-semibold small"><i class="icon-map-pin me-1"></i> Ubicación</span>
             </div>
             <div class="card-body">
               <!-- Nadie tipea coordenadas: se clickea el mapa y listo. -->
@@ -196,7 +199,7 @@ interface DeviceConDistancia {
               <app-map [clickable]="true" (positionChange)="setPosition($event)" />
               @if (latitude() !== null) {
                 <p class="small mb-0 mt-2">
-                  <i class="bi bi-check-circle text-success me-1"></i>
+                  <i class="icon-circle-check text-success me-1"></i>
                   <span class="font-monospace">{{ latitude() }}, {{ longitude() }}</span>
                   <button
                     type="button"
@@ -208,7 +211,7 @@ interface DeviceConDistancia {
                 </p>
               } @else {
                 <p class="small text-muted mb-0 mt-2">
-                  <i class="bi bi-exclamation-circle me-1"></i>
+                  <i class="icon-circle-alert me-1"></i>
                   Es obligatoria: sale en el mapa del monitoreo y en cada evento.
                 </p>
               }
@@ -218,8 +221,8 @@ interface DeviceConDistancia {
       </div>
 
       @if (error()) {
-        <div class="alert bg-brand-soft text-brand border-0 py-2 small mt-3" role="alert">
-          <i class="bi bi-exclamation-triangle-fill me-1"></i> {{ error() }}
+        <div class="alert bg-emergency-soft text-emergency border-0 py-2 small mt-3" role="alert">
+          <i class="icon-triangle-alert me-1"></i> {{ error() }}
         </div>
       }
 
@@ -236,7 +239,7 @@ interface DeviceConDistancia {
       </div>
 
       <p class="text-muted small mb-0 mt-3">
-        <i class="bi bi-info-circle me-1"></i>
+        <i class="icon-info me-1"></i>
         Después podés cargar a los <strong>familiares</strong> desde la ficha de la vivienda.
       </p>
     </form>

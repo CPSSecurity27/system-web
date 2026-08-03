@@ -221,6 +221,25 @@ CREATE TABLE account (
   max_technician_users INT CHECK (max_technician_users >= 0),
   max_monitor_users    INT CHECK (max_monitor_users >= 0),
 
+  -- JURISDICCIÓN (migración AccountJurisdictionAndAccountContracts): hasta
+  -- dónde llega el cliente. Sus barrios solo se crean DENTRO de este límite.
+  -- Va exactamente uno de los dos ids, el que corresponda al nivel.
+  -- NULL en COMPANY: CPS no tiene territorio.
+  jurisdiction_level jurisdiction_level,
+  locality_id        INT REFERENCES locality(id) ON DELETE RESTRICT,
+  department_id      INT REFERENCES department(id) ON DELETE RESTRICT,
+
+  -- DÓNDE ESTÁ el cliente en el mapa. OBLIGATORIA en ORGANIZATION desde la
+  -- migración MandatoryCoordinates (lo exige chk_subtype_by_type, más abajo):
+  -- el tablero de clientes es un mapa, y con pines faltantes no se puede leer.
+  --   MUNICIPAL → la sede de la municipalidad
+  --   COMMUNITY → el punto de su único barrio (son el mismo lugar)
+  --   COMPANY   → NULL
+  -- Ubica al cliente; lo que acota dónde puede crear barrios es la
+  -- jurisdicción, no este punto. NO es un cupo: no va por /quotas.
+  latitude           DOUBLE PRECISION,
+  longitude          DOUBLE PRECISION,
+
   created_by         INT REFERENCES app_user(id) ON DELETE SET NULL,
   updated_by         INT REFERENCES app_user(id) ON DELETE SET NULL,
   created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -228,14 +247,20 @@ CREATE TABLE account (
 
   -- Habilita las FK compuestas de neighborhood y service_contract (no borrar)
   CONSTRAINT uq_account_id_type UNIQUE (id, type),
-  -- ORGANIZATION lleva subtype y los CUATRO cupos; COMPANY, ninguno de los dos
+  -- ORGANIZATION lleva subtype, los CUATRO cupos y su punto en el mapa;
+  -- COMPANY, ninguna de las tres cosas.
+  --
+  -- Las coordenadas viajan en ESTE constraint y no en uno propio a propósito:
+  -- dos CHECK sobre las mismas columnas se contradicen apenas se toca uno solo.
   CONSTRAINT chk_subtype_by_type CHECK (
     (type = 'ORGANIZATION'
       AND subtype IS NOT NULL
       AND max_neighborhoods IS NOT NULL
       AND max_admin_users IS NOT NULL
       AND max_technician_users IS NOT NULL
-      AND max_monitor_users IS NOT NULL)
+      AND max_monitor_users IS NOT NULL
+      AND latitude IS NOT NULL
+      AND longitude IS NOT NULL)
     OR
     (type = 'COMPANY'
       AND subtype IS NULL
@@ -244,6 +269,22 @@ CREATE TABLE account (
       AND max_admin_users IS NULL
       AND max_technician_users IS NULL
       AND max_monitor_users IS NULL)
+  ),
+  -- Toda ORGANIZATION tiene jurisdicción, y va EXACTAMENTE uno de los dos ids
+  -- según el nivel. CPS (COMPANY) no tiene ninguno: no tiene territorio.
+  CONSTRAINT chk_account_jurisdiction CHECK (
+    (type = 'COMPANY'
+      AND jurisdiction_level IS NULL
+      AND locality_id IS NULL
+      AND department_id IS NULL)
+    OR
+    (type = 'ORGANIZATION'
+      AND ((jurisdiction_level = 'LOCALITY'
+              AND locality_id IS NOT NULL
+              AND department_id IS NULL)
+        OR (jurisdiction_level = 'DEPARTMENT'
+              AND department_id IS NOT NULL
+              AND locality_id IS NULL)))
   )
 );
 -- CPS es una sola: no puede existir una segunda cuenta COMPANY
@@ -304,8 +345,13 @@ CREATE TABLE neighborhood (
   name                    TEXT NOT NULL,
   status                  entity_status NOT NULL DEFAULT 'ACTIVE',
   locality_id             INT NOT NULL REFERENCES locality(id) ON DELETE RESTRICT,
-  latitude                DOUBLE PRECISION,
-  longitude               DOUBLE PRECISION,
+
+  -- OBLIGATORIAS desde la migración MandatoryCoordinates. El barrio sale en el
+  -- tablero de clientes y en el mapa del monitoreo. Cierra además una
+  -- incoherencia: la VIVIENDA ya estaba obligada a tener GPS (tabla home) y el
+  -- barrio que la contiene, no. No es un cupo: la carga cualquier gestor.
+  latitude                DOUBLE PRECISION NOT NULL,
+  longitude               DOUBLE PRECISION NOT NULL,
 
   -- La organización cliente (muni o consorcio). La columna organization_type
   -- es redundancia CONTROLADA POR LA BASE: fijada en 'ORGANIZATION' por el CHECK

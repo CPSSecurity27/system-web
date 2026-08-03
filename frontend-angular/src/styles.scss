@@ -1,32 +1,89 @@
 // ---------------------------------------------------------------------------
-// Estilos globales — Sistema de Monitoreo de Alarmas Comunitarias
-// Paleta, clases y layout definidos en docs/angular-ui-styles-spec.md
+// Estilos globales — Panel CPS Security
+//
+// ARQUITECTURA (2026-08-02 — Fase A de la unificación visual app ↔ panel).
+// Spec: docs/superpowers/specs/2026-08-02-unificacion-visual-app-web-design.md
+//
+//   1. Literales SCSS ($c-*) — existen SOLO para alimentar a Bootstrap, que
+//      necesita valores en tiempo de compilación para sus funciones de color
+//      (shade-color, color-contrast). No se usan fuera del @use.
+//   2. Custom properties en :root — la fuente de verdad de NUESTRA capa. Son de
+//      runtime: por eso el flip de marca (Fase C) y el modo oscuro (Fase G) son
+//      un solo archivo y no un barrido por 166 usos.
+//   3. Nuestras clases leen var(--…), nunca el literal.
+//
+// Los nombres son SEMÁNTICOS (--surface, --text, --brand), nunca literales
+// (--gris-100, --azul): un token que se llama por su color no se puede dar
+// vuelta en modo oscuro sin quedar mintiendo.
 // ---------------------------------------------------------------------------
 
-// 1. Tokens de marca (única fuente de verdad de los colores)
-$brand: #d32f2f;
-$brand-dark: #b71c1c;
-$brand-soft: #ffebee;
+// ---------------------------------------------------------------------------
+// 1. Literales para Bootstrap
+// ---------------------------------------------------------------------------
 
-$warning-orange: #f57c00;
-$warning-soft: #fff3e0;
+// MARCA — identidad y acción principal.
+$c-brand: #2563eb;
+$c-brand-dark: #1d4ed8;
+$c-brand-soft: #eff6ff;
 
-$success-green: #388e3c;
-$success-soft: #e8f5e9;
+// EMERGENCIA — alarma, error y acción destructiva.
+//
+// Va en PAR y no es capricho: un rojo que contrasta bien con el blanco ENCIMA
+// (relleno) no llega a 4.5:1 cuando es el TEXTO sobre un fondo claro.
+//   #DC2626 sobre #F4F6FB = 4.44 ✗   |  blanco sobre #DC2626 = 4.83 ✓
+//   #B91C1C sobre #F4F6FB = 5.95 ✓
+$c-danger: #dc2626; // relleno, con texto blanco encima
+$c-danger-text: #b91c1c; // texto e íconos rojos sobre fondo claro
+$c-danger-soft: #fef2f2;
 
-$text-main: #212529;
-$surface: #ffffff;
-$surface-alt: #f8f9fa;
+// Mismo criterio para los otros estados: el color "pleno" sirve de relleno o de
+// punto, y el "-text" es el que se puede leer.
+//   #16A34A sobre blanco = 3.30 ✗  →  #15803D = 5.02 ✓
+//   #F59E0B sobre blanco = 2.15 ✗  →  #B45309 = 5.07 ✓
+$c-success: #16a34a;
+$c-success-text: #15803d;
+$c-success-soft: #f0fdf4;
+$c-warning: #f59e0b;
+$c-warning-text: #b45309;
+$c-warning-soft: #fffbeb;
 
-// 2. Bootstrap, con las variables de marca inyectadas antes de compilar
+$c-text: #0f1b2d;
+$c-text-dim: #5b6b85;
+// Tercer nivel de texto. NO se copió el #909CB3 de la app: da 2.77 sobre blanco
+// y allá se usa para texto real. Este valor se eligió midiendo, para que el
+// `.text-muted` de Bootstrap (222 usos en el panel) sea legible.
+//   #616F87 sobre #F4F6FB = 4.69 ✓
+$c-text-muted: #616f87;
+
+$c-surface: #ffffff;
+$c-surface-bg: #f4f6fb;
+$c-surface-alt: #eff3f9;
+$c-border: #e3e8f2;
+
+// ---------------------------------------------------------------------------
+// 2. Bootstrap, con la marca inyectada antes de compilar
+// ---------------------------------------------------------------------------
+
 @use 'bootstrap/scss/bootstrap' with (
-  $primary: $brand,
-  $danger: $brand,
-  $success: $success-green,
-  $warning: $warning-orange,
-  $body-bg: $surface,
-  $body-color: $text-main,
-  $light: $surface-alt,
+  $primary: $c-brand,
+  $danger: $c-danger,
+  $success: $c-success,
+  $warning: $c-warning,
+  $body-bg: $c-surface-bg,
+  $body-color: $c-text,
+  $light: $c-surface-alt,
+  // `.text-muted` se usa 222 veces en el panel. Por defecto Bootstrap lo deriva
+  // como rgba($body-color, .75), que sobre el fondo teñido no llega a 4.5:1.
+  $body-secondary-color: $c-text-muted,
+  $border-color: $c-border,
+  // Cards con BORDE, no con sombra (regla de la app).
+  $card-border-color: $c-border,
+  $card-box-shadow: none,
+  $border-radius: 0.625rem,
+  $border-radius-sm: 0.5rem,
+  $border-radius-lg: 1rem,
+  $btn-border-radius: 0.875rem,
+  $btn-border-radius-sm: 0.625rem,
   $font-family-sans-serif: (
     'Inter',
     system-ui,
@@ -36,94 +93,490 @@ $surface-alt: #f8f9fa;
   )
 );
 
-// 3. Base
+// ---------------------------------------------------------------------------
+// Íconos (Lucide, la misma familia que la app de vecinos)
+//
+// Se sirven como FUENTE y no como componentes SVG a propósito: el mapa arma sus
+// marcadores con `L.divIcon()`, que recibe HTML crudo fuera del árbol de
+// Angular. Un componente no se puede renderizar ahí; una clase sí. Con SVG
+// habría que mantener los íconos del mapa aparte, que es justo la convivencia
+// de dos sets que la app de vecinos ya arrastra.
+//
+// El archivo lo genera `scripts/generar-iconos.py` (ver el porqué ahí dentro).
+// ---------------------------------------------------------------------------
+@use 'styles/icons';
+
+// ---------------------------------------------------------------------------
+// 3. Tokens — la fuente de verdad de nuestra capa
+// ---------------------------------------------------------------------------
+
+:root {
+  // Superficies
+  --surface-bg: #{$c-surface-bg};
+  --surface: #{$c-surface};
+  --surface-alt: #{$c-surface-alt};
+  --border: #{$c-border};
+
+  // Marca
+  --brand: #{$c-brand};
+  --brand-dark: #{$c-brand-dark};
+  --brand-soft: #{$c-brand-soft};
+
+  // Emergencia. El par existe porque el rojo de relleno y el rojo de texto NO
+  // pueden ser el mismo: sobre fondo claro, un rojo que contrasta bien con el
+  // blanco encima no llega a 4.5:1 como texto. Ver §3.2 del spec.
+  --danger: #{$c-danger}; // relleno, con texto blanco encima
+  --danger-text: #{$c-danger-text}; // texto e íconos rojos sobre fondo claro
+  --danger-soft: #{$c-danger-soft};
+  --danger-rgb: 220, 38, 38; // para rgba() en sombras y animaciones
+
+  // Estados
+  --success: #{$c-success};
+  --success-text: #{$c-success-text};
+  --success-soft: #{$c-success-soft};
+  --warning: #{$c-warning};
+  --warning-text: #{$c-warning-text};
+  --warning-soft: #{$c-warning-soft};
+
+  // Texto
+  --text: #{$c-text};
+  --text-dim: #{$c-text-dim};
+  --text-muted: #{$c-text-muted};
+
+  // Mapa. La vivienda va en índigo (el mismo de la app) y no en el azul de
+  // marca: en el mapa del barrio conviven alarmas y casas, y con el mismo azul
+  // no se distinguen.
+  --map-home: #6366f1;
+
+  // Mapa del TABLERO DE CLIENTES. Ahí viven SOLO los clientes: municipales y
+  // comunitarias. Los barrios no salen en ese mapa (se ven en la lista y en el
+  // mapa de su propio barrio), así que alcanza con dos colores bien separados.
+  //
+  // Azul y verde azulado, y no azul y violeta como al principio: contra el azul,
+  // el violeta se confunde en un pin de 34px y para buena parte de los tipos de
+  // daltonismo. Ninguno usa rojo — es EXCLUSIVO de emergencia.
+  //
+  // Ninguno codifica `managed_by`: quién opera se decide barrio por barrio, así
+  // que un color de CLIENTE que lo dijera mentiría en cuanto una muni tenga un
+  // barrio llave en mano y otro autogestionado. Ese dato va en el panel.
+  --map-municipal: var(--brand); // el cliente institucional: azul de marca
+  --map-community: #0d9488; // verde azulado
+
+  // Espaciado y radios (escala de la app)
+  --sp-xs: 4px;
+  --sp-sm: 8px;
+  --sp-md: 12px;
+  --sp-lg: 16px;
+  --sp-xl: 24px;
+  --sp-xxl: 32px;
+
+  --r-card: 16px;
+  --r-tile: 20px;
+  --r-button: 14px;
+  --r-pill: 999px;
+}
+
+// ---------------------------------------------------------------------------
+// 4. Base
+// ---------------------------------------------------------------------------
+
 body {
   font-family: 'Inter', sans-serif;
-  background-color: $surface;
-  color: $text-main;
+  background-color: var(--surface-bg);
+  color: var(--text);
   overflow-x: hidden;
 }
 
-// 4. Clases de marca
+// ---------------------------------------------------------------------------
+// 5. Familia MARCA — identidad y acción principal
+// ---------------------------------------------------------------------------
+
 .btn-brand {
-  background-color: $brand;
-  color: $surface;
-  border: 1px solid $brand;
+  background-color: var(--brand);
+  color: #fff;
+  border: 1px solid var(--brand);
   font-weight: 500;
   transition: background-color 0.2s ease-in-out;
 
   &:hover,
   &:focus {
-    background-color: $brand-dark;
-    border-color: $brand-dark;
-    color: $surface;
+    background-color: var(--brand-dark);
+    border-color: var(--brand-dark);
+    color: #fff;
   }
 }
 
 .btn-outline-brand {
   background-color: transparent;
-  color: $brand;
-  border: 1px solid $brand;
+  color: var(--brand);
+  border: 1px solid var(--brand);
   font-weight: 500;
 
   &:hover {
-    background-color: $brand-soft;
-    color: $brand-dark;
-    border-color: $brand-dark;
+    background-color: var(--brand-soft);
+    color: var(--brand-dark);
+    border-color: var(--brand-dark);
   }
 }
 
 .text-brand {
-  color: $brand !important;
+  color: var(--brand) !important;
 }
 
 .border-brand {
-  border-color: $brand !important;
+  border-color: var(--brand) !important;
 }
 
-// Fondos atenuados para contenedores de estado
 .bg-brand-soft {
-  background-color: $brand-soft !important;
+  background-color: var(--brand-soft) !important;
 }
+
+// ---------------------------------------------------------------------------
+// 6. Familia EMERGENCIA — alarma, error y acción destructiva
+//
+// Nace en la Fase A apuntando al mismo rojo que la marca, así que hoy no cambia
+// nada en pantalla. La Fase B reparte los usos entre las dos familias según lo
+// que CADA UNO significa, y recién la Fase C las separa de color.
+//
+// Si ves `.text-emergency` en un botón "Guardar", está mal: el nombre está
+// elegido para que el error salte a la vista al leer el template.
+// ---------------------------------------------------------------------------
+
+.btn-emergency {
+  background-color: var(--danger);
+  color: #fff;
+  border: 1px solid var(--danger);
+  font-weight: 500;
+  transition: background-color 0.2s ease-in-out;
+
+  &:hover,
+  &:focus {
+    background-color: var(--danger-text);
+    border-color: var(--danger-text);
+    color: #fff;
+  }
+}
+
+.btn-outline-emergency {
+  background-color: transparent;
+  color: var(--danger-text);
+  border: 1px solid var(--danger);
+  font-weight: 500;
+
+  &:hover {
+    background-color: var(--danger-soft);
+    color: var(--danger-text);
+    border-color: var(--danger-text);
+  }
+}
+
+.text-emergency {
+  color: var(--danger-text) !important;
+}
+
+.border-emergency {
+  border-color: var(--danger) !important;
+}
+
+.bg-emergency-soft {
+  background-color: var(--danger-soft) !important;
+}
+
+// ---------------------------------------------------------------------------
+// 7. Estados
+// ---------------------------------------------------------------------------
 
 .bg-success-soft {
-  background-color: $success-soft !important;
+  background-color: var(--success-soft) !important;
 }
 
 .bg-warning-soft {
-  background-color: $warning-soft !important;
+  background-color: var(--warning-soft) !important;
 }
 
-// 5. Emergencia activa
-@keyframes pulse-red {
-  0% {
-    box-shadow: 0 0 0 0 rgba(211, 47, 47, 0.7);
+// Bootstrap pinta `.text-success` y `.text-warning` con el color PLENO, que sirve
+// de relleno pero no se lee: verde 3.30:1 y ámbar 2.15:1 sobre blanco. Acá se
+// redirigen a la variante legible. Se pisa la utilidad a propósito y no se
+// renombra porque son 32 usos y el significado no cambia — sólo se vuelve legible.
+.text-success {
+  color: var(--success-text) !important;
+}
+
+.text-warning {
+  color: var(--warning-text) !important;
+}
+
+// ---------------------------------------------------------------------------
+// Composición — los patrones de la app que hacen que los colores funcionen
+// ---------------------------------------------------------------------------
+
+// Ícono en cuadrado teñido: el patrón más reconocible de la app. El fondo es el
+// color del concepto a ~14% y el ícono va al 100%, así que el color se lee sin
+// que el contraste dependa de él.
+.icon-tile {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 46px;
+  height: 46px;
+  border-radius: var(--r-button);
+  background-color: color-mix(in srgb, currentColor 14%, transparent);
+}
+
+.icon-tile-sm {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+}
+
+.icon-tile-lg {
+  width: 48px;
+  height: 48px;
+}
+
+// ---------------------------------------------------------------------------
+// Modos de alarma — el catálogo del hardware (core/alarm-modes.ts)
+//
+// El acento pinta SOLO el ícono y el borde; la etiqueta va siempre en --text.
+// Es la regla de composición de la app y es la que hace que el violeta, el rosa
+// y el ámbar se puedan usar sin que nadie tenga que leer texto de color claro.
+// ---------------------------------------------------------------------------
+
+.mode-badge {
+  background-color: var(--mode-soft);
+  border: 1px solid var(--mode-accent);
+  color: var(--text);
+  font-weight: 500;
+
+  i {
+    color: var(--mode-accent);
   }
-  70% {
-    box-shadow: 0 0 0 10px rgba(211, 47, 47, 0);
+}
+
+.mode-activar {
+  --mode-accent: var(--danger);
+  --mode-soft: var(--danger-soft);
+}
+.mode-sospechoso {
+  --mode-accent: var(--warning);
+  --mode-soft: var(--warning-soft);
+}
+.mode-ladron {
+  --mode-accent: #8b5cf6;
+  --mode-soft: #f5f3ff;
+}
+.mode-policia {
+  --mode-accent: var(--brand);
+  --mode-soft: var(--brand-soft);
+}
+.mode-silenciosa {
+  --mode-accent: #64748b;
+  --mode-soft: #f8fafc;
+}
+.mode-incendio {
+  --mode-accent: #f97316;
+  --mode-soft: #fff7ed;
+}
+.mode-medica {
+  --mode-accent: #ec4899;
+  --mode-soft: #fdf2f8;
+}
+.mode-desactivar {
+  --mode-accent: #0ea5a5;
+  --mode-soft: #f0fdfa;
+}
+// Código que el hardware manda y todavía no está en el catálogo.
+.mode-desconocido {
+  --mode-accent: var(--text-muted);
+  --mode-soft: var(--surface-alt);
+}
+
+// Encabezado de sección: 12/800 en mayúsculas con tracking.
+.section-label {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+// ---------------------------------------------------------------------------
+// 9. Contenedor del mapa (Leaflet)
+// ---------------------------------------------------------------------------
+
+.map-viewport {
+  width: 100%;
+  // El alto lo puede fijar quien lo usa (`[height]` del componente). El default
+  // sirve para los mapas grandes; el tablero de clientes lo baja, porque ahí el
+  // mapa acompaña a la lista en vez de ser la pantalla.
+  height: var(--map-h, 100%);
+  min-height: var(--map-h, 350px);
+  max-height: var(--map-h, 600px);
+  border-radius: var(--r-card);
+  z-index: 1; // por debajo de modales y dropdowns de Bootstrap
+}
+
+// Pin tipo gota: cuadrado con tres esquinas redondeadas, rotado -45° para que
+// la cuarta apunte al piso. El cálculo del anclaje está en map.ts.
+.map-pin {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--pin);
+  border: 2px solid var(--surface);
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
+
+  i {
+    // El pin rota, el ícono no: se lo des-rota para que quede derecho.
+    transform: rotate(45deg);
+    color: var(--surface);
+    line-height: 1;
+  }
+}
+
+// ── Tarjetas de tipo de cliente (paso 1 del alta) ──
+// Botones grandes en vez de un <select>: municipal y comunitaria no son dos
+// valores de un campo, son dos caminos distintos del alta. Mostrarlos enteros
+// —con su ícono y qué implica cada uno— evita elegir mal y descubrirlo tres
+// pasos después.
+.tipo-card {
+  display: block;
+  height: 100%;
+  padding: var(--sp-lg);
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+
+  &:hover {
+    border-color: var(--brand);
+  }
+
+  &.is-selected {
+    border-color: var(--brand);
+    background: var(--brand-soft);
+    box-shadow: 0 0 0 1px var(--brand);
+  }
+}
+
+.tipo-card-icon {
+  display: block;
+  font-size: 1.75rem;
+  margin-bottom: var(--sp-sm);
+}
+
+// ── Barra de pasos del alta de cliente ──
+// Cada paso es un botón real (no un div con click): se llega con Tab, se
+// dispara con Enter y el deshabilitado lo maneja el navegador, que es lo que
+// hace que "todavía no podés saltar acá" se entienda sin explicarlo.
+.wizard-steps {
+  gap: var(--sp-sm);
+}
+
+.wizard-step {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-sm);
+  padding: var(--sp-sm) var(--sp-md);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  text-align: left;
+
+  &:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  &.is-current {
+    border-color: var(--brand);
+    background: var(--brand-soft);
+    color: var(--brand);
+    font-weight: 600;
+  }
+
+  &.is-done {
+    border-color: var(--success);
+    color: var(--success-text);
+  }
+}
+
+.wizard-step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid currentcolor;
+  font-size: 0.72rem;
+  line-height: 1;
+}
+
+// En pantallas angostas el número solo alcanza: cuatro etiquetas no entran y
+// partirlas en dos renglones desalinea toda la barra.
+@media (max-width: 575.98px) {
+  .wizard-step-label {
+    display: none;
+  }
+
+  .wizard-step {
+    justify-content: center;
+  }
+}
+
+// El pin ELEGIDO en el tablero. El tamaño ya lo agranda `map.ts`; esto le suma
+// un anillo para que se lea también cuando hay varios pines pegados y la
+// diferencia de tamaño sola no alcanza.
+//
+// El anillo va con `outline` y no con `border`: el borde es parte de la forma
+// de gota (`border-radius: 50% 50% 50% 0`) y engrosarlo la deforma.
+.map-pin-selected {
+  outline: 3px solid var(--surface);
+  outline-offset: 1px;
+  box-shadow:
+    0 0 0 5px color-mix(in srgb, var(--pin) 45%, transparent),
+    0 3px 8px rgba(0, 0, 0, 0.35);
+  z-index: 1000;
+}
+
+// Emergencia activa: halo que crece y se apaga. Usa `--pin`, así que el halo
+// sale del color del MOTIVO y no siempre rojo.
+.map-pin-pulse::after {
+  content: '';
+  position: absolute;
+  inset: -5px;
+  border-radius: inherit;
+  background: var(--pin);
+  z-index: -1;
+  animation: map-pin-pulse 1.6s ease-out infinite;
+}
+
+@keyframes map-pin-pulse {
+  0% {
+    transform: scale(0.7);
+    opacity: 0.45;
   }
   100% {
-    box-shadow: 0 0 0 0 rgba(211, 47, 47, 0);
+    transform: scale(1.7);
+    opacity: 0;
   }
-}
-
-.animate-pulse-emergency {
-  animation: pulse-red 2s infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .animate-pulse-emergency {
+  .map-pin-pulse::after {
     animation: none;
-    box-shadow: 0 0 0 3px rgba(211, 47, 47, 0.7);
+    opacity: 0.3;
+    transform: scale(1.35);
   }
-}
-
-// 6. Contenedor del mapa (Leaflet)
-.map-viewport {
-  width: 100%;
-  height: 100%;
-  min-height: 350px;
-  max-height: 600px;
-  border-radius: 8px;
-  z-index: 1; // por debajo de modales y dropdowns de Bootstrap
 }

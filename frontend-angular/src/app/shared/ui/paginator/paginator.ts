@@ -16,7 +16,7 @@ import { Component, computed, input, output } from '@angular/core';
           [disabled]="!canPrev() || disabled()"
           (click)="prev.emit()"
         >
-          <i class="bi bi-chevron-left"></i> Anteriores
+          <i class="icon-chevron-left"></i> Anteriores
         </button>
         <button
           type="button"
@@ -24,7 +24,7 @@ import { Component, computed, input, output } from '@angular/core';
           [disabled]="!canNext() || disabled()"
           (click)="next.emit()"
         >
-          Siguientes <i class="bi bi-chevron-right"></i>
+          Siguientes <i class="icon-chevron-right"></i>
         </button>
       </div>
     </div>

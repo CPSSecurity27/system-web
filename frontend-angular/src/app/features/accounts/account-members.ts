@@ -241,7 +241,9 @@ export class AccountMembers {
    */
   protected abrirRenovacion(): void {
     const vigente = this.activeContract();
-    const desde = vigente ? this.diaSiguiente(vigente.endDate) : new Date().toISOString().slice(0, 10);
+    const desde = vigente
+      ? this.diaSiguiente(vigente.endDate)
+      : new Date().toISOString().slice(0, 10);
     this.renewForm.reset({
       price: vigente?.price ?? null,
       startDate: desde,

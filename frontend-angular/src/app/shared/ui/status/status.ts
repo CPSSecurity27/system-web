@@ -7,8 +7,9 @@ import { lookOf, StatusKind } from './status-map';
   template: `
     <span class="badge {{ look().classes }}">
       @if (look().icon) {
-        <i class="bi me-1" [class]="look().icon"></i>
-      }{{ look().label }}
+        <i class="me-1" [class]="look().icon"></i>
+      }
+      {{ look().label }}
     </span>
   `,
 })

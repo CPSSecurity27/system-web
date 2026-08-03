@@ -1,7 +1,7 @@
 <div class="d-flex align-items-center justify-content-between mb-3">
   <div>
     <h2 class="h5 fw-bold mb-0">
-      <i class="bi bi-broadcast-pin text-brand me-2"></i>Sirenas / Alarmas
+      <i class="icon-radio-tower text-brand me-2"></i>Sirenas / Alarmas
     </h2>
     <!-- La alarma es del BARRIO: son postes en la vía pública, compartidos. -->
     <p class="text-muted small mb-0">Postes de alarma instalados en los barrios</p>
@@ -14,7 +14,7 @@
     -->
     @if (auth.isManager()) {
       <a routerLink="/alarmas/stock" class="btn btn-outline-brand btn-sm">
-        <i class="bi bi-truck me-1"></i> Entrega e instalación
+        <i class="icon-truck me-1"></i> Entrega e instalación
       </a>
     }
   </div>
@@ -26,7 +26,7 @@
   servicio de alarmas.
 -->
 <div class="alert bg-warning-soft border-0 py-2 small d-flex align-items-center">
-  <i class="bi bi-info-circle me-2"></i>
+  <i class="icon-info me-2"></i>
   El estado <strong class="mx-1">en vivo</strong> (online / disparada) lo va a informar el servicio
   de alarmas, que todavía no está construido. Acá se ve el estado administrativo.
 </div>
@@ -54,12 +54,12 @@
     Cargando alarmas…
   </div>
 } @else if (error()) {
-  <div class="alert bg-brand-soft text-brand border-0" role="alert">
-    <i class="bi bi-exclamation-triangle-fill me-2"></i>{{ error() }}
+  <div class="alert bg-emergency-soft text-emergency border-0" role="alert">
+    <i class="icon-triangle-alert me-2"></i>{{ error() }}
   </div>
 } @else if (items().length === 0) {
   <div class="text-center text-muted py-5 bg-light rounded">
-    <i class="bi bi-broadcast d-block mb-2" style="font-size: 2rem"></i>
+    <i class="icon-radio-tower d-block mb-2" style="font-size: 2rem"></i>
     No hay alarmas instaladas para mostrar.
     @if (auth.isManager()) {
       <span class="d-block mt-1">
@@ -85,7 +85,7 @@
             <p class="text-muted small font-monospace mb-1">{{ device.serial }}</p>
 
             <p class="text-muted small mb-0">
-              <i class="bi bi-geo-alt me-1"></i>{{ barrioName(device.neighborhoodId) }}
+              <i class="icon-map-pin me-1"></i>{{ barrioName(device.neighborhoodId) }}
               @if (device.latitude === null || device.longitude === null) {
                 <span class="ms-1">· sin coordenadas</span>
               }

@@ -1,0 +1,259 @@
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <div>
+    <h2 class="h5 fw-bold mb-0"><i class="icon-briefcase text-brand me-2"></i>Clientes</h2>
+    <p class="text-muted small mb-0">Dónde está cada municipalidad y cada comunidad</p>
+  </div>
+
+  <a routerLink="/clientes/nuevo" class="btn btn-brand btn-sm">
+    <i class="icon-plus me-1"></i> Nuevo cliente
+  </a>
+</div>
+
+@if (loading()) {
+  <div class="text-center text-muted py-5">
+    <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+    Cargando clientes…
+  </div>
+} @else if (error()) {
+  <div class="alert bg-emergency-soft text-emergency border-0" role="alert">
+    <i class="icon-triangle-alert me-2"></i>{{ error() }}
+    <button type="button" class="btn btn-sm btn-outline-secondary ms-2" (click)="reintentar()">
+      Reintentar
+    </button>
+  </div>
+} @else {
+  <!--
+    BUSCADOR Y FILTROS. Recortan el mapa Y la lista con el mismo `visibles()`:
+    lo que se saca de una desaparece de la otra. Dos recortes distintos harían
+    que el mapa mostrara clientes que la lista niega.
+  -->
+  <div class="card border mb-3">
+    <div class="card-body py-3">
+      <div class="row g-2 align-items-end">
+        <div class="col-12 col-lg-5">
+          <label for="busqueda" class="form-label small fw-medium mb-1">Buscar</label>
+          <div class="input-group input-group-sm">
+            <span class="input-group-text bg-white"><i class="icon-search"></i></span>
+            <input
+              id="busqueda"
+              type="search"
+              class="form-control"
+              placeholder="Cliente, barrio o localidad…"
+              autocomplete="off"
+              [ngModel]="busqueda()"
+              (ngModelChange)="busqueda.set($event)"
+            />
+          </div>
+          <!-- Buscar por barrio sigue andando aunque los barrios no se listen:
+               sirve justo para el caso de no saber de quién es. -->
+          <div class="form-text">
+            Escribí el nombre de un <strong>barrio</strong> y aparece su cliente.
+          </div>
+        </div>
+
+        <div class="col-6 col-lg-3">
+          <label for="filtroTipo" class="form-label small fw-medium mb-1">Tipo</label>
+          <select
+            id="filtroTipo"
+            class="form-select form-select-sm"
+            [ngModel]="filtroTipo()"
+            (ngModelChange)="filtroTipo.set($event)"
+          >
+            <option value="TODOS">Todos</option>
+            <option value="MUNICIPAL">Municipales</option>
+            <option value="COMMUNITY">Comunitarias</option>
+          </select>
+        </div>
+
+        <div class="col-6 col-lg-3">
+          <label for="filtroProvincia" class="form-label small fw-medium mb-1">Provincia</label>
+          <select
+            id="filtroProvincia"
+            class="form-select form-select-sm"
+            [ngModel]="filtroProvincia()"
+            (ngModelChange)="filtroProvincia.set($event)"
+          >
+            <option value="">Todas</option>
+            @for (provincia of provincias(); track provincia) {
+              <option [value]="provincia">{{ provincia }}</option>
+            }
+          </select>
+        </div>
+
+        <div class="col-12 col-lg-1 d-grid">
+          @if (hayFiltros()) {
+            <button
+              type="button"
+              class="btn btn-sm btn-outline-secondary"
+              (click)="limpiarFiltros()"
+              title="Limpiar filtros"
+            >
+              Limpiar
+            </button>
+          }
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!--
+    DISTRIBUCIÓN: la LISTA manda y el mapa la acompaña desde una columna
+    derecha PEGADA, que también contiene el detalle.
+
+    Por qué el mapa no está arriba a todo lo ancho: ahí el panel de detalle
+    tenía que abrirse en una tercera columna y le robaba el ancho al mapa, o
+    sea que todo se re-acomodaba justo cuando elegías algo. Con el mapa fijo en
+    su columna, la selección no mueve nada de lugar.
+  -->
+  <div class="row g-3">
+    <div class="col-12 col-lg-7 col-xl-8">
+      <!--
+        LA LISTA. Cada cliente es una fila clickeable con sus barrios adentro:
+        el barrio es el nivel donde se opera, así que esconderlo detrás de otro
+        click obligaría a entrar a la ficha para saber algo básico.
+      -->
+      <div class="card border">
+        <div class="card-body p-0">
+          @if (visibles().length === 0) {
+            <p class="text-muted small text-center py-4 mb-0">Sin resultados.</p>
+          } @else {
+            <div class="list-group list-group-flush">
+              @for (cliente of visibles(); track cliente.id) {
+                <div class="list-group-item" [class.bg-brand-soft]="estaElegido(cliente)">
+                  <div class="d-flex align-items-start gap-2">
+                    <button
+                      type="button"
+                      class="btn btn-link p-0 text-start flex-grow-1 text-decoration-none"
+                      (click)="elegirCliente(cliente)"
+                    >
+                      <span class="fw-medium text-body">{{ cliente.name }}</span>
+                      @if (cliente.subtype === 'MUNICIPAL') {
+                        <span class="badge text-bg-light border ms-2">Municipal</span>
+                      } @else {
+                        <span class="badge text-bg-light border ms-2">Comunitaria</span>
+                      }
+                      @if (cliente.status !== 'ACTIVE') {
+                        <span class="badge text-bg-warning ms-1">{{ cliente.status }}</span>
+                      }
+                      <span class="d-block small text-muted">
+                        <i class="icon-map-pin me-1"></i>{{ cliente.jurisdiction }}
+                      </span>
+                    </button>
+
+                    <!--
+                      Sin nada de barrios acá: esta pantalla es de CLIENTES.
+                      Los barrios están en /barrios y en la ficha del cliente.
+                    -->
+                    <a
+                      [routerLink]="['/clientes', cliente.id]"
+                      class="btn btn-sm btn-outline-brand flex-shrink-0"
+                    >
+                      <i class="icon-users me-1"></i> Gestionar
+                    </a>
+                  </div>
+                </div>
+              }
+            </div>
+          }
+        </div>
+      </div>
+    </div>
+
+    <!--
+      COLUMNA DERECHA, pegada: el mapa arriba y el detalle abajo. El mapa está
+      SIEMPRE (no aparece y desaparece con la selección): así no cambia de
+      tamaño ni se mueve de lugar cuando elegís algo.
+    -->
+    <div class="col-12 col-lg-5 col-xl-4">
+      <div class="position-sticky" style="top: 1rem">
+        <div class="card border mb-3">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center mb-2 gap-2">
+              <span class="fw-semibold small"><i class="icon-map-pin me-1"></i> Mapa</span>
+              <button
+                type="button"
+                class="btn btn-sm btn-link p-0 text-decoration-none"
+                (click)="verTodo()"
+                title="Volver a la vista general"
+              >
+                Ver todo
+              </button>
+            </div>
+
+            @if (marcadores().length > 0) {
+              <!--
+                `popups` apagado: el pin ES el botón que abre el detalle de acá
+                abajo, y un globo encima taparía justo lo que se acaba de abrir.
+              -->
+              <app-map
+                height="300px"
+                [markers]="marcadores()"
+                [popups]="false"
+                [focusOn]="foco()"
+                [refit]="refit()"
+                (markerClick)="onMarcador($event)"
+              />
+            } @else {
+              <p class="text-muted small text-center py-4 mb-0">
+                <i class="icon-map-pin d-block mb-2 fs-4"></i>
+                Ningún cliente coincide con la búsqueda.
+              </p>
+            }
+
+            <div class="mt-2">
+              <cps-map-legend [items]="leyenda()" />
+            </div>
+
+            <!-- Los barrios NO van acá: se amontonaban con el pin de su propio
+                 cliente (una comunitaria y su barrio están en el mismo punto).
+                 Toda esta pantalla es de clientes; los barrios, en /barrios. -->
+            <p class="form-text mb-0">Un pin por cliente. Los barrios van en Barrios.</p>
+          </div>
+        </div>
+
+        <!-- EL DETALLE: aparece al elegir, y se va al volver a clickear. -->
+        @if (clienteElegido(); as cliente) {
+          <div class="card border">
+            <div class="card-header bg-white border-bottom d-flex justify-content-between">
+              <span class="fw-semibold small"><i class="icon-briefcase me-1"></i> Cliente</span>
+              <button
+                type="button"
+                class="btn-close btn-sm"
+                aria-label="Cerrar"
+                (click)="seleccion.set(null)"
+              ></button>
+            </div>
+            <div class="card-body">
+              <p class="fw-semibold mb-1">{{ cliente.name }}</p>
+              <p class="small text-muted mb-3">
+                <i class="icon-map-pin me-1"></i>{{ cliente.jurisdiction }}
+              </p>
+
+              <dl class="row small mb-3">
+                <dt class="col-5 fw-normal text-muted">Tipo</dt>
+                <dd class="col-7">
+                  {{ cliente.subtype === 'MUNICIPAL' ? 'Municipal' : 'Comunitaria' }}
+                </dd>
+
+                <dt class="col-5 fw-normal text-muted">Estado</dt>
+                <dd class="col-7">{{ cliente.status }}</dd>
+              </dl>
+
+              <a [routerLink]="['/clientes', cliente.id]" class="btn btn-sm btn-brand w-100">
+                Gestionar el cliente
+              </a>
+            </div>
+          </div>
+        }
+      </div>
+    </div>
+  </div>
+
+  <p class="text-muted small mt-3 mb-0">
+    {{ visibles().length }}
+    {{ visibles().length === 1 ? 'cliente' : 'clientes' }}
+    @if (hayFiltros()) {
+      de {{ clientes().length }}
+    }
+  </p>
+}

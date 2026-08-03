@@ -8,6 +8,8 @@ import { AuthService } from '../../core/auth/auth.service';
 import { apiErrorMessage } from '../../core/http/api-error';
 import { AlarmEvent, EventStatus } from '../../core/models/api.models';
 import { Neighborhood } from '../../core/models/neighborhood';
+import { ALARM_MODES } from '../../core/alarm-modes';
+import { AlarmMode } from '../../shared/ui/alarm-mode/alarm-mode';
 import { Alert } from '../../shared/ui/alert/alert';
 import { Async } from '../../shared/ui/async/async';
 import { PageHeader } from '../../shared/ui/page-header/page-header';
@@ -25,7 +27,7 @@ const PAGE_SIZE = 20;
  */
 @Component({
   selector: 'app-event-list',
-  imports: [FormsModule, DatePipe, Alert, Async, PageHeader, Paginator, Status],
+  imports: [FormsModule, DatePipe, AlarmMode, Alert, Async, PageHeader, Paginator, Status],
   templateUrl: './event-list.html',
 })
 export class EventList {
@@ -48,6 +50,13 @@ export class EventList {
   /** Alta manual (origin PANEL): registrar un llamado telefónico, por ejemplo. */
   protected readonly showCreate = signal(false);
   protected createBarrio: number | '' = '';
+  /**
+   * El motivo que reporta quien llama por teléfono. Opcional a propósito: a
+   * veces el vecino avisa "sonó la alarma" y no sabe por qué, y forzar un motivo
+   * inventado sería peor que dejarlo vacío.
+   */
+  protected createMode = '';
+  protected readonly modos = ALARM_MODES;
 
   protected readonly pageSize = PAGE_SIZE;
   protected readonly canPrev = computed(() => this.offset() > 0);
@@ -143,12 +152,14 @@ export class EventList {
         neighborhoodId: Number(this.createBarrio),
         origin: 'PANEL',
         scope: 'COMMUNITY',
+        ...(this.createMode ? { triggerMode: this.createMode } : {}),
       })
       .subscribe({
         next: () => {
           this.saving.set(false);
           this.showCreate.set(false);
           this.createBarrio = '';
+          this.createMode = '';
           this.offset.set(0);
           this.load();
         },

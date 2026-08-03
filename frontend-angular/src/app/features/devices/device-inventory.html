@@ -5,24 +5,22 @@
 -->
 <div class="d-flex align-items-center mb-3">
   <a routerLink="/alarmas" class="btn btn-sm btn-outline-secondary me-2" title="Volver">
-    <i class="bi bi-arrow-left"></i>
+    <i class="icon-arrow-left"></i>
   </a>
   <div>
-    <h2 class="h5 fw-bold mb-0">
-      <i class="bi bi-truck text-brand me-2"></i>Entrega e instalación
-    </h2>
+    <h2 class="h5 fw-bold mb-0"><i class="icon-truck text-brand me-2"></i>Entrega e instalación</h2>
     <p class="text-muted small mb-0">Stock de la organización → instalada en un barrio</p>
   </div>
 </div>
 
 @if (message()) {
   <div class="alert bg-success-soft border-0 py-2 small">
-    <i class="bi bi-check-circle me-1"></i>{{ message() }}
+    <i class="icon-circle-check me-1"></i>{{ message() }}
   </div>
 }
 @if (error()) {
-  <div class="alert bg-brand-soft text-brand border-0 py-2 small" role="alert">
-    <i class="bi bi-exclamation-triangle-fill me-1"></i>{{ error() }}
+  <div class="alert bg-emergency-soft text-emergency border-0 py-2 small" role="alert">
+    <i class="icon-triangle-alert me-1"></i>{{ error() }}
   </div>
 }
 
@@ -38,7 +36,7 @@
         <div
           class="card-header bg-white border-bottom d-flex align-items-center justify-content-between"
         >
-          <span class="fw-semibold small"><i class="bi bi-boxes me-1"></i> Equipos en stock</span>
+          <span class="fw-semibold small"><i class="icon-boxes me-1"></i> Equipos en stock</span>
           <span class="badge text-bg-light border">{{ stock().length }}</span>
         </div>
         <div class="table-responsive">
@@ -66,9 +64,9 @@
                   }
                   <td>
                     @if (device.tested) {
-                      <i class="bi bi-check-circle-fill text-success" title="Probado"></i>
+                      <i class="icon-circle-check-big text-success" title="Probado"></i>
                     } @else {
-                      <i class="bi bi-dash-circle text-muted" title="Sin probar"></i>
+                      <i class="icon-circle-minus text-muted" title="Sin probar"></i>
                     }
                   </td>
                 </tr>
@@ -93,7 +91,7 @@
         <div class="card border mt-3">
           <div class="card-header bg-white border-bottom">
             <span class="fw-semibold small">
-              <i class="bi bi-truck me-1"></i> Entregar equipo a una organización
+              <i class="icon-truck me-1"></i> Entregar equipo a una organización
             </span>
           </div>
           <div class="card-body">
@@ -157,7 +155,7 @@
       <div class="card border">
         <div class="card-header bg-white border-bottom">
           <span class="fw-semibold small">
-            <i class="bi bi-tools me-1"></i> Instalar equipo (reclamo)
+            <i class="icon-wrench me-1"></i> Instalar equipo (reclamo)
           </span>
         </div>
         <div class="card-body">
@@ -216,7 +214,7 @@
               <app-map [clickable]="true" (positionChange)="setPosition($event)" />
               @if (latitude() !== null) {
                 <p class="small mb-0 mt-2">
-                  <i class="bi bi-check-circle text-success me-1"></i>
+                  <i class="icon-circle-check text-success me-1"></i>
                   <span class="font-monospace">{{ latitude() }}, {{ longitude() }}</span>
                   <button
                     type="button"
@@ -236,8 +234,8 @@
             -->
             <div class="border-top pt-3 mb-3">
               <p class="fw-semibold small mb-1">
-                <i class="bi bi-clipboard-data me-1"></i> Datos de instalación
-                <span class="badge bg-warning-soft border ms-1">recomendados</span>
+                <i class="icon-clipboard-list me-1"></i> Datos de instalación
+                <span class="badge bg-warning-soft text-warning border ms-1">recomendados</span>
               </p>
               <p class="text-muted small">
                 Lo que hace falta saber para volver a intervenir el equipo. Se pueden completar
@@ -282,9 +280,7 @@
               </div>
 
               <div class="mb-2">
-                <label for="cPower" class="form-label small fw-medium">
-                  Alimentación
-                </label>
+                <label for="cPower" class="form-label small fw-medium"> Alimentación </label>
                 <input
                   id="cPower"
                   type="text"
@@ -321,7 +317,7 @@
           </form>
 
           <p class="text-muted small mb-0 mt-3 border-top pt-3">
-            <i class="bi bi-shield-lock me-1"></i>
+            <i class="icon-shield-check me-1"></i>
             El código es de <strong>un solo uso</strong> y solo funciona sobre tu propio stock (o el
             de fábrica, si sos CPS). Con código equivocado o stock ajeno, se rechaza.
           </p>

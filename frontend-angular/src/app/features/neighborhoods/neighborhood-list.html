@@ -1,7 +1,7 @@
 <div class="d-flex align-items-center justify-content-between mb-3">
   <div>
     <h2 class="h5 fw-bold mb-0">
-      <i class="bi bi-houses-fill text-brand me-2"></i
+      <i class="icon-map-pinned text-brand me-2"></i
       >{{ auth.isCommunityOrg() ? 'Barrio' : 'Barrios' }}
     </h2>
     <p class="text-muted small mb-0">
@@ -17,7 +17,7 @@
   -->
   @if (auth.isManager() && !auth.isCommunityOrg()) {
     <a routerLink="/barrios/nuevo" class="btn btn-brand btn-sm">
-      <i class="bi bi-plus-lg me-1"></i> Nuevo barrio
+      <i class="icon-plus me-1"></i> Nuevo barrio
     </a>
   }
 </div>
@@ -28,14 +28,17 @@
     Cargando barrios…
   </div>
 } @else if (error()) {
-  <div class="alert bg-brand-soft text-brand border-0 d-flex align-items-center" role="alert">
-    <i class="bi bi-exclamation-triangle-fill me-2"></i>
+  <div
+    class="alert bg-emergency-soft text-emergency border-0 d-flex align-items-center"
+    role="alert"
+  >
+    <i class="icon-triangle-alert me-2"></i>
     <span class="flex-grow-1">{{ error() }}</span>
     <button type="button" class="btn btn-sm btn-outline-brand" (click)="load()">Reintentar</button>
   </div>
 } @else if (items().length === 0) {
   <div class="text-center text-muted py-5 bg-light rounded">
-    <i class="bi bi-houses d-block mb-2" style="font-size: 2rem"></i>
+    <i class="icon-map-pinned d-block mb-2" style="font-size: 2rem"></i>
     {{ auth.isCommunityOrg() ? 'CPS todavía no cargó tu barrio.' : 'No hay barrios para mostrar.' }}
   </div>
 } @else {
@@ -59,7 +62,7 @@
 
             <!-- El árbol completo: hay 3 "Villa María" en el país, la localidad sola no alcanza -->
             <p class="text-muted small mb-1">
-              <i class="bi bi-geo-alt me-1"></i>
+              <i class="icon-map-pin me-1"></i>
               {{ barrio.locality.name }}, {{ barrio.locality.department.name }},
               {{ barrio.locality.department.province.name }}
             </p>

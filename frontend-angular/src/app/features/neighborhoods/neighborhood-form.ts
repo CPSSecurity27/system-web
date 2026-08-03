@@ -59,24 +59,31 @@ export class NeighborhoodForm {
   });
 
   /**
-   * El punto en el mapa. OPCIONAL: sirve para ubicar el barrio, no para
-   * validar nada — el que decide dónde puede estar es la LOCALIDAD, que se
-   * chequea contra la jurisdicción del cliente en el backend.
+   * El punto en el mapa. OBLIGATORIO desde la migración `MandatoryCoordinates`:
+   * el barrio sale en el tablero de clientes y en el mapa del monitoreo, y un
+   * punto opcional deja los dos a medias. También cierra una incoherencia — la
+   * VIVIENDA ya estaba obligada a tener GPS y el barrio que la contiene, no.
+   *
+   * Ubica, no valida: quien decide dónde PUEDE estar el barrio es la LOCALIDAD,
+   * que el backend chequea contra la jurisdicción del cliente.
    *
    * Nadie tipea coordenadas: se clickea el mapa, igual que en el alta de
-   * vivienda y en la instalación de un equipo.
+   * vivienda y en la instalación de un equipo. Como no vive en el form group,
+   * el "falta el punto" lo avisa `puntoFaltante` — sin eso el botón quedaría
+   * habilitado y el click no haría nada.
    */
   protected readonly latitude = signal<number | null>(null);
   protected readonly longitude = signal<number | null>(null);
+  protected readonly puntoFaltante = signal(false);
+
+  protected readonly tienePunto = computed(
+    () => this.latitude() !== null && this.longitude() !== null,
+  );
 
   protected setPosition(position: { latitude: number; longitude: number }): void {
     this.latitude.set(position.latitude);
     this.longitude.set(position.longitude);
-  }
-
-  protected clearPosition(): void {
-    this.latitude.set(null);
-    this.longitude.set(null);
+    this.puntoFaltante.set(false);
   }
 
   constructor() {
@@ -138,11 +145,15 @@ export class NeighborhoodForm {
       return;
     }
 
+    // El punto no lo ve `form.invalid`: se chequea acá y se AVISA, en vez de
+    // hacer un return mudo.
+    if (!this.tienePunto()) {
+      this.puntoFaltante.set(true);
+      return;
+    }
+
     this.saving.set(true);
     this.error.set(null);
-
-    const lat = this.latitude();
-    const lng = this.longitude();
 
     this.neighborhoods
       .create({
@@ -150,8 +161,8 @@ export class NeighborhoodForm {
         localityId: locality.id,
         // La organización solo la manda CPS: una org crea para sí misma.
         ...(this.auth.isCps() && organizationId ? { organizationId } : {}),
-        // El punto es opcional: si no se marcó, no se manda.
-        ...(lat !== null && lng !== null ? { latitude: lat, longitude: lng } : {}),
+        latitude: this.latitude()!,
+        longitude: this.longitude()!,
       })
       .subscribe({
         next: () => void this.router.navigate(['/barrios']),

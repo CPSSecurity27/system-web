@@ -149,7 +149,19 @@ export class Account {
   @JoinColumn({ name: 'department_id' })
   department!: Department | null;
 
-  /** Domicilio en el mapa. Opcional: ubica al cliente, no valida nada. */
+  /**
+   * Dónde está el cliente en el mapa. OBLIGATORIA en ORGANIZATION desde
+   * `MandatoryCoordinates` — lo exige `chk_subtype_by_type`, el mismo CHECK que
+   * los cupos, así que la columna sigue siendo nullable a nivel tipo:
+   *
+   *   - MUNICIPAL: la sede de la municipalidad.
+   *   - COMMUNITY: el punto de su único barrio (son el mismo lugar).
+   *   - COMPANY:   NULL. CPS no tiene territorio.
+   *
+   * Ubica al cliente, no valida nada: lo que acota dónde puede crear barrios es
+   * la jurisdicción, no este punto. Y NO es un cupo (regla 4): no va por
+   * `/quotas` ni exige auditoría.
+   */
   @Column({ type: 'double precision', nullable: true })
   latitude!: number | null;
 

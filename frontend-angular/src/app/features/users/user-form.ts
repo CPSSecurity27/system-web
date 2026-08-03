@@ -11,7 +11,7 @@ import { apiErrorMessage } from '../../core/http/api-error';
   template: `
     <div class="d-flex align-items-center mb-3">
       <a routerLink="/usuarios" class="btn btn-sm btn-outline-secondary me-2" title="Volver">
-        <i class="bi bi-arrow-left"></i>
+        <i class="icon-arrow-left"></i>
       </a>
       <h2 class="h5 fw-bold mb-0">Nueva persona</h2>
     </div>
@@ -70,8 +70,11 @@ import { apiErrorMessage } from '../../core/http/api-error';
               </div>
 
               @if (error()) {
-                <div class="alert bg-brand-soft text-brand border-0 py-2 small" role="alert">
-                  <i class="bi bi-exclamation-triangle-fill me-1"></i> {{ error() }}
+                <div
+                  class="alert bg-emergency-soft text-emergency border-0 py-2 small"
+                  role="alert"
+                >
+                  <i class="icon-triangle-alert me-1"></i> {{ error() }}
                 </div>
               }
 
@@ -93,7 +96,7 @@ import { apiErrorMessage } from '../../core/http/api-error';
               son dos pasos y la UI tiene que hacer los dos.
             -->
             <p class="text-muted small mb-0 mt-3 border-top pt-3">
-              <i class="bi bi-info-circle me-1"></i>
+              <i class="icon-info me-1"></i>
               Crear la persona <strong>no le da acceso a nada</strong>. Después hay que sumarla a un
               <a routerLink="/clientes">cliente</a> (o al
               <a routerLink="/empresa/personal">personal de CPS</a>) con un rol.

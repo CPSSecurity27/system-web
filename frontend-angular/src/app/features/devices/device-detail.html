@@ -4,13 +4,13 @@
     Cargando…
   </div>
 } @else if (error()) {
-  <div class="alert bg-brand-soft text-brand border-0" role="alert">
-    <i class="bi bi-exclamation-triangle-fill me-2"></i>{{ error() }}
+  <div class="alert bg-emergency-soft text-emergency border-0" role="alert">
+    <i class="icon-triangle-alert me-2"></i>{{ error() }}
   </div>
 } @else if (device(); as alarma) {
   <div class="d-flex align-items-center mb-3">
     <a routerLink="/alarmas" class="btn btn-sm btn-outline-secondary me-2" title="Volver">
-      <i class="bi bi-arrow-left"></i>
+      <i class="icon-arrow-left"></i>
     </a>
     <div>
       <h2 class="h5 fw-bold mb-0">{{ alarma.name ?? alarma.serial }}</h2>
@@ -52,11 +52,11 @@
           -->
           <div class="border-top mt-3 pt-3">
             <p class="fw-semibold small mb-2">
-              <i class="bi bi-clipboard-data me-1"></i> Datos de instalación
+              <i class="icon-clipboard-list me-1"></i> Datos de instalación
             </p>
             @if (sinDatosDeInstalacion()) {
               <p class="text-muted small mb-0">
-                <i class="bi bi-exclamation-circle me-1"></i>
+                <i class="icon-circle-alert me-1"></i>
                 Sin cargar. El próximo técnico que venga no va a saber en qué poste está.
               </p>
             } @else {
@@ -87,7 +87,7 @@
           @if (state(); as vivo) {
             <div class="border-top mt-3 pt-3">
               <p class="fw-semibold small mb-2">
-                <i class="bi bi-broadcast me-1"></i> Estado en vivo
+                <i class="icon-radio-tower me-1"></i> Estado en vivo
               </p>
               <dl class="row mb-0 small">
                 <dt class="col-5 text-muted fw-normal">Conexión</dt>
@@ -108,7 +108,7 @@
             </div>
           } @else {
             <div class="alert bg-warning-soft border-0 py-2 small mt-3 mb-0">
-              <i class="bi bi-broadcast me-1"></i>
+              <i class="icon-radio-tower me-1"></i>
               <strong>Sin datos de estado en vivo.</strong> Los va a reportar el servicio de alarmas
               (el programa que habla con los equipos), que todavía no está construido.
             </div>
@@ -122,7 +122,7 @@
            100% el mapa se comía el alto de la tarjeta y los empujaba fuera. -->
       <div class="card border">
         <div class="card-header bg-white border-bottom">
-          <span class="fw-semibold small"><i class="bi bi-map me-1"></i> Ubicación</span>
+          <span class="fw-semibold small"><i class="icon-map me-1"></i> Ubicación</span>
         </div>
         <div class="card-body">
           <!--
@@ -150,7 +150,7 @@
             <div class="d-flex align-items-center gap-2 mt-2 flex-wrap">
               @if (nuevaUbicacion(); as nueva) {
                 <span class="small font-monospace">
-                  <i class="bi bi-pin-map text-brand me-1"></i>
+                  <i class="icon-map-pin text-brand me-1"></i>
                   {{ nueva.latitude }}, {{ nueva.longitude }}
                 </span>
                 <button
@@ -179,19 +179,19 @@
 
             @if (mensaje()) {
               <p class="small text-success mb-0 mt-2">
-                <i class="bi bi-check-circle me-1"></i>{{ mensaje() }}
+                <i class="icon-circle-check me-1"></i>{{ mensaje() }}
               </p>
             }
             @if (errorUbicacion()) {
-              <p class="small text-brand mb-0 mt-2">
-                <i class="bi bi-exclamation-triangle-fill me-1"></i>{{ errorUbicacion() }}
+              <p class="small text-emergency mb-0 mt-2">
+                <i class="icon-triangle-alert me-1"></i>{{ errorUbicacion() }}
               </p>
             }
           } @else if (markers().length > 0) {
             <app-map [markers]="markers()" [center]="centroMapa()" [zoom]="16" />
           } @else {
             <div class="text-center text-muted py-5 bg-light rounded">
-              <i class="bi bi-geo-alt d-block mb-2" style="font-size: 2rem"></i>
+              <i class="icon-map-pin d-block mb-2" style="font-size: 2rem"></i>
               Esta alarma no tiene coordenadas cargadas.
             </div>
           }
@@ -205,7 +205,7 @@
     <div
       class="card-header bg-white border-bottom d-flex align-items-center justify-content-between"
     >
-      <span class="fw-semibold small"><i class="bi bi-tools me-1"></i> Mantenimientos</span>
+      <span class="fw-semibold small"><i class="icon-wrench me-1"></i> Mantenimientos</span>
       <span class="badge text-bg-light border">{{ maintenances().length }}</span>
     </div>
 

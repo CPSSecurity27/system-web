@@ -30,14 +30,14 @@ export class Dashboard {
     [
       {
         route: '/eventos',
-        icon: 'bi-bell-fill',
+        icon: 'icon-bell-ring',
         title: 'Eventos',
         description: 'El tablero del monitoreo: activaciones y su resolución',
         visible: true,
       },
       {
         route: '/barrios',
-        icon: 'bi-houses-fill',
+        icon: 'icon-map-pinned',
         title: 'Barrios',
         // v2: el vecino también ve SU barrio (llega por homeMemberships).
         description: 'Los barrios bajo monitoreo',
@@ -45,21 +45,21 @@ export class Dashboard {
       },
       {
         route: '/viviendas',
-        icon: 'bi-house-door-fill',
+        icon: 'icon-house',
         title: 'Viviendas',
         description: 'Las casas del barrio y sus miembros',
         visible: true,
       },
       {
         route: '/alarmas',
-        icon: 'bi-broadcast-pin',
+        icon: 'icon-radio-tower',
         title: 'Sirenas / Alarmas',
         description: 'Los postes instalados en la vía pública',
         visible: true,
       },
       {
         route: '/controles',
-        icon: 'bi-key-fill',
+        icon: 'icon-key-round',
         title: 'Controles remotos',
         description: 'Quién lleva cada control encima',
         visible: true,
@@ -67,7 +67,7 @@ export class Dashboard {
       {
         // El stock: acá está el RECLAMO con el que se instalan las alarmas.
         route: '/inventario/stock',
-        icon: 'bi-box-seam',
+        icon: 'icon-package',
         title: 'Inventario',
         description: 'Los equipos que todavía no están en servicio',
         visible: this.auth.isManager(),
@@ -79,35 +79,35 @@ export class Dashboard {
          * organización — /clientes es solo-CPS y lo rebotaría.
          */
         route: '/mi-organizacion',
-        icon: 'bi-building',
+        icon: 'icon-building-2',
         title: 'Mi organización',
         description: 'Su contrato, sus cupos y su gente',
         visible: this.auth.isOrgManager(),
       },
       {
         route: '/clientes',
-        icon: 'bi-briefcase-fill',
+        icon: 'icon-briefcase',
         title: 'Clientes',
         description: 'Organizaciones municipales y comunitarias, con sus cupos',
         visible: this.auth.isCps(),
       },
       {
         route: '/usuarios',
-        icon: 'bi-people-fill',
+        icon: 'icon-users',
         title: 'Usuarios',
         description: 'El padrón de personas del sistema',
         visible: this.auth.isCps(),
       },
       {
         route: '/empresa/personal',
-        icon: 'bi-person-badge-fill',
+        icon: 'icon-id-card',
         title: 'Personal de CPS',
         description: 'Quién trabaja en CPS y con qué rol',
         visible: this.auth.isCps(),
       },
       {
         route: '/empresa/planes',
-        icon: 'bi-tags-fill',
+        icon: 'icon-tags',
         title: 'Planes',
         description: 'El catálogo comercial: qué cupos otorga cada plan',
         visible: this.auth.isCps(),

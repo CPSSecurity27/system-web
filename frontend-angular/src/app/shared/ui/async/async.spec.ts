@@ -11,7 +11,7 @@ import { Async } from './async';
       [empty]="empty"
       loadingText="Cargando eventos…"
       emptyText="No hay eventos para mostrar."
-      emptyIcon="bi-bell-slash"
+      emptyIcon="icon-bell-off"
     >
       <table id="contenido"></table>
     </cps-async>
@@ -46,7 +46,7 @@ describe('cps-async', () => {
     const el = render(false, true);
     expect(el.textContent).toContain('No hay eventos para mostrar.');
     expect((el.querySelector('.text-center i') as HTMLElement).className).toContain(
-      'bi-bell-slash',
+      'icon-bell-off',
     );
     expect(el.querySelector('#contenido')).toBeNull();
   });

@@ -24,32 +24,33 @@ import { OrgSubtype, Plan } from '../../core/models/api.models';
   template: `
     <div class="d-flex align-items-center justify-content-between mb-3">
       <div>
-        <h2 class="h5 fw-bold mb-0"><i class="bi bi-tags-fill text-brand me-2"></i>Planes</h2>
+        <h2 class="h5 fw-bold mb-0"><i class="icon-tags text-brand me-2"></i>Planes</h2>
         <p class="text-muted small mb-0">Qué cupos otorga cada plan que vendemos</p>
       </div>
       <button type="button" class="btn btn-brand btn-sm" (click)="toggleCreate()">
-        <i class="bi" [class.bi-plus-lg]="!creating()" [class.bi-x-lg]="creating()"></i>
+        <i [class.icon-plus]="!creating()" [class.icon-x]="creating()"></i>
         {{ creating() ? 'Cancelar' : 'Nuevo plan' }}
       </button>
     </div>
 
+    <!-- Nota informativa, NO un error: va con la familia de marca. -->
     <div class="alert bg-brand-soft text-brand border-0 py-2 small">
-      <i class="bi bi-info-circle-fill me-1"></i>
+      <i class="icon-info me-1"></i>
       Los planes son <strong>plantillas</strong>: al vender, sus cupos se copian a la cuenta del
       cliente. Editar un plan no le cambia nada a quien ya lo compró — para eso está la ficha del
       cliente, que además deja el cambio auditado.
     </div>
 
     @if (error()) {
-      <div class="alert bg-brand-soft text-brand border-0" role="alert">
-        <i class="bi bi-exclamation-triangle-fill me-2"></i>{{ error() }}
+      <div class="alert bg-emergency-soft text-emergency border-0" role="alert">
+        <i class="icon-triangle-alert me-2"></i>{{ error() }}
       </div>
     }
 
     @if (creating()) {
       <div class="card border mb-3">
         <div class="card-header bg-white border-bottom">
-          <span class="fw-semibold small"><i class="bi bi-tag me-1"></i> Nuevo plan</span>
+          <span class="fw-semibold small"><i class="icon-tag me-1"></i> Nuevo plan</span>
         </div>
         <div class="card-body">
           <form [formGroup]="form" (ngSubmit)="submit()" novalidate>
@@ -109,7 +110,7 @@ import { OrgSubtype, Plan } from '../../core/models/api.models';
                 />
                 @if (isCommunityPlan()) {
                   <div class="form-text">
-                    <i class="bi bi-lock-fill me-1"></i>Fijo en 1: es comunitaria.
+                    <i class="icon-lock me-1"></i>Fijo en 1: es comunitaria.
                   </div>
                 }
               </div>

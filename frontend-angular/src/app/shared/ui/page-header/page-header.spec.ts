@@ -14,7 +14,7 @@ import { PageHeader } from './page-header';
 class Host {
   title = 'Eventos';
   subtitle = 'El tablero del monitoreo';
-  icon = 'bi-bell-fill';
+  icon = 'icon-bell-ring';
 }
 
 const render = () => {
@@ -38,7 +38,7 @@ describe('cps-page-header', () => {
   });
 
   it('muestra el ícono cuando hay uno', () => {
-    expect((render().querySelector('h2 i') as HTMLElement).className).toContain('bi-bell-fill');
+    expect((render().querySelector('h2 i') as HTMLElement).className).toContain('icon-bell-ring');
   });
 
   it('proyecta las acciones', () => {

@@ -1,0 +1,96 @@
+// GENERADO POR scripts/generar-iconos.py — NO EDITAR A MANO.
+//
+// Subset de Lucide con los 74 íconos que el panel usa hoy.
+// Para agregar uno: usalo en el código y volvé a correr el script.
+
+@font-face {
+  font-family: 'lucide';
+  src: url('/fonts/lucide-subset.woff2') format('woff2');
+  font-display: swap;
+}
+
+[class^='icon-'],
+[class*=' icon-'] {
+  font-family: 'lucide';
+  font-style: normal;
+  font-weight: normal;
+  display: inline-block;
+  vertical-align: -0.125em;
+  line-height: 1;
+  -webkit-font-smoothing: antialiased;
+}
+
+.icon-arrow-left::before { content: "\e048"; }
+.icon-arrow-left-right::before { content: "\e24a"; }
+.icon-award::before { content: "\e04f"; }
+.icon-badge-check::before { content: "\e241"; }
+.icon-bell::before { content: "\e059"; }
+.icon-bell-off::before { content: "\e05a"; }
+.icon-bell-ring::before { content: "\e224"; }
+.icon-boxes::before { content: "\e2d0"; }
+.icon-briefcase::before { content: "\e062"; }
+.icon-building-2::before { content: "\e290"; }
+.icon-check::before { content: "\e06c"; }
+.icon-chevron-down::before { content: "\e06d"; }
+.icon-chevron-left::before { content: "\e06e"; }
+.icon-chevron-right::before { content: "\e06f"; }
+.icon-chevron-up::before { content: "\e070"; }
+.icon-circle-alert::before { content: "\e077"; }
+.icon-circle-check::before { content: "\e226"; }
+.icon-circle-check-big::before { content: "\e07c"; }
+.icon-circle-help::before { content: "\e082"; }
+.icon-circle-minus::before { content: "\e07e"; }
+.icon-circle-user::before { content: "\e461"; }
+.icon-clipboard::before { content: "\e085"; }
+.icon-clipboard-check::before { content: "\e219"; }
+.icon-clipboard-list::before { content: "\e086"; }
+.icon-cpu::before { content: "\e0a9"; }
+.icon-eye::before { content: "\e0ba"; }
+.icon-eye-off::before { content: "\e0bb"; }
+.icon-fence::before { content: "\e582"; }
+.icon-file-text::before { content: "\e0cc"; }
+.icon-flame::before { content: "\e0d2"; }
+.icon-footprints::before { content: "\e3b9"; }
+.icon-gauge::before { content: "\e1bf"; }
+.icon-heart-pulse::before { content: "\e36e"; }
+.icon-history::before { content: "\e1f5"; }
+.icon-house::before { content: "\e0f5"; }
+.icon-id-card::before { content: "\e617"; }
+.icon-inbox::before { content: "\e0f7"; }
+.icon-info::before { content: "\e0f9"; }
+.icon-key::before { content: "\e0fd"; }
+.icon-key-round::before { content: "\e4a3"; }
+.icon-landmark::before { content: "\e23a"; }
+.icon-list::before { content: "\e106"; }
+.icon-list-ordered::before { content: "\e1d1"; }
+.icon-lock::before { content: "\e10b"; }
+.icon-log-out::before { content: "\e10e"; }
+.icon-mail-check::before { content: "\e361"; }
+.icon-map::before { content: "\e110"; }
+.icon-map-pin::before { content: "\e111"; }
+.icon-map-pinned::before { content: "\e53d"; }
+.icon-network::before { content: "\e125"; }
+.icon-package::before { content: "\e129"; }
+.icon-pause::before { content: "\e12e"; }
+.icon-phone::before { content: "\e133"; }
+.icon-play::before { content: "\e13c"; }
+.icon-plus::before { content: "\e13d"; }
+.icon-pointer::before { content: "\e1e8"; }
+.icon-power::before { content: "\e140"; }
+.icon-radio-tower::before { content: "\e404"; }
+.icon-refresh-cw::before { content: "\e145"; }
+.icon-search::before { content: "\e151"; }
+.icon-shapes::before { content: "\e4b3"; }
+.icon-shield::before { content: "\e158"; }
+.icon-shield-check::before { content: "\e1ff"; }
+.icon-sliders-horizontal::before { content: "\e29a"; }
+.icon-tag::before { content: "\e17f"; }
+.icon-tags::before { content: "\e35c"; }
+.icon-triangle-alert::before { content: "\e193"; }
+.icon-truck::before { content: "\e194"; }
+.icon-user-check::before { content: "\e1a0"; }
+.icon-user-minus::before { content: "\e1a1"; }
+.icon-user-plus::before { content: "\e1a2"; }
+.icon-users::before { content: "\e1a4"; }
+.icon-wrench::before { content: "\e1b1"; }
+.icon-x::before { content: "\e1b2"; }

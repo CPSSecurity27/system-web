@@ -7,10 +7,10 @@ export type AlertVariant = 'error' | 'warning' | 'success' | 'info';
  * clase distintas repartidas en 37 instancias para decir estas 4 cosas.
  */
 const TONE: Record<AlertVariant, { classes: string; icon: string }> = {
-  error: { classes: 'bg-brand-soft text-brand', icon: 'bi-exclamation-triangle-fill' },
-  warning: { classes: 'bg-warning-soft', icon: 'bi-exclamation-circle' },
-  success: { classes: 'bg-success-soft text-success', icon: 'bi-check-circle' },
-  info: { classes: 'bg-light text-muted', icon: 'bi-info-circle' },
+  error: { classes: 'bg-emergency-soft text-emergency', icon: 'icon-triangle-alert' },
+  warning: { classes: 'bg-warning-soft', icon: 'icon-circle-alert' },
+  success: { classes: 'bg-success-soft text-success', icon: 'icon-circle-check' },
+  info: { classes: 'bg-light text-muted', icon: 'icon-info' },
 };
 
 @Component({
@@ -22,7 +22,7 @@ const TONE: Record<AlertVariant, { classes: string; icon: string }> = {
       [class.small]="dense()"
       role="alert"
     >
-      <i class="bi me-1" [class]="tone().icon"></i><ng-content />
+      <i class="me-1" [class]="tone().icon"></i><ng-content />
     </div>
   `,
 })

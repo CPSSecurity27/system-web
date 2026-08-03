@@ -1,5 +1,5 @@
-<div class="d-flex align-items-center justify-content-center min-vh-100 bg-light">
-  <div class="card border-0 shadow-sm p-4 w-100" style="max-width: 400px">
+<div class="d-flex align-items-center justify-content-center min-vh-100">
+  <div class="card border p-4 w-100" style="max-width: 400px">
     <div class="text-center mb-4">
       <img
         src="logo.png"
@@ -45,8 +45,8 @@
       </div>
 
       @if (error()) {
-        <div class="alert bg-brand-soft text-brand border-0 py-2 small" role="alert">
-          <i class="bi bi-exclamation-triangle-fill me-1"></i> {{ error() }}
+        <div class="alert bg-emergency-soft text-emergency border-0 py-2 small" role="alert">
+          <i class="icon-triangle-alert me-1"></i> {{ error() }}
         </div>
       }
 

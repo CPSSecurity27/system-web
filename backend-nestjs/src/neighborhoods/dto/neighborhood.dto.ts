@@ -34,13 +34,17 @@ export class CreateNeighborhoodDto {
   @IsEnum(ManagedBy)
   managedBy?: ManagedBy;
 
-  @IsOptional()
-  @IsLatitude({ message: 'Latitud inválida' })
-  latitude?: number;
+  /**
+   * OBLIGATORIAS: el barrio sale en el tablero de clientes y en el mapa del
+   * monitoreo, y un punto opcional deja el mapa a medias. Lo exige también la
+   * base (NOT NULL desde `MandatoryCoordinates`); acá se valida antes para que
+   * el error sea uno de negocio y no un 500 del driver.
+   */
+  @IsLatitude({ message: 'Marcá el barrio en el mapa (latitud inválida)' })
+  latitude!: number;
 
-  @IsOptional()
-  @IsLongitude({ message: 'Longitud inválida' })
-  longitude?: number;
+  @IsLongitude({ message: 'Marcá el barrio en el mapa (longitud inválida)' })
+  longitude!: number;
 }
 
 export class UpdateNeighborhoodDto {

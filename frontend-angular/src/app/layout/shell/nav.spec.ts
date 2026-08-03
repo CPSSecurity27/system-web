@@ -53,9 +53,7 @@ describe('buildNav', () => {
   });
 
   it('CPS NO ve "Mi organización": para eso tiene Mi Empresa', () => {
-    expect(sectionLabels(flags({ isCps: true, isManager: true }))).not.toContain(
-      'Mi organización',
-    );
+    expect(sectionLabels(flags({ isCps: true, isManager: true }))).not.toContain('Mi organización');
   });
 
   it('Contratos ya no es una pestaña: el contrato vive en la ficha del cliente', () => {
@@ -87,10 +85,7 @@ describe('buildNav', () => {
 
   it('el cliente ve SU inventario: alarmas y controles, pero NO la fábrica', () => {
     const f = flags({ isManager: true, isOrgManager: true });
-    expect(linksOf(f, 'Inventario')).toEqual([
-      '/inventario/stock',
-      '/inventario/controles',
-    ]);
+    expect(linksOf(f, 'Inventario')).toEqual(['/inventario/stock', '/inventario/controles']);
   });
 
   it('el vecino no ve inventario', () => {

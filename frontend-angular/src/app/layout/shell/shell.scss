@@ -63,8 +63,9 @@
   flex-shrink: 0;
 }
 
+// El link activo del menú es IDENTIDAD, no alarma: va con la familia de marca.
 .list-group-item-action.active-link {
-  background-color: #ffebee;
-  color: #b71c1c;
+  background-color: var(--brand-soft);
+  color: var(--brand-dark);
   font-weight: 500;
 }

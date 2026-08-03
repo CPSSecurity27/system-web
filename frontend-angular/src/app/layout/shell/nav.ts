@@ -39,18 +39,18 @@ export function buildNav(flags: NavFlags): NavSection[] {
     {
       label: 'Operar',
       items: [
-        { label: 'Inicio', link: '/', icon: 'bi-speedometer2' },
-        { label: 'Eventos', link: '/eventos', icon: 'bi-bell' },
+        { label: 'Inicio', link: '/', icon: 'icon-gauge' },
+        { label: 'Eventos', link: '/eventos', icon: 'icon-bell' },
         {
           // Una organización COMMUNITY gestiona UN solo barrio (lo fuerza el
           // negocio): el plural quedaría mal.
           label: flags.isCommunityOrg ? 'Barrio' : 'Barrios',
           link: '/barrios',
-          icon: 'bi-houses',
+          icon: 'icon-map-pinned',
         },
-        { label: 'Viviendas', link: '/viviendas', icon: 'bi-house-door' },
-        { label: 'Alarmas', link: '/alarmas', icon: 'bi-broadcast' },
-        { label: 'Controles', link: '/controles', icon: 'bi-key' },
+        { label: 'Viviendas', link: '/viviendas', icon: 'icon-house' },
+        { label: 'Alarmas', link: '/alarmas', icon: 'icon-radio-tower' },
+        { label: 'Controles', link: '/controles', icon: 'icon-key' },
       ],
     },
     {
@@ -70,11 +70,11 @@ export function buildNav(flags: NavFlags): NavSection[] {
       items:
         flags.isCps || flags.isOrgManager
           ? [
-              { label: 'Alarmas', link: '/inventario/stock', icon: 'bi-box-seam' },
+              { label: 'Alarmas', link: '/inventario/stock', icon: 'icon-package' },
               ...(flags.isCps
-                ? [{ label: 'Fábrica', link: '/inventario/fabrica', icon: 'bi-cpu' }]
+                ? [{ label: 'Fábrica', link: '/inventario/fabrica', icon: 'icon-cpu' }]
                 : []),
-              { label: 'Controles', link: '/inventario/controles', icon: 'bi-key-fill' },
+              { label: 'Controles', link: '/inventario/controles', icon: 'icon-key-round' },
             ]
           : [],
     },
@@ -86,8 +86,8 @@ export function buildNav(flags: NavFlags): NavSection[] {
       label: 'Administrar',
       items: flags.isCps
         ? [
-            { label: 'Clientes', link: '/clientes', icon: 'bi-briefcase' },
-            { label: 'Usuarios', link: '/usuarios', icon: 'bi-people' },
+            { label: 'Clientes', link: '/clientes', icon: 'icon-briefcase' },
+            { label: 'Usuarios', link: '/usuarios', icon: 'icon-users' },
           ]
         : [],
     },
@@ -95,8 +95,8 @@ export function buildNav(flags: NavFlags): NavSection[] {
       label: 'Mi Empresa',
       items: flags.isCps
         ? [
-            { label: 'Personal', link: '/empresa/personal', icon: 'bi-person-badge' },
-            { label: 'Planes', link: '/empresa/planes', icon: 'bi-tags' },
+            { label: 'Personal', link: '/empresa/personal', icon: 'icon-id-card' },
+            { label: 'Planes', link: '/empresa/planes', icon: 'icon-tags' },
           ]
         : [],
     },
@@ -107,7 +107,7 @@ export function buildNav(flags: NavFlags): NavSection[] {
       // /clientes es solo-CPS.
       label: 'Mi organización',
       items: flags.isOrgManager
-        ? [{ label: 'Mi organización', link: '/mi-organizacion', icon: 'bi-building' }]
+        ? [{ label: 'Mi organización', link: '/mi-organizacion', icon: 'icon-building-2' }]
         : [],
     },
   ];

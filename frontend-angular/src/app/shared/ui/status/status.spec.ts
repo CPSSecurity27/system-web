@@ -2,7 +2,7 @@ import { Component } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 
 import { Status } from './status';
-import { lookOf } from './status-map';
+import { lookOf, STATUS_MAP } from './status-map';
 
 @Component({
   imports: [Status],
@@ -29,6 +29,21 @@ describe('lookOf', () => {
   it('un valor desconocido se muestra tal cual en vez de romper', () => {
     expect(lookOf('event', 'LO_QUE_SEA').label).toBe('LO_QUE_SEA');
   });
+
+  /**
+   * El `.badge` de Bootstrap trae `color: #fff` por defecto. Un estado con fondo
+   * teñido y SIN clase de texto sale blanco sobre casi-blanco: invisible.
+   * Le pasó a `MAINTENANCE`, que estuvo ilegible hasta el 2026-08-02.
+   */
+  it('todo estado con fondo teñido declara su color de texto', () => {
+    const sinColor = Object.entries(STATUS_MAP).flatMap(([kind, estados]) =>
+      Object.entries(estados)
+        .filter(([, look]) => /bg-\S+-soft/.test(look.classes) && !/text-\S+/.test(look.classes))
+        .map(([valor]) => `${kind}.${valor}`),
+    );
+
+    expect(sinColor).toEqual([]);
+  });
 });
 
 describe('cps-status', () => {
@@ -40,8 +55,10 @@ describe('cps-status', () => {
     expect(render('OPEN').textContent).toContain('Abierto');
   });
 
-  it('el abierto usa el tono de marca', () => {
-    expect(render('OPEN').className).toContain('bg-brand-soft');
+  // Un evento abierto es una alarma sonando: emergencia, no identidad.
+  it('el abierto usa el tono de emergencia', () => {
+    expect(render('OPEN').className).toContain('bg-emergency-soft');
+    expect(render('OPEN').className).not.toContain('bg-brand-soft');
   });
 
   it('el resuelto usa el tono de éxito', () => {

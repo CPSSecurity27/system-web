@@ -18,6 +18,7 @@ import type { AuthenticatedUser } from '../auth/auth.service';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { RequireMembership } from '../auth/decorators/roles.decorator';
 import type {
+  MapAccount,
   OnboardCommunityResult,
   OnboardMunicipalResult,
   PagedAccounts,
@@ -145,6 +146,31 @@ export class AccountsController {
     @CurrentUser() actor: AuthenticatedUser,
   ): Promise<PagedAccounts> {
     return this.accounts.findAll(actor, query);
+  }
+
+  /**
+   * GET /api/accounts/map — el TABLERO: clientes con sus barrios, sin paginar.
+   *
+   * Va ANTES de `@Get(':id')` a propósito: Nest resuelve por orden de
+   * declaración y, puesta después, "map" entraría como `:id` y el ParseIntPipe
+   * devolvería un 400.
+   *
+   * Mismo alcance que el listado: CPS ve todas, una organización solo la suya
+   * (recortado en el servicio, no acá).
+   */
+  @Get('map')
+  @RequireMembership(
+    {
+      accountType: AccountType.COMPANY,
+      roles: [UserRole.OWNER, UserRole.ADMIN],
+    },
+    {
+      accountType: AccountType.ORGANIZATION,
+      roles: [UserRole.OWNER, UserRole.ADMIN],
+    },
+  )
+  findForMap(@CurrentUser() actor: AuthenticatedUser): Promise<MapAccount[]> {
+    return this.accounts.findForMap(actor);
   }
 
   /** GET /api/accounts/:id — 403 si la cuenta no es tuya. */

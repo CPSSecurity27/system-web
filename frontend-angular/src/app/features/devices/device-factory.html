@@ -4,7 +4,7 @@
     <div class="card border">
       <div class="card-header bg-white border-bottom">
         <span class="fw-semibold small">
-          <i class="bi bi-cpu me-1"></i> Ingresar equipo al sistema
+          <i class="icon-cpu me-1"></i> Ingresar equipo al sistema
         </span>
       </div>
       <div class="card-body">
@@ -51,8 +51,8 @@
           </div>
 
           @if (error()) {
-            <div class="alert bg-brand-soft text-brand border-0 py-2 small" role="alert">
-              <i class="bi bi-exclamation-triangle-fill me-1"></i> {{ error() }}
+            <div class="alert bg-emergency-soft text-emergency border-0 py-2 small" role="alert">
+              <i class="icon-triangle-alert me-1"></i> {{ error() }}
             </div>
           }
 
@@ -61,13 +61,13 @@
               <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
               Ingresando…
             } @else {
-              <i class="bi bi-plus-lg me-1"></i> Ingresar equipo
+              <i class="icon-plus me-1"></i> Ingresar equipo
             }
           </button>
         </form>
 
         <p class="text-muted small mb-0 mt-3 border-top pt-3">
-          <i class="bi bi-info-circle me-1"></i>
+          <i class="icon-info me-1"></i>
           El <strong>serial</strong> no se carga: se deriva de la MAC (<span class="font-monospace"
             >AV-&lt;12 hex&gt;</span
           >) y es el mismo string que usa el equipo para hablar con el broker.
@@ -85,7 +85,7 @@
           class="card-header bg-white border-bottom d-flex align-items-center justify-content-between"
         >
           <span class="fw-semibold small text-success">
-            <i class="bi bi-check-circle-fill me-1"></i> Equipo ingresado
+            <i class="icon-circle-check-big me-1"></i> Equipo ingresado
           </span>
           <button
             type="button"
@@ -113,7 +113,7 @@
           <!-- Avisos que NO bloquearon el alta, pero que conviene mirar. -->
           @for (warning of device.warnings; track warning) {
             <div class="alert bg-warning-soft border-0 py-2 px-2 small mb-2">
-              <i class="bi bi-exclamation-triangle me-1"></i>{{ warning }}
+              <i class="icon-triangle-alert me-1"></i>{{ warning }}
             </div>
           }
 
@@ -126,7 +126,7 @@
             @if (!prov.brokerRegistered) {
               <div class="border-top pt-2">
                 <p class="small text-muted mb-1">
-                  <i class="bi bi-hdd-network me-1"></i>
+                  <i class="icon-network me-1"></i>
                   Falta darlo de alta en el broker. Correr en el server:
                 </p>
                 <code class="d-block bg-light rounded p-2 small text-break">
@@ -147,7 +147,7 @@
         class="card-header bg-white border-bottom d-flex align-items-center justify-content-between flex-wrap gap-2"
       >
         <span class="fw-semibold small">
-          <i class="bi bi-list-ul me-1"></i> Equipos ingresados
+          <i class="icon-list me-1"></i> Equipos ingresados
           <span class="badge text-bg-light border ms-1">{{ counts().total }}</span>
         </span>
 
@@ -236,7 +236,7 @@
                           -->
                           @if (device.milestones.firstConnectionSource === 'MANUAL') {
                             <i
-                              class="bi bi-hand-index-thumb ms-1"
+                              class="icon-pointer ms-1"
                               title="Marcada a mano por CPS, no observada por el broker"
                             ></i>
                           }
@@ -259,9 +259,9 @@
                   </td>
                   <td class="text-center">
                     @if (device.tested) {
-                      <i class="bi bi-check-circle-fill text-success" title="Probado"></i>
+                      <i class="icon-circle-check-big text-success" title="Probado"></i>
                     } @else {
-                      <i class="bi bi-dash-circle text-muted" title="Sin probar"></i>
+                      <i class="icon-circle-minus text-muted" title="Sin probar"></i>
                     }
                   </td>
                   <td class="text-end text-nowrap">
@@ -283,7 +283,7 @@
                           : 'Marcar como etiquetado'
                       "
                     >
-                      <i class="bi bi-tag"></i>
+                      <i class="icon-tag"></i>
                     </button>
 
                     <button
@@ -299,7 +299,7 @@
                           : 'Marcar la primera conexión a mano (queda auditado)'
                       "
                     >
-                      <i class="bi bi-hdd-network"></i>
+                      <i class="icon-network"></i>
                     </button>
                   </td>
                 </tr>

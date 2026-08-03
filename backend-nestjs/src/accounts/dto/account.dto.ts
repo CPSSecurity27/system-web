@@ -113,6 +113,17 @@ export class CreateAccountDto {
   @IsInt()
   @Min(0, { message: 'El cupo de monitores no puede ser negativo' })
   maxMonitorUsers?: number;
+
+  /**
+   * Dónde está el cliente. OBLIGATORIAS: este endpoint solo crea ORGANIZATION
+   * (COMPANY es una sola y la hace el bootstrap), y ahí el CHECK de la base las
+   * exige. Sin esto el INSERT reventaría con un 23514 traducido a 500.
+   */
+  @IsLatitude({ message: 'Marcá al cliente en el mapa (latitud inválida)' })
+  latitude!: number;
+
+  @IsLongitude({ message: 'Marcá al cliente en el mapa (longitud inválida)' })
+  longitude!: number;
 }
 
 export class OnboardCommunityNeighborhoodDto {
@@ -124,13 +135,16 @@ export class OnboardCommunityNeighborhoodDto {
   @Min(1)
   localityId!: number;
 
-  @IsOptional()
-  @IsLatitude({ message: 'Latitud inválida' })
-  latitude?: number;
+  /**
+   * OBLIGATORIAS. El barrio va al mapa, y además este punto es el de la CUENTA:
+   * el consorcio y su barrio son el mismo lugar, así que el servicio lo copia a
+   * `account.latitude/longitude`, donde el CHECK lo exige.
+   */
+  @IsLatitude({ message: 'Marcá el barrio en el mapa (latitud inválida)' })
+  latitude!: number;
 
-  @IsOptional()
-  @IsLongitude({ message: 'Longitud inválida' })
-  longitude?: number;
+  @IsLongitude({ message: 'Marcá el barrio en el mapa (longitud inválida)' })
+  longitude!: number;
 }
 
 /**
@@ -188,15 +202,6 @@ export class JurisdictionDto {
   @IsInt()
   @Min(1)
   departmentId?: number;
-
-  /** Domicilio en el mapa. Opcional: ubica al cliente, no valida nada. */
-  @IsOptional()
-  @IsLatitude({ message: 'Latitud inválida' })
-  latitude?: number;
-
-  @IsOptional()
-  @IsLongitude({ message: 'Longitud inválida' })
-  longitude?: number;
 }
 
 /**
@@ -299,6 +304,22 @@ export class OnboardMunicipalDto {
   @ValidateNested()
   @Type(() => JurisdictionDto)
   jurisdiction!: JurisdictionDto;
+
+  /**
+   * LA SEDE de la municipalidad, obligatoria (el CHECK de la base la exige en
+   * toda ORGANIZATION).
+   *
+   * Va acá y no adentro de `jurisdiction` —donde estaba— porque son dos cosas
+   * distintas: la jurisdicción es el LÍMITE territorial y decide dónde puede
+   * crear barrios; esto es UN EDIFICIO y solo sirve para ubicar al cliente en
+   * el mapa. Mezcladas, "el punto de la jurisdicción" se lee como el centro del
+   * territorio, que es justo lo que NO es.
+   */
+  @IsLatitude({ message: 'Marcá la sede en el mapa (latitud inválida)' })
+  latitude!: number;
+
+  @IsLongitude({ message: 'Marcá la sede en el mapa (longitud inválida)' })
+  longitude!: number;
 
   @IsDefined({ message: 'Un cliente no se puede crear sin contrato' })
   @ValidateNested()

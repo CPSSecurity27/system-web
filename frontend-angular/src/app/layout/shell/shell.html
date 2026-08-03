@@ -20,11 +20,7 @@
         (click)="toggleSidebar()"
         [title]="collapsed() ? 'Expandir menú' : 'Contraer menú'"
       >
-        <i
-          class="bi"
-          [class.bi-chevron-left]="!collapsed()"
-          [class.bi-chevron-right]="collapsed()"
-        ></i>
+        <i [class.icon-chevron-left]="!collapsed()" [class.icon-chevron-right]="collapsed()"></i>
       </button>
     </div>
 
@@ -54,22 +50,27 @@
             [routerLinkActiveOptions]="{ exact: item.link === '/' }"
             [title]="item.label"
           >
-            <i class="bi me-2" [class]="item.icon"></i> <span>{{ item.label }}</span>
+            <i class="me-2" [class]="item.icon"></i> <span>{{ item.label }}</span>
           </a>
         }
       }
     </div>
   </aside>
 
-  <!-- Contenedor principal -->
-  <div class="flex-grow-1 bg-white">
-    <nav class="navbar navbar-expand-lg navbar-light bg-white border-bottom py-3">
+  <!-- Contenedor principal.
+       Sin `bg-white`: el fondo lo pone el body (--surface-bg, teñido) y las
+       cards blancas flotan encima. Es el modelo de superficies de la app; con
+       todo blanco no se distinguía el contenido del lienzo.
+       La navbar tampoco lleva fondo propio: barra plana sobre el fondo de la
+       app, separada por el borde. -->
+  <div class="flex-grow-1">
+    <nav class="navbar navbar-expand-lg navbar-light border-bottom py-3">
       <div class="container-fluid">
         <span class="navbar-brand fw-semibold text-brand mb-0 h1">CPS Security</span>
 
         <div class="ms-auto d-flex align-items-center">
           <a routerLink="/perfil" class="me-3 text-muted small text-decoration-none">
-            <i class="bi bi-person-circle me-1"></i>
+            <i class="icon-circle-user me-1"></i>
             <span class="d-none d-sm-inline-block">{{ auth.displayName() }}</span>
           </a>
           <button
@@ -78,7 +79,7 @@
             (click)="logout()"
             title="Cerrar sesión"
           >
-            <i class="bi bi-box-arrow-right"></i>
+            <i class="icon-log-out"></i>
           </button>
         </div>
       </div>

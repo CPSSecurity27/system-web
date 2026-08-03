@@ -86,11 +86,17 @@ export class Neighborhood {
   @Column({ name: 'community_scope_enabled', type: 'boolean', default: true })
   communityScopeEnabled!: boolean;
 
-  @Column({ type: 'double precision', nullable: true })
-  latitude!: number | null;
+  /**
+   * Dónde está el barrio. OBLIGATORIA desde `MandatoryCoordinates`: el barrio
+   * sale en el tablero de clientes y en el mapa del monitoreo, y un punto
+   * opcional deja el mapa a medias. No es un cupo: la carga cualquier gestor
+   * del barrio, sin `audit_log`.
+   */
+  @Column({ type: 'double precision' })
+  latitude!: number;
 
-  @Column({ type: 'double precision', nullable: true })
-  longitude!: number | null;
+  @Column({ type: 'double precision' })
+  longitude!: number;
 
   @Column({ name: 'locality_id', type: 'int' })
   localityId!: number;

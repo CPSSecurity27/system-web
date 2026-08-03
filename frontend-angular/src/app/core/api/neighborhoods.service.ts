@@ -14,8 +14,9 @@ export interface CreateNeighborhood {
    * lo omite (se usa la suya) y no puede indicar una ajena.
    */
   organizationId?: number;
-  latitude?: number;
-  longitude?: number;
+  /** OBLIGATORIAS: el barrio sale en el tablero de clientes y en el monitoreo. */
+  latitude: number;
+  longitude: number;
 }
 
 export interface UpdateNeighborhoodQuotas {

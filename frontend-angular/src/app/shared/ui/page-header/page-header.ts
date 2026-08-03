@@ -11,8 +11,9 @@ import { Component, input } from '@angular/core';
       <div>
         <h2 class="h5 fw-bold mb-0">
           @if (icon()) {
-            <i class="bi text-brand me-2" [class]="icon()"></i>
-          }{{ title() }}
+            <i class="text-brand me-2" [class]="icon()"></i>
+          }
+          {{ title() }}
         </h2>
         @if (subtitle()) {
           <p class="text-muted small mb-0">{{ subtitle() }}</p>

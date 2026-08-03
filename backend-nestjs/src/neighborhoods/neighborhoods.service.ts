@@ -153,8 +153,8 @@ export class NeighborhoodsService {
       this.neighborhoods.create({
         name: dto.name,
         localityId: dto.localityId,
-        latitude: dto.latitude ?? null,
-        longitude: dto.longitude ?? null,
+        latitude: dto.latitude,
+        longitude: dto.longitude,
         status: EntityStatus.ACTIVE,
         organizationId: organization.id,
         organizationType: AccountType.ORGANIZATION,

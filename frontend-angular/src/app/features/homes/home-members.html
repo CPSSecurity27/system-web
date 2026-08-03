@@ -6,7 +6,7 @@
 } @else {
   <div class="d-flex align-items-center mb-3">
     <a routerLink="/viviendas" class="btn btn-sm btn-outline-secondary me-2" title="Volver">
-      <i class="bi bi-arrow-left"></i>
+      <i class="icon-arrow-left"></i>
     </a>
     <div>
       <!-- La DIRECCIÓN identifica la vivienda: no hay nombre aparte. -->
@@ -14,7 +14,7 @@
       <p class="text-muted small mb-0">
         Miembros del hogar
         @if (home()?.contactPhone) {
-          · <i class="bi bi-telephone me-1"></i>{{ home()?.contactPhone }}
+          · <i class="icon-phone me-1"></i>{{ home()?.contactPhone }}
         }
       </p>
     </div>
@@ -22,8 +22,8 @@
 
   @if (error()) {
     <!-- Acá caen el 400 comercial del cupo de familiares y el 409 del titular. -->
-    <div class="alert bg-brand-soft text-brand border-0" role="alert">
-      <i class="bi bi-exclamation-triangle-fill me-2"></i>{{ error() }}
+    <div class="alert bg-emergency-soft text-emergency border-0" role="alert">
+      <i class="icon-triangle-alert me-2"></i>{{ error() }}
     </div>
   }
 
@@ -33,7 +33,7 @@
         <div
           class="card-header bg-white border-bottom d-flex align-items-center justify-content-between"
         >
-          <span class="fw-semibold small"><i class="bi bi-people me-1"></i> Miembros</span>
+          <span class="fw-semibold small"><i class="icon-users me-1"></i> Miembros</span>
           <span class="badge text-bg-light border">{{ members().length }}</span>
         </div>
 
@@ -90,7 +90,7 @@
                         [disabled]="saving() || member.status !== 'ACTIVE'"
                         (click)="makeTitular(member)"
                       >
-                        <i class="bi bi-award"></i>
+                        <i class="icon-award"></i>
                       </button>
                     }
                     <button
@@ -100,15 +100,12 @@
                       [disabled]="saving()"
                       (click)="toggleSuspension(member)"
                     >
-                      <i
-                        class="bi"
-                        [class]="member.status === 'ACTIVE' ? 'bi-pause' : 'bi-play'"
-                      ></i>
+                      <i [class]="member.status === 'ACTIVE' ? 'icon-pause' : 'icon-play'"></i>
                     </button>
                     @if (member.role === 'TITULAR') {
                       <!-- Al titular no se lo borra: se transfiere. No ofrecer la puerta. -->
                       <i
-                        class="bi bi-lock text-muted"
+                        class="icon-lock text-muted"
                         title="El titular no se borra: se transfiere"
                       ></i>
                     } @else {
@@ -119,7 +116,7 @@
                         [disabled]="saving()"
                         (click)="removeMember(member)"
                       >
-                        <i class="bi bi-person-dash"></i>
+                        <i class="icon-user-minus"></i>
                       </button>
                     }
                   </td>
@@ -140,9 +137,7 @@
     <div class="col-12 col-lg-5">
       <div class="card border">
         <div class="card-header bg-white border-bottom">
-          <span class="fw-semibold small">
-            <i class="bi bi-person-plus me-1"></i> Sumar vecino
-          </span>
+          <span class="fw-semibold small"> <i class="icon-user-plus me-1"></i> Sumar vecino </span>
         </div>
         <div class="card-body">
           <form [formGroup]="form" (ngSubmit)="addMember()" novalidate>
@@ -163,7 +158,7 @@
                 placeholder="30123456"
               />
               @if (form.controls.dni.touched && form.controls.dni.invalid) {
-                <div class="form-text text-brand">Son 7 a 9 dígitos, sin puntos.</div>
+                <div class="form-text text-emergency">Son 7 a 9 dígitos, sin puntos.</div>
               } @else {
                 <div class="form-text">Con esto entra a la app. Sin puntos.</div>
               }
@@ -175,9 +170,8 @@
               (click)="verOpcionales.set(!verOpcionales())"
             >
               <i
-                class="bi"
-                [class.bi-chevron-right]="!verOpcionales()"
-                [class.bi-chevron-down]="verOpcionales()"
+                [class.icon-chevron-right]="!verOpcionales()"
+                [class.icon-chevron-down]="verOpcionales()"
               ></i>
               Datos opcionales
             </button>
@@ -202,7 +196,7 @@
                     placeholder="vecino@ejemplo.com"
                   />
                   @if (form.controls.email.touched && form.controls.email.invalid) {
-                    <div class="form-text text-brand">Ingresá un email válido.</div>
+                    <div class="form-text text-emergency">Ingresá un email válido.</div>
                   } @else {
                     <div class="form-text">Si lo cargás, le llega un mail para activar.</div>
                   }
@@ -236,7 +230,7 @@
 
           <!-- El vecino nace SIN contraseña: la fija él la primera vez. -->
           <p class="text-muted small mb-0 mt-3 border-top pt-3">
-            <i class="bi bi-info-circle me-1"></i>
+            <i class="icon-info me-1"></i>
             El vecino entra a la app con su <strong>DNI</strong> y elige ahí su contraseña. Hasta
             que lo haga figura como <strong>sin activar</strong> en la lista.
           </p>

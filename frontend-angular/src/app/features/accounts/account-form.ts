@@ -7,14 +7,10 @@ import { AccountsService } from '../../core/api/accounts.service';
 import { GeographyService } from '../../core/api/geography.service';
 import { PlansService } from '../../core/api/plans.service';
 import { apiErrorMessage } from '../../core/http/api-error';
-import {
-  JurisdictionLevel,
-  ManagedBy,
-  OrgSubtype,
-  Plan,
-} from '../../core/models/api.models';
-import { Department, Locality, Province } from '../../core/models/neighborhood';
+import { JurisdictionLevel, ManagedBy, OrgSubtype, Plan } from '../../core/models/api.models';
+import { Centroide, Department, Locality, Province } from '../../core/models/neighborhood';
 import { Map } from '../../shared/map/map';
+import type { MapMarkerVariant } from '../../shared/map/map';
 import { Alert } from '../../shared/ui/alert/alert';
 import { PageHeader } from '../../shared/ui/page-header/page-header';
 
@@ -24,6 +20,41 @@ interface CreatedAccountResult {
   ownerUsername: string;
   temporaryPassword: string;
 }
+
+/**
+ * Los cuatro tramos del alta. El orden no es estético: sigue el orden en que se
+ * conoce la información en una venta real — primero QUIÉN es y qué contrató,
+ * después DÓNDE opera, después la plata y quién va a entrar al sistema.
+ *
+ * `revisar` existe porque este alta es un POST atómico e irreversible que
+ * además devuelve una clave que se muestra UNA sola vez: confirmarlo a ciegas
+ * desde el fondo de un formulario largo era la parte más frágil del flujo.
+ */
+type Paso = 'tipo' | 'cliente' | 'ubicacion' | 'contrato' | 'revisar';
+
+/**
+ * `tipo` va PRIMERO y solo. Es la decisión de la que cuelga todo lo demás: si
+ * es comunitaria no se pregunta cupo de barrios ni de técnicos ni jurisdicción,
+ * y en cambio nace un barrio. Preguntándolo en el medio de un formulario, la
+ * pantalla se reacomodaba abajo del que la estaba llenando.
+ */
+const PASOS: { id: Paso; label: string; icon: string }[] = [
+  { id: 'tipo', label: 'Tipo', icon: 'icon-shapes' },
+  { id: 'cliente', label: 'Cliente', icon: 'icon-briefcase' },
+  { id: 'ubicacion', label: 'Ubicación', icon: 'icon-map-pin' },
+  { id: 'contrato', label: 'Contrato', icon: 'icon-file-text' },
+  { id: 'revisar', label: 'Revisar', icon: 'icon-circle-check-big' },
+];
+
+/**
+ * Cuánto se acerca el mapa en cada nivel de la geografía. Los valores están
+ * elegidos para que la unidad ENTRE en pantalla, no para que se vea linda:
+ * una provincia argentina puede tener 300 km de lado y una localidad se marca
+ * a escala de calles, porque lo que se va a clickear ahí es un edificio.
+ */
+const ZOOM_PROVINCIA = 7;
+const ZOOM_DEPARTAMENTO = 9;
+const ZOOM_LOCALIDAD = 13;
 
 /** Los plazos de contrato que se ofrecen como atajo. */
 type Plazo = { label: string; meses: number };
@@ -126,24 +157,75 @@ export class AccountForm {
   protected readonly plazos = PLAZOS;
 
   /**
-   * El punto del BARRIO de la comunitaria. Opcional, y solo aplica ahí: la
-   * municipalidad no crea barrio en el alta.
+   * El punto del cliente en el mapa. OBLIGATORIO para los dos tipos desde la
+   * migración `MandatoryCoordinates` — el tablero de clientes es un mapa y con
+   * pines faltantes no se puede leer. Qué representa depende del tipo:
    *
-   * Es también el punto de la CUENTA: el consorcio y su barrio son el mismo
-   * lugar, así que el backend copia estas coordenadas a la cuenta
-   * (AccountsService#onboardCommunity).
+   *   COMMUNITY -> el BARRIO. El backend lo copia también a la cuenta: el
+   *                consorcio y su barrio son el mismo lugar.
+   *   MUNICIPAL -> la SEDE de la municipalidad. Va aparte de la jurisdicción,
+   *                que es un límite territorial y no un edificio.
+   *
+   * No vive en el form group porque no se tipea: sale de un click en el mapa.
+   * Por eso el "falta el punto" lo avisa `puntoFaltante` y no un
+   * Validators.required — sin ese aviso el botón quedaría habilitado (el form
+   * no ve este dato) y el click no haría nada.
    */
   protected readonly latitude = signal<number | null>(null);
   protected readonly longitude = signal<number | null>(null);
 
+  protected readonly tienePunto = computed(
+    () => this.latitude() !== null && this.longitude() !== null,
+  );
+
+  /** Qué es el punto que se está marcando, según el tipo de cliente. */
+  protected readonly puntoLabel = () =>
+    this.isCommunity() ? 'el barrio' : 'la sede de la municipalidad';
+
+  /** Se prende al intentar crear sin haber marcado el punto. */
+  protected readonly puntoFaltante = signal(false);
+
+  /**
+   * A dónde vuela el mapa mientras se elige la geografía: provincia →
+   * departamento → localidad, acercándose en cada paso.
+   *
+   * Es ACOMPAÑAMIENTO, no ubicación: el punto del cliente lo sigue marcando una
+   * persona con un click. Sin esto, elegir "Jujuy" te dejaba el mapa en Córdoba
+   * (el centro por defecto) y había que arrastrar medio país a mano antes de
+   * poder marcar nada — el trabajo más tonto de todo el alta.
+   *
+   * El zoom sube con el nivel: la provincia entra entera, la localidad se ve a
+   * escala de calles, que es donde recién se puede marcar un edificio.
+   */
+  protected readonly focoGeo = signal<{
+    latitude: number;
+    longitude: number;
+    zoom: number;
+  } | null>(null);
+
+  private volarA(centro: Centroide | undefined, zoom: number): void {
+    if (!centro || centro.latitude === null || centro.longitude === null) return;
+    this.focoGeo.set({ latitude: centro.latitude, longitude: centro.longitude, zoom });
+  }
+
   protected setPosition(position: { latitude: number; longitude: number }): void {
     this.latitude.set(position.latitude);
     this.longitude.set(position.longitude);
+    this.puntoFaltante.set(false);
   }
 
-  protected clearPosition(): void {
+  /**
+   * No hay "quitar el punto": es obligatorio, y un botón para dejarlo vacío
+   * solo sirve para invalidar el formulario. Para corregirlo se vuelve a
+   * clickear el mapa.
+   *
+   * Sí se limpia al cambiar de tipo, porque ahí cambia QUÉ representa: la sede
+   * de una muni no es el barrio de un consorcio.
+   */
+  private resetPunto(): void {
     this.latitude.set(null);
     this.longitude.set(null);
+    this.puntoFaltante.set(false);
   }
 
   /** Solo los VIGENTES: un plan discontinuado no se puede vender (el backend lo rechaza). */
@@ -210,9 +292,9 @@ export class AccountForm {
     ownerUsername: ['', [Validators.required, Validators.minLength(3)]],
     ownerEmail: [''],
 
-    // Solo COMMUNITY (con validators, ver constructor).
+    // Solo COMMUNITY. El NOMBRE del barrio no está acá: se deriva del nombre
+    // del cliente (ver `nombreDelBarrio`), porque son la misma cosa.
     managedBy: ['CPS' as ManagedBy],
-    neighborhoodName: [''],
     localitySearch: [''],
 
     // El contrato va para los DOS tipos: es de la cuenta.
@@ -239,7 +321,257 @@ export class AccountForm {
   protected readonly duracion = computed(() => this.duracionTexto());
   private readonly fechasVersion = signal(0);
 
+  // ─────────────────────────── EL WIZARD ───────────────────────────
+
+  protected readonly pasos = PASOS;
+  protected readonly paso = signal<Paso>('tipo');
+
+  /**
+   * Se prende al intentar avanzar con algo incompleto, y es lo que hace que el
+   * panel de faltantes aparezca. Antes de eso no se muestra nada en rojo: nadie
+   * quiere ver un formulario recién abierto lleno de errores por campos que
+   * todavía no llegó a llenar.
+   */
+  protected readonly intentoAvanzar = signal(false);
+
+  /**
+   * Pulso que obliga a recalcular los `faltantes`. El form no es una señal, así
+   * que sin esto la lista de "qué falta" queda congelada.
+   *
+   * OJO: `form.valueChanges` NO alcanza. Media pantalla escribe con
+   * `{ emitEvent: false }` —el plan al precargar los cupos, el subtipo al poner
+   * técnicos en 0— y esas escrituras no emiten nada, así que llaman a
+   * `revalidar()` a mano. La GEOGRAFÍA va por su propio `geoVersion`, que
+   * `faltantesDe` también lee.
+   *
+   * No es un detalle: con solo `valueChanges`, cargar la localidad con el ATAJO
+   * del buscador dejaba el panel diciendo "falta la localidad" y, como
+   * `siguiente()` lee esa misma lista, el wizard quedaba TRABADO.
+   */
+  private readonly formVersion = signal(0);
+
+  private revalidar(): void {
+    this.formVersion.update((v) => v + 1);
+  }
+
+  protected readonly indicePaso = computed(() =>
+    PASOS.findIndex((p) => p.id === this.paso()),
+  );
+
+  /**
+   * QUÉ FALTA en un paso, en castellano y no como nombres de campo.
+   *
+   * Es la pieza central del rediseño. Antes el botón se apagaba con
+   * `[disabled]="form.invalid"` y había que cazar el campo rojo en un scroll de
+   * 560 líneas; peor todavía, la geografía NO tenía validador y el submit hacía
+   * un `return` mudo, así que el botón quedaba habilitado y el click no hacía
+   * NADA. Las dos cosas se arreglan acá: nada bloquea sin decir qué falta.
+   */
+  protected faltantesDe(paso: Paso): string[] {
+    // Las dos versiones: `formVersion` para lo que se tipea, `geoVersion` para
+    // la geografía, que se escribe entera con `emitEvent: false` y no dispara
+    // `valueChanges`. Leer solo la primera dejaba el wizard trabado tras usar
+    // el buscador de localidad.
+    this.formVersion();
+    this.geoVersion();
+    const c = this.form.controls;
+    const faltan: string[] = [];
+
+    if (paso === 'cliente') {
+      if (!c.name.value?.trim()) faltan.push('El nombre del cliente');
+      // El de barrios no se pide a la comunitaria: lo fija el backend en 1.
+      if (!this.isCommunity() && c.maxNeighborhoods.invalid) {
+        faltan.push('El cupo de barrios (al menos 1)');
+      }
+      if (c.maxAdminUsers.invalid) faltan.push('El cupo de administradores');
+      if (!this.isCommunity() && c.maxTechnicianUsers.invalid) {
+        faltan.push('El cupo de técnicos');
+      }
+      if (c.maxMonitorUsers.invalid) faltan.push('El cupo de monitores');
+    }
+
+    if (paso === 'ubicacion') {
+      // El nombre del barrio NO se pide: en una comunitaria el barrio y el
+      // cliente son la misma cosa, así que se deriva del nombre del cliente.
+      // Acá vivía el agujero: sin validador, faltar la localidad no invalidaba
+      // el form y el submit se iba en silencio.
+      if (this.needsLocality() && !c.localityId.value) {
+        faltan.push('La localidad');
+      }
+      if (this.isDepartmentLevel() && !c.departmentId.value) {
+        faltan.push('El departamento');
+      }
+      if (!this.tienePunto()) {
+        faltan.push(`El punto en el mapa (${this.puntoLabel()})`);
+      }
+    }
+
+    if (paso === 'contrato') {
+      if (c.contractPrice.invalid) faltan.push('El precio del contrato');
+      if (!c.contractStartDate.value) faltan.push('La fecha de inicio');
+      if (!c.contractEndDate.value) faltan.push('La fecha de fin');
+      // Cruce de fechas: antes no lo frenaba nadie — la duración quedaba vacía
+      // y el contrato se mandaba al revés.
+      if (
+        c.contractStartDate.value &&
+        c.contractEndDate.value &&
+        c.contractEndDate.value < c.contractStartDate.value
+      ) {
+        faltan.push('La fecha de fin tiene que ser posterior a la de inicio');
+      }
+      if (c.ownerUsername.invalid) {
+        faltan.push('El usuario del OWNER (al menos 3 caracteres)');
+      }
+    }
+
+    return faltan;
+  }
+
+  /**
+   * Un paso está completo cuando no le falta nada. `tipo` siempre lo está (el
+   * subtipo arranca elegido) y `revisar` no pide nada propio.
+   */
+  protected pasoCompleto(paso: Paso): boolean {
+    return paso === 'tipo' || paso === 'revisar' || this.faltantesDe(paso).length === 0;
+  }
+
+  protected readonly faltantesActuales = computed(() => this.faltantesDe(this.paso()));
+
+  /** Todo lo que falta, mirado desde el paso final. */
+  protected readonly faltantesTodos = computed(() => [
+    ...this.faltantesDe('cliente'),
+    ...this.faltantesDe('ubicacion'),
+    ...this.faltantesDe('contrato'),
+  ]);
+
+  /**
+   * El nombre del BARRIO de una comunitaria: el mismo que el del cliente.
+   *
+   * No se pregunta aparte porque en un consorcio la cuenta y el barrio son la
+   * misma cosa — pedirlo dos veces daba dos campos que el que carga llenaba
+   * igual, y habilitaba que quedaran distintos por una errata. Se puede
+   * renombrar después desde la ficha del barrio, que es donde tiene sentido.
+   */
+  protected readonly nombreDelBarrio = computed(() => {
+    this.formVersion();
+    return this.form.controls.name.value?.trim() ?? '';
+  });
+
+  /** El campo "nombre" cambia de etiqueta según el tipo elegido en el paso 1. */
+  protected readonly nombreLabel = computed(() => {
+    this.formVersion();
+    return this.isCommunity() ? 'Nombre de la comunidad' : 'Nombre de la municipalidad';
+  });
+
+  protected readonly nombrePlaceholder = computed(() => {
+    this.formVersion();
+    return this.isCommunity() ? 'Barrio Los Lapachos' : 'Municipalidad de San Pedro';
+  });
+
+  /** El pin que se marca en el mapa muestra lo que se está creando. */
+  protected readonly pickVariant = computed<MapMarkerVariant>(() => {
+    this.formVersion();
+    return this.isCommunity() ? 'community' : 'municipal';
+  });
+
+  protected siguiente(): void {
+    if (this.faltantesActuales().length > 0) {
+      this.intentoAvanzar.set(true);
+      this.form.markAllAsTouched();
+      if (!this.tienePunto()) this.puntoFaltante.set(true);
+      return;
+    }
+    this.intentoAvanzar.set(false);
+    const siguiente = PASOS[this.indicePaso() + 1];
+    if (siguiente) this.paso.set(siguiente.id);
+  }
+
+  protected anterior(): void {
+    this.intentoAvanzar.set(false);
+    const anterior = PASOS[this.indicePaso() - 1];
+    if (anterior) this.paso.set(anterior.id);
+  }
+
+  /**
+   * Saltar directo a un paso desde la barra de arriba. Para ATRÁS siempre se
+   * puede; para adelante, solo si todo lo anterior está completo — si no, el
+   * wizard dejaría de garantizar lo único que justifica partirlo en pasos.
+   */
+  protected irA(paso: Paso): void {
+    const destino = PASOS.findIndex((p) => p.id === paso);
+    if (destino <= this.indicePaso()) {
+      this.intentoAvanzar.set(false);
+      this.paso.set(paso);
+      return;
+    }
+    const anteriores = PASOS.slice(0, destino).map((p) => p.id);
+    if (anteriores.every((p) => this.pasoCompleto(p))) {
+      this.intentoAvanzar.set(false);
+      this.paso.set(paso);
+    }
+  }
+
+  protected alcanzable(paso: Paso): boolean {
+    const destino = PASOS.findIndex((p) => p.id === paso);
+    if (destino <= this.indicePaso()) return true;
+    return PASOS.slice(0, destino).every((p) => this.pasoCompleto(p.id));
+  }
+
+  // ───────────────────── Textos para el resumen ─────────────────────
+
+  protected readonly resumenTipo = computed(() => {
+    this.formVersion();
+    return this.isCommunity()
+      ? 'Comunitaria (un solo barrio)'
+      : 'Municipal (varios barrios)';
+  });
+
+  protected readonly resumenPlan = computed(() => {
+    this.formVersion();
+    return this.selectedPlan()?.name ?? 'Sin plan — cupos a mano';
+  });
+
+  /** Dónde queda el cliente, según el tipo y el nivel de jurisdicción. */
+  protected readonly resumenUbicacion = computed(() => {
+    this.formVersion();
+    this.geoVersion();
+    if (this.needsLocality()) return this.selectedLocalityText();
+
+    const department = this.departments().find(
+      (d) => d.id === Number(this.form.controls.departmentId.value),
+    );
+    const province = this.provinces().find(
+      (p) => p.id === Number(this.form.controls.provinceId.value),
+    );
+    return [department?.name, province?.name].filter(Boolean).join(', ');
+  });
+
+  /**
+   * Un cupo de personal, en castellano. El 0 se dice distinto y no es un
+   * capricho: cupo 0 significa que ese ROL NO EXISTE en la cuenta, no que se
+   * quedó sin lugar. Es el último cartel que ve el operador antes de crear, así
+   * que "0 técnicos" —que se lee como "se le acabaron"— sería engañoso.
+   */
+  protected cupoTexto(cantidad: number | null, singular: string): string {
+    // Terminada en vocal suma "s", en consonante "es": técnico -> técnicos,
+    // pero administrador -> administradores.
+    const plural = /[aeiouáéíóú]$/i.test(singular) ? `${singular}s` : `${singular}es`;
+    if (cantidad === 0) return `sin ${plural}`;
+    return `${cantidad} ${cantidad === 1 ? singular : plural}`;
+  }
+
+  protected readonly resumenModalidad = computed(() => {
+    this.formVersion();
+    return this.form.controls.managedBy.value === 'CPS'
+      ? 'Llave en mano — lo opera CPS'
+      : 'Autogestión — lo opera la comunidad';
+  });
+
   constructor() {
+    // El caso normal: alguien tipea. Los `emitEvent: false` van aparte, con
+    // `revalidar()` explícito (ver `formVersion`).
+    this.form.valueChanges.subscribe(() => this.revalidar());
+
     this.plans.list({ active: true }).subscribe({
       next: (plans) => this.plansCatalog.set(plans),
       // Sin catálogo el alta sigue andando con los cupos a mano: no vale la
@@ -265,28 +597,33 @@ export class AccountForm {
     this.form.controls.subtype.valueChanges.subscribe((subtype) => {
       const community = subtype === 'COMMUNITY';
 
+      // El punto cambia de significado con el tipo (barrio vs sede): se limpia
+      // para no dejar la sede de una muni marcando el barrio de un consorcio.
+      this.resetPunto();
+
       if (community) {
         // COMMUNITY gestiona un único barrio, que se crea acá mismo: el cupo lo
         // fija el backend en 1 y el de técnicos va en 0 (el campo lo hace CPS).
         this.form.controls.maxNeighborhoods.disable();
         this.form.controls.maxNeighborhoods.clearValidators();
         this.form.controls.maxTechnicianUsers.setValue(0, { emitEvent: false });
-        this.form.controls.neighborhoodName.setValidators(Validators.required);
       } else {
         this.form.controls.maxNeighborhoods.enable();
         this.form.controls.maxNeighborhoods.setValidators([Validators.required, Validators.min(1)]);
-        this.form.controls.neighborhoodName.clearValidators();
         // Cambiar de tipo cambia qué significa la geografía cargada: la de una
         // comunitaria es la de su barrio, la de una muni es su jurisdicción.
         this.resetGeografia();
       }
       this.form.controls.maxNeighborhoods.updateValueAndValidity();
-      this.form.controls.neighborhoodName.updateValueAndValidity();
 
       // El plan elegido puede no aplicar al subtipo nuevo: se limpia en vez de
       // quedar seleccionado en un combo donde ya no figura.
       const plan = this.selectedPlan();
       if (plan && plan.appliesTo !== subtype) this.form.controls.planId.setValue(null);
+
+      // El subtipo cambia QUÉ campos se piden (barrios y técnicos desaparecen
+      // en la comunitaria), así que la lista de faltantes es otra.
+      this.revalidar();
     });
 
     // Cambiar de nivel de jurisdicción limpia la geografía: si no, se manda una
@@ -302,6 +639,13 @@ export class AccountForm {
       this.resetDesde('department');
       if (!provinceId) return;
 
+      // Vuela apenas se elige, sin esperar la lista de departamentos: el
+      // movimiento del mapa es la confirmación de que el combo hizo algo.
+      this.volarA(
+        this.provinces().find((p) => p.id === Number(provinceId)),
+        ZOOM_PROVINCIA,
+      );
+
       this.geography.departments(Number(provinceId)).subscribe({
         next: (departments) => {
           this.departments.set(departments);
@@ -316,6 +660,11 @@ export class AccountForm {
       this.resetDesde('locality');
       if (!departmentId) return;
 
+      this.volarA(
+        this.departments().find((d) => d.id === Number(departmentId)),
+        ZOOM_DEPARTAMENTO,
+      );
+
       this.geography.localities(Number(departmentId)).subscribe({
         next: (localities) => {
           this.localities.set(localities);
@@ -326,9 +675,15 @@ export class AccountForm {
       });
     });
 
-    this.form.controls.localityId.valueChanges.subscribe(() =>
-      this.geoVersion.update((v) => v + 1),
-    );
+    this.form.controls.localityId.valueChanges.subscribe((localityId) => {
+      this.geoVersion.update((v) => v + 1);
+      if (!localityId) return;
+
+      this.volarA(
+        this.localities().find((l) => l.id === Number(localityId)),
+        ZOOM_LOCALIDAD,
+      );
+    });
 
     // Elegir un plan PRECARGA los cupos, no los congela: quedan editables para
     // el ajuste puntual de esa venta. Se manda igual el planId, para dejar
@@ -345,6 +700,7 @@ export class AccountForm {
         },
         { emitEvent: false },
       );
+      this.revalidar();
     });
 
     for (const control of [
@@ -446,6 +802,11 @@ export class AccountForm {
     const department = locality.department;
     const provinceId = department.province.id;
 
+    // El atajo salta los tres niveles de una, así que vuela DIRECTO a la
+    // localidad: encadenar provincia → depto → localidad acá sería una animación
+    // de tres tramos para una sola decisión.
+    this.volarA(locality, ZOOM_LOCALIDAD);
+
     this.form.controls.provinceId.setValue(provinceId, { emitEvent: false });
 
     // Cada id se setea DESPUÉS de que llegó su lista: un <select> no puede
@@ -476,11 +837,29 @@ export class AccountForm {
     return `${locality.name}, ${locality.department.name}, ${locality.department.province.name}`;
   }
 
+  /**
+   * Crear. Solo se llega acá desde el paso `revisar`, y ese paso solo se
+   * alcanza con todo completo — pero el chequeo se repite igual: es la última
+   * puerta antes de un POST irreversible, y sale gratis.
+   *
+   * Si algo falta (por ejemplo porque se volvió atrás y se borró un campo), NO
+   * hace un return mudo: manda al paso que tiene el problema.
+   */
   protected submit(): void {
-    if (this.form.invalid || this.saving()) {
-      this.form.markAllAsTouched();
-      return;
+    if (this.saving()) return;
+
+    for (const paso of ['cliente', 'ubicacion', 'contrato'] as const) {
+      if (this.faltantesDe(paso).length > 0) {
+        this.intentoAvanzar.set(true);
+        this.form.markAllAsTouched();
+        if (!this.tienePunto()) this.puntoFaltante.set(true);
+        this.paso.set(paso);
+        return;
+      }
     }
+
+    const latitude = this.latitude()!;
+    const longitude = this.longitude()!;
 
     const value = this.form.getRawValue();
     const planId = this.selectedPlan()?.id;
@@ -498,11 +877,8 @@ export class AccountForm {
     };
 
     if (this.isCommunity()) {
-      const localityId = value.localityId ? Number(value.localityId) : null;
-      if (!localityId) {
-        this.form.markAllAsTouched();
-        return;
-      }
+      // Ya lo garantizó `faltantesDe('ubicacion')`; el `!` es para el tipo.
+      const localityId = Number(value.localityId);
 
       this.saving.set(true);
       this.error.set(null);
@@ -519,33 +895,27 @@ export class AccountForm {
           maxMonitorUsers: value.maxMonitorUsers!,
           ...owner,
           neighborhood: {
-            name: value.neighborhoodName,
+            // Igual que el cliente: en un consorcio son la misma cosa.
+            name: this.nombreDelBarrio(),
             localityId,
-            // El punto es opcional; si se marcó, va al barrio Y a la cuenta.
-            ...(this.latitude() !== null && this.longitude() !== null
-              ? { latitude: this.latitude()!, longitude: this.longitude()! }
-              : {}),
+            // El punto del barrio, que el backend copia también a la cuenta.
+            latitude,
+            longitude,
           },
           contract,
         })
         .subscribe({
-          next: (result) => this.onCreated(result.account.id, result.ownerUsername, result.temporaryPassword),
+          next: (result) =>
+            this.onCreated(result.account.id, result.ownerUsername, result.temporaryPassword),
           error: (err) => this.onError(err),
         });
       return;
     }
 
     // MUNICIPAL: la jurisdicción se elige. Va exactamente UNO de los dos ids,
-    // el que corresponde al nivel: el CHECK de la base no admite los dos.
+    // el que corresponde al nivel: el CHECK de la base no admite los dos. Que
+    // el id correcto esté cargado ya lo garantizó `faltantesDe('ubicacion')`.
     const level = value.jurisdictionLevel;
-    if (level === 'LOCALITY' && !value.localityId) {
-      this.form.markAllAsTouched();
-      return;
-    }
-    if (level === 'DEPARTMENT' && !value.departmentId) {
-      this.form.markAllAsTouched();
-      return;
-    }
 
     this.saving.set(true);
     this.error.set(null);
@@ -557,6 +927,9 @@ export class AccountForm {
           level === 'LOCALITY'
             ? { level, localityId: Number(value.localityId) }
             : { level, departmentId: Number(value.departmentId) },
+        // La SEDE, aparte de la jurisdicción: un edificio no es un límite.
+        latitude,
+        longitude,
         contract,
         ...(planId ? { planId } : {}),
         // El form ya validó que no son null (Validators.required + min).
@@ -567,7 +940,8 @@ export class AccountForm {
         ...owner,
       })
       .subscribe({
-        next: (result) => this.onCreated(result.account.id, result.ownerUsername, result.temporaryPassword),
+        next: (result) =>
+          this.onCreated(result.account.id, result.ownerUsername, result.temporaryPassword),
         error: (err) => this.onError(err),
       });
   }

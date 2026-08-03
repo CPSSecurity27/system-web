@@ -15,6 +15,7 @@ import {
   ContractStatus,
   EntityStatus,
   JurisdictionLevel,
+  ManagedBy,
   OrgSubtype,
   UserKind,
   UserRole,
@@ -123,6 +124,48 @@ export interface PagedAccounts {
   offset: number;
 }
 
+/**
+ * Un barrio en el tablero. Liviano a propósito: solo lo que se dibuja en el
+ * mapa o se lee en el panel lateral.
+ *
+ * `managedBy` viaja SOLO acá y no en el cliente, y no es un detalle: quién
+ * opera se decide BARRIO POR BARRIO (regla 3), así que una muni puede tener uno
+ * llave en mano y otro autogestionado. Ponerlo en la cuenta obligaría a mentir
+ * en ese caso.
+ */
+export interface MapNeighborhood {
+  id: number;
+  name: string;
+  status: EntityStatus;
+  managedBy: ManagedBy;
+  latitude: number;
+  longitude: number;
+  localityName: string;
+}
+
+/**
+ * Un cliente en el tablero, con sus barrios adentro.
+ *
+ * Las coordenadas NO son opcionales: desde `MandatoryCoordinates` toda
+ * ORGANIZATION y todo barrio tienen su punto, así que el mapa no necesita
+ * pines aproximados ni fallback a centroides.
+ */
+export interface MapAccount {
+  id: number;
+  name: string;
+  subtype: OrgSubtype;
+  status: EntityStatus;
+  latitude: number;
+  longitude: number;
+  /** Legible: "Córdoba, Capital, Córdoba" o "Capital, Córdoba". */
+  jurisdiction: string;
+  /** Para el filtro por provincia del tablero. */
+  provinceName: string;
+  /** Cupo contra ocupación: "3 de 5 barrios" es la lectura útil de la lista. */
+  maxNeighborhoods: number;
+  neighborhoods: MapNeighborhood[];
+}
+
 const PG_UNIQUE_VIOLATION = '23505';
 const PG_FK_VIOLATION = '23503';
 
@@ -163,6 +206,8 @@ export class AccountsService {
     @InjectRepository(Department)
     private readonly departments: Repository<Department>,
     @InjectRepository(Plan) private readonly plans: Repository<Plan>,
+    @InjectRepository(Neighborhood)
+    private readonly neighborhoods: Repository<Neighborhood>,
     private readonly audit: AuditService,
     private readonly passwords: PasswordService,
   ) {}
@@ -190,6 +235,8 @@ export class AccountsService {
         status: EntityStatus.ACTIVE,
         planId: dto.planId ?? null,
         ...quotas,
+        latitude: dto.latitude,
+        longitude: dto.longitude,
         createdBy,
       }),
     );
@@ -282,8 +329,8 @@ export class AccountsService {
             jurisdictionLevel: JurisdictionLevel.LOCALITY,
             localityId: dto.neighborhood.localityId,
             departmentId: null,
-            latitude: dto.neighborhood.latitude ?? null,
-            longitude: dto.neighborhood.longitude ?? null,
+            latitude: dto.neighborhood.latitude,
+            longitude: dto.neighborhood.longitude,
             createdBy: actor.id,
           }),
         );
@@ -292,8 +339,8 @@ export class AccountsService {
           manager.create(Neighborhood, {
             name: dto.neighborhood.name,
             localityId: dto.neighborhood.localityId,
-            latitude: dto.neighborhood.latitude ?? null,
-            longitude: dto.neighborhood.longitude ?? null,
+            latitude: dto.neighborhood.latitude,
+            longitude: dto.neighborhood.longitude,
             status: EntityStatus.ACTIVE,
             organizationId: account.id,
             organizationType: AccountType.ORGANIZATION,
@@ -454,6 +501,10 @@ export class AccountsService {
             planId: dto.planId ?? null,
             ...quotas,
             ...jurisdiction,
+            // La SEDE de la municipalidad, aparte de la jurisdicción: una es un
+            // edificio y la otra un límite territorial.
+            latitude: dto.latitude,
+            longitude: dto.longitude,
             createdBy: actor.id,
           }),
         );
@@ -551,19 +602,17 @@ export class AccountsService {
    * El nivel dice CUÁL de los dos ids tiene que venir, y el otro tiene que
    * quedar en NULL: el CHECK de la base lo exige, pero un 400 legible es mejor
    * que un 23514 traducido a 500.
+   *
+   * NO devuelve coordenadas: la SEDE de la municipalidad viaja aparte, en el
+   * nivel de arriba del DTO. Son dos cosas distintas —el límite territorial y
+   * un edificio— y tenerlas juntas hacía leer el punto como "el centro de la
+   * jurisdicción", que es justo lo que no es.
    */
   private async resolveJurisdiction(dto: JurisdictionDto): Promise<{
     jurisdictionLevel: JurisdictionLevel;
     localityId: number | null;
     departmentId: number | null;
-    latitude: number | null;
-    longitude: number | null;
   }> {
-    const gps = {
-      latitude: dto.latitude ?? null,
-      longitude: dto.longitude ?? null,
-    };
-
     if (dto.level === JurisdictionLevel.LOCALITY) {
       if (!dto.localityId) {
         throw new BadRequestException(
@@ -585,7 +634,6 @@ export class AccountsService {
         jurisdictionLevel: JurisdictionLevel.LOCALITY,
         localityId: locality.id,
         departmentId: null,
-        ...gps,
       };
     }
 
@@ -611,7 +659,6 @@ export class AccountsService {
       jurisdictionLevel: JurisdictionLevel.DEPARTMENT,
       localityId: null,
       departmentId: department.id,
-      ...gps,
     };
   }
 
@@ -706,6 +753,92 @@ export class AccountsService {
     });
 
     return { items, total, limit: query.limit, offset: query.offset };
+  }
+
+  /**
+   * El TABLERO de clientes: todas las organizaciones que el actor alcanza, con
+   * sus barrios, en una sola respuesta y SIN paginar.
+   *
+   * Por qué sin paginar: es un mapa. Un mapa que muestra los 25 de la página
+   * actual es peor que no tener mapa — el que mira concluye que no hay clientes
+   * donde sí los hay. El payload es chico (un puñado de campos por fila) y el
+   * universo son las organizaciones cliente, no los eventos.
+   *
+   * ALCANCE (el listado sale recortado del servidor, no del front): CPS ve
+   * todas; una organización ve SOLO la suya, y sus barrios salen filtrados por
+   * el mismo recorte — no alcanza con filtrar las cuentas y traer los barrios
+   * de todos.
+   *
+   * Siempre ORGANIZATION: CPS no es un cliente y no va en esta pantalla (su
+   * ficha vive en Mi Empresa).
+   */
+  async findForMap(actor: AuthenticatedUser): Promise<MapAccount[]> {
+    const propias = actor.memberships.map((m) => m.accountId);
+    const esCps = actor.memberships.some(
+      (m) => m.accountType === AccountType.COMPANY,
+    );
+
+    if (!esCps && propias.length === 0) return [];
+
+    const accounts = await this.accounts.find({
+      where: {
+        type: AccountType.ORGANIZATION,
+        ...(esCps ? {} : { id: In(propias) }),
+      },
+      relations: {
+        locality: { department: { province: true } },
+        department: { province: true },
+      },
+      order: { name: 'ASC' },
+    });
+
+    if (accounts.length === 0) return [];
+
+    // Un solo SELECT para los barrios de TODAS las cuentas visibles, en vez de
+    // uno por cuenta: con 40 clientes eso serían 41 consultas.
+    const barrios = await this.neighborhoods.find({
+      where: { organizationId: In(accounts.map((a) => a.id)) },
+      relations: { locality: true },
+      order: { name: 'ASC' },
+    });
+
+    const porCuenta = new Map<number, MapNeighborhood[]>();
+    for (const barrio of barrios) {
+      const lista = porCuenta.get(barrio.organizationId) ?? [];
+      lista.push({
+        id: barrio.id,
+        name: barrio.name,
+        status: barrio.status,
+        managedBy: barrio.managedBy,
+        latitude: barrio.latitude,
+        longitude: barrio.longitude,
+        localityName: barrio.locality?.name ?? '',
+      });
+      porCuenta.set(barrio.organizationId, lista);
+    }
+
+    return accounts.map((account) => {
+      // Va exactamente uno de los dos, según el nivel (lo exige
+      // chk_account_jurisdiction), así que no hay caso ambiguo.
+      const department = account.locality?.department ?? account.department;
+      const province = department?.province;
+
+      return {
+        id: account.id,
+        name: account.name,
+        subtype: account.subtype!,
+        status: account.status,
+        // El CHECK las exige en toda ORGANIZATION, y acá solo hay de esas.
+        latitude: account.latitude!,
+        longitude: account.longitude!,
+        jurisdiction: [account.locality?.name, department?.name, province?.name]
+          .filter(Boolean)
+          .join(', '),
+        provinceName: province?.name ?? '',
+        maxNeighborhoods: account.maxNeighborhoods!,
+        neighborhoods: porCuenta.get(account.id) ?? [],
+      };
+    });
   }
 
   async findOne(id: number, actor: AuthenticatedUser): Promise<Account> {
@@ -1002,8 +1135,19 @@ export class AccountsService {
    *
    * Si vienen las dos cosas, el valor explícito gana: es el caso real de
    * vender un plan con un ajuste puntual sin tener que crear un plan nuevo.
+   *
+   * El parámetro es un RECORTE de CreateAccountDto y no el DTO entero: acá solo
+   * se miran el plan, los cupos y el subtipo. Los tres onboardings arman cuentas
+   * con formas distintas (la comunitaria no manda `maxNeighborhoods`, la
+   * municipal no manda barrio) y pedirles el DTO completo obligaba a inventar
+   * campos que esta función ni lee.
    */
-  private async resolveQuotas(dto: CreateAccountDto): Promise<AccountQuotas> {
+  private async resolveQuotas(
+    dto: Pick<
+      CreateAccountDto,
+      'type' | 'subtype' | 'planId' | (typeof QUOTA_FIELDS)[number]
+    >,
+  ): Promise<AccountQuotas> {
     if (dto.planId === undefined) {
       const faltantes = QUOTA_FIELDS.filter((f) => dto[f] === undefined);
       if (faltantes.length > 0) {

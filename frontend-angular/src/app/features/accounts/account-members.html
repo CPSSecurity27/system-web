@@ -9,7 +9,7 @@
          que es solo-CPS (y donde CPS ni siquiera figura). -->
     @if (!isOwnAccountView) {
       <a routerLink="/clientes" class="btn btn-sm btn-outline-secondary me-2" title="Volver">
-        <i class="bi bi-arrow-left"></i>
+        <i class="icon-arrow-left"></i>
       </a>
     }
     <div>
@@ -36,8 +36,8 @@
   </div>
 
   @if (error()) {
-    <div class="alert bg-brand-soft text-brand border-0" role="alert">
-      <i class="bi bi-exclamation-triangle-fill me-2"></i>{{ error() }}
+    <div class="alert bg-emergency-soft text-emergency border-0" role="alert">
+      <i class="icon-triangle-alert me-2"></i>{{ error() }}
     </div>
   }
 
@@ -47,7 +47,7 @@
         <div
           class="card-header bg-white border-bottom d-flex align-items-center justify-content-between"
         >
-          <span class="fw-semibold small"><i class="bi bi-people me-1"></i> Miembros</span>
+          <span class="fw-semibold small"><i class="icon-users me-1"></i> Miembros</span>
           <span class="badge text-bg-light border">{{ members().length }}</span>
         </div>
 
@@ -70,7 +70,7 @@
                     @if (member.role === 'OWNER') {
                       <!-- OWNER = usuario institucional, único, soberanía de la cuenta. -->
                       <span class="badge bg-brand-soft text-brand border">
-                        <i class="bi bi-bank me-1"></i>OWNER
+                        <i class="icon-landmark me-1"></i>OWNER
                       </span>
                     } @else {
                       <span class="badge text-bg-light border">{{ member.role }}</span>
@@ -85,9 +85,10 @@
                         (click)="toggleAssignments(member)"
                       >
                         <i
-                          class="bi"
                           [class]="
-                            assignmentsMember()?.id === member.id ? 'bi-chevron-up' : 'bi-geo-alt'
+                            assignmentsMember()?.id === member.id
+                              ? 'icon-chevron-up'
+                              : 'icon-map-pin'
                           "
                         ></i>
                       </button>
@@ -95,7 +96,7 @@
                     @if (member.role === 'OWNER') {
                       <!-- Al OWNER no se lo degrada ni se lo saca: no ofrecer la puerta. -->
                       <i
-                        class="bi bi-lock text-muted"
+                        class="icon-lock text-muted"
                         title="El OWNER institucional no se puede quitar"
                       ></i>
                     } @else {
@@ -106,7 +107,7 @@
                         [disabled]="saving()"
                         (click)="removeMember(member)"
                       >
-                        <i class="bi bi-person-dash"></i>
+                        <i class="icon-user-minus"></i>
                       </button>
                     }
                   </td>
@@ -127,7 +128,7 @@
                         <div class="py-2">
                           <!-- staff_assignment: nada tildado = ve TODA la organización. -->
                           <p class="text-muted small mb-2">
-                            <i class="bi bi-geo-alt me-1"></i>
+                            <i class="icon-map-pin me-1"></i>
                             Barrios donde trabaja <strong>{{ member.user.name }}</strong
                             >. Sin barrios tildados ve <strong>toda la organización</strong>.
                           </p>
@@ -156,7 +157,7 @@
                             [disabled]="saving()"
                             (click)="saveAssignments()"
                           >
-                            <i class="bi bi-check-lg me-1"></i> Guardar asignaciones
+                            <i class="icon-check me-1"></i> Guardar asignaciones
                           </button>
                         </div>
                       }
@@ -182,13 +183,13 @@
       @if (account()?.type === 'ORGANIZATION') {
         <div class="card border mt-3">
           <div class="card-header bg-white border-bottom d-flex align-items-center">
-            <span class="fw-semibold small"><i class="bi bi-houses me-1"></i> Barrios</span>
+            <span class="fw-semibold small"><i class="icon-map-pinned me-1"></i> Barrios</span>
             <span class="badge text-bg-light border ms-2">
               {{ orgBarrios().length }}/{{ account()?.maxNeighborhoods }}
             </span>
             @if (auth.isCps() && account()?.subtype !== 'COMMUNITY') {
               <a routerLink="/barrios/nuevo" class="btn btn-sm btn-outline-secondary ms-auto">
-                <i class="bi bi-plus-lg me-1"></i> Nuevo barrio
+                <i class="icon-plus me-1"></i> Nuevo barrio
               </a>
             }
           </div>
@@ -217,7 +218,7 @@
                     }
                     @if (barrio.latitude === null) {
                       <span class="text-muted" title="Sin punto en el mapa">
-                        <i class="bi bi-geo-alt"></i>
+                        <i class="icon-map-pin"></i>
                       </span>
                     }
                   </li>
@@ -236,16 +237,14 @@
       @if (account()?.type === 'ORGANIZATION') {
         <div class="card border mt-3">
           <div class="card-header bg-white border-bottom d-flex align-items-center">
-            <span class="fw-semibold small">
-              <i class="bi bi-file-earmark-text me-1"></i> Contrato
-            </span>
+            <span class="fw-semibold small"> <i class="icon-file-text me-1"></i> Contrato </span>
             @if (auth.isCps() && !showRenew()) {
               <button
                 type="button"
                 class="btn btn-sm btn-outline-secondary ms-auto"
                 (click)="abrirRenovacion()"
               >
-                <i class="bi bi-arrow-repeat me-1"></i>
+                <i class="icon-refresh-cw me-1"></i>
                 {{ activeContract() ? 'Renovar' : 'Firmar contrato' }}
               </button>
             }
@@ -314,7 +313,9 @@
                 </p>
                 <div class="row g-3 mb-2">
                   <div class="col-12 col-sm-4">
-                    <label for="rPrice" class="form-label small fw-medium">Precio del período</label>
+                    <label for="rPrice" class="form-label small fw-medium"
+                      >Precio del período</label
+                    >
                     <input
                       id="rPrice"
                       type="number"
@@ -326,7 +327,12 @@
                   </div>
                   <div class="col-12 col-sm-4">
                     <label for="rStart" class="form-label small fw-medium">Desde</label>
-                    <input id="rStart" type="date" class="form-control" formControlName="startDate" />
+                    <input
+                      id="rStart"
+                      type="date"
+                      class="form-control"
+                      formControlName="startDate"
+                    />
                   </div>
                   <div class="col-12 col-sm-4">
                     <label for="rEnd" class="form-label small fw-medium">Hasta</label>
@@ -334,16 +340,32 @@
                   </div>
                 </div>
                 <div class="btn-group btn-group-sm flex-wrap mb-3" role="group">
-                  <button type="button" class="btn btn-outline-secondary" (click)="aplicarPlazoRenovacion(3)">
+                  <button
+                    type="button"
+                    class="btn btn-outline-secondary"
+                    (click)="aplicarPlazoRenovacion(3)"
+                  >
                     Trimestral
                   </button>
-                  <button type="button" class="btn btn-outline-secondary" (click)="aplicarPlazoRenovacion(6)">
+                  <button
+                    type="button"
+                    class="btn btn-outline-secondary"
+                    (click)="aplicarPlazoRenovacion(6)"
+                  >
                     Semestral
                   </button>
-                  <button type="button" class="btn btn-outline-secondary" (click)="aplicarPlazoRenovacion(12)">
+                  <button
+                    type="button"
+                    class="btn btn-outline-secondary"
+                    (click)="aplicarPlazoRenovacion(12)"
+                  >
                     Anual
                   </button>
-                  <button type="button" class="btn btn-outline-secondary" (click)="aplicarPlazoRenovacion(24)">
+                  <button
+                    type="button"
+                    class="btn btn-outline-secondary"
+                    (click)="aplicarPlazoRenovacion(24)"
+                  >
                     2 años
                   </button>
                 </div>
@@ -402,7 +424,9 @@
       @if (auth.isCps() && account()?.type !== 'COMPANY') {
         <div class="card border mt-3">
           <div class="card-header bg-white border-bottom">
-            <span class="fw-semibold small"><i class="bi bi-sliders me-1"></i> Cupos (tarifa)</span>
+            <span class="fw-semibold small"
+              ><i class="icon-sliders-horizontal me-1"></i> Cupos (tarifa)</span
+            >
           </div>
           <div class="card-body">
             <form [formGroup]="quotasForm" (ngSubmit)="saveQuotas()" novalidate>
@@ -422,8 +446,7 @@
                   />
                   @if (account()?.subtype === 'COMMUNITY') {
                     <div class="form-text mt-1">
-                      <i class="bi bi-lock-fill me-1"></i>Fijo en 1: es una organización
-                      comunitaria.
+                      <i class="icon-lock me-1"></i>Fijo en 1: es una organización comunitaria.
                     </div>
                   } @else if (
                     quotasForm.controls.maxNeighborhoods.touched &&
@@ -496,12 +519,12 @@
               </div>
               @if (quotasMessage()) {
                 <p class="text-success small mb-0 mt-2">
-                  <i class="bi bi-check-circle me-1"></i>{{ quotasMessage() }}
+                  <i class="icon-circle-check me-1"></i>{{ quotasMessage() }}
                 </p>
               }
               <!-- Reducir un cupo NO suspende a nadie: grandfathering. -->
               <p class="text-muted small mb-0 mt-2">
-                <i class="bi bi-info-circle me-1"></i>
+                <i class="icon-info me-1"></i>
                 Bajar un cupo no suspende lo ya creado: solo bloquea altas nuevas. En los cupos de
                 personal, <strong>0 significa que la cuenta no tiene ese rol</strong> y deja de
                 ofrecerse al sumar gente.
@@ -517,7 +540,7 @@
       <div class="card border mb-3">
         <div class="card-header bg-white border-bottom">
           <span class="fw-semibold small">
-            <i class="bi bi-person-plus me-1"></i> Crear persona y sumarla
+            <i class="icon-user-plus me-1"></i> Crear persona y sumarla
           </span>
         </div>
         <div class="card-body">
@@ -588,7 +611,7 @@
         <div class="card border">
           <div class="card-header bg-white border-bottom">
             <span class="fw-semibold small">
-              <i class="bi bi-person-check me-1"></i> Sumar persona existente
+              <i class="icon-user-check me-1"></i> Sumar persona existente
             </span>
           </div>
           <div class="card-body">
@@ -627,7 +650,7 @@
             </form>
 
             <p class="text-muted small mb-0 mt-3 border-top pt-3">
-              <i class="bi bi-info-circle me-1"></i>
+              <i class="icon-info me-1"></i>
               El acceso lo da la <strong>membresía</strong>, no el usuario. Técnicos y monitores se
               pueden acotar por barrio con asignaciones de personal.
             </p>

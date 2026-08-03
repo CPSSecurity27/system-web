@@ -1,6 +1,6 @@
 <div class="d-flex align-items-center mb-3">
   <a routerLink="/barrios" class="btn btn-sm btn-outline-secondary me-2" title="Volver">
-    <i class="bi bi-arrow-left"></i>
+    <i class="icon-arrow-left"></i>
   </a>
   <h2 class="h5 fw-bold mb-0">Nuevo barrio</h2>
 </div>
@@ -14,7 +14,7 @@
             <label for="name" class="form-label small fw-medium">Nombre del barrio</label>
             <input id="name" type="text" class="form-control" formControlName="name" />
             @if (form.controls.name.touched && form.controls.name.invalid) {
-              <div class="form-text text-brand">El nombre es obligatorio.</div>
+              <div class="form-text text-emergency">El nombre es obligatorio.</div>
             }
           </div>
 
@@ -39,7 +39,7 @@
               </div>
               @if (organizations().length === 0) {
                 <div class="alert bg-warning-soft border-0 py-2 small mt-2">
-                  <i class="bi bi-info-circle me-1"></i>
+                  <i class="icon-info me-1"></i>
                   No hay ninguna municipalidad cargada todavía.
                   <a routerLink="/clientes/nuevo">Creá el cliente primero</a>.
                 </div>
@@ -47,7 +47,7 @@
             </div>
           } @else {
             <div class="alert bg-warning-soft border-0 py-2 small mb-3">
-              <i class="bi bi-info-circle me-1"></i>
+              <i class="icon-info me-1"></i>
               El barrio se crea a nombre de <strong>tu organización</strong> y descuenta de tu cupo
               contratado. Si el cupo está lleno, contactá a CPS para ampliarlo.
             </div>
@@ -97,52 +97,51 @@
 
           @if (selected(); as locality) {
             <div class="alert bg-success-soft border-0 py-2 small mb-3">
-              <i class="bi bi-geo-alt-fill me-1"></i>
+              <i class="icon-map-pin me-1"></i>
               Localidad elegida: <strong>{{ fullName(locality) }}</strong>
             </div>
           } @else {
             <div class="alert bg-warning-soft border-0 py-2 small mb-3">
-              <i class="bi bi-info-circle me-1"></i>
+              <i class="icon-info me-1"></i>
               Elegí una localidad de la lista. Ojo: <strong>CABA no tiene localidades</strong>
               en el padrón oficial, así que no se puede crear un barrio ahí.
             </div>
           }
 
           <!--
-            El PUNTO en el mapa: opcional, ubica al barrio. NO decide dónde
-            puede estar — eso lo dice la LOCALIDAD, que el backend valida
-            contra la jurisdicción del cliente.
+            El PUNTO en el mapa: OBLIGATORIO, ubica al barrio en el tablero de
+            clientes y en el monitoreo. NO decide dónde puede estar — eso lo
+            dice la LOCALIDAD, que el backend valida contra la jurisdicción del
+            cliente.
           -->
-          <div class="card border mb-3">
+          <div class="card border mb-3" [class.border-danger]="puntoFaltante()">
             <div class="card-header bg-white border-bottom">
               <span class="fw-semibold small">
-                <i class="bi bi-geo-alt me-1"></i> Ubicación en el mapa
-                <span class="text-muted fw-normal">(opcional)</span>
+                <i class="icon-map-pin me-1"></i> Ubicación en el mapa
               </span>
             </div>
             <div class="card-body">
               <!-- Nadie tipea coordenadas: se clickea el mapa y listo. -->
               <p class="text-muted small mb-2">Hacé click en el mapa para marcar el barrio.</p>
               <app-map [clickable]="true" (positionChange)="setPosition($event)" />
-              @if (latitude() !== null) {
+              @if (tienePunto()) {
                 <p class="small mb-0 mt-2">
-                  <i class="bi bi-check-circle text-success me-1"></i>
+                  <i class="icon-circle-check text-success me-1"></i>
                   <span class="font-monospace">{{ latitude() }}, {{ longitude() }}</span>
-                  <button
-                    type="button"
-                    class="btn btn-link btn-sm p-0 ms-2 align-baseline"
-                    (click)="clearPosition()"
-                  >
-                    Quitar
-                  </button>
+                  <span class="text-muted ms-2">Clickeá de nuevo para corregirlo.</span>
+                </p>
+              } @else if (puntoFaltante()) {
+                <p class="small text-danger mb-0 mt-2">
+                  <i class="icon-triangle-alert me-1"></i>
+                  Marcá el barrio en el mapa antes de crearlo.
                 </p>
               }
             </div>
           </div>
 
           @if (error()) {
-            <div class="alert bg-brand-soft text-brand border-0 py-2 small" role="alert">
-              <i class="bi bi-exclamation-triangle-fill me-1"></i> {{ error() }}
+            <div class="alert bg-emergency-soft text-emergency border-0 py-2 small" role="alert">
+              <i class="icon-triangle-alert me-1"></i> {{ error() }}
             </div>
           }
 

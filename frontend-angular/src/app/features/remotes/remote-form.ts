@@ -22,7 +22,7 @@ import { Account, Device, Home, Remote } from '../../core/models/api.models';
   template: `
     <div class="d-flex align-items-center mb-3">
       <a routerLink="/controles" class="btn btn-sm btn-outline-secondary me-2" title="Volver">
-        <i class="bi bi-arrow-left"></i>
+        <i class="icon-arrow-left"></i>
       </a>
       <h2 class="h5 fw-bold mb-0">Nuevo control remoto</h2>
     </div>
@@ -97,8 +97,11 @@ import { Account, Device, Home, Remote } from '../../core/models/api.models';
               }
 
               @if (error()) {
-                <div class="alert bg-brand-soft text-brand border-0 py-2 small" role="alert">
-                  <i class="bi bi-exclamation-triangle-fill me-1"></i> {{ error() }}
+                <div
+                  class="alert bg-emergency-soft text-emergency border-0 py-2 small"
+                  role="alert"
+                >
+                  <i class="icon-triangle-alert me-1"></i> {{ error() }}
                 </div>
               }
 
@@ -128,7 +131,7 @@ import { Account, Device, Home, Remote } from '../../core/models/api.models';
         <div class="card border">
           <div class="card-header bg-white border-bottom d-flex align-items-center">
             <span class="fw-semibold small">
-              <i class="bi bi-box-seam me-1"></i> Controles en stock
+              <i class="icon-package me-1"></i> Controles en stock
             </span>
             <span class="badge text-bg-light border ms-2">{{ stock().length }}</span>
           </div>

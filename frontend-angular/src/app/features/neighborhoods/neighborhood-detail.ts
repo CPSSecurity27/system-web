@@ -12,10 +12,11 @@ import { apiErrorMessage } from '../../core/http/api-error';
 import { Account, Device, Home } from '../../core/models/api.models';
 import { Neighborhood } from '../../core/models/neighborhood';
 import { Map, MapMarker } from '../../shared/map/map';
+import { MapLegend, MapLegendItem } from '../../shared/map/map-legend';
 
 @Component({
   selector: 'app-neighborhood-detail',
-  imports: [RouterLink, ReactiveFormsModule, Map],
+  imports: [RouterLink, ReactiveFormsModule, Map, MapLegend],
   templateUrl: './neighborhood-detail.html',
 })
 export class NeighborhoodDetail {
@@ -57,7 +58,7 @@ export class NeighborhoodDetail {
   /** El barrio en el mapa (su centro), aparte de las alarmas y las viviendas. */
   protected readonly ubicacionActual = computed<MapMarker[]>(() => {
     const barrio = this.neighborhood();
-    if (!barrio || barrio.latitude === null || barrio.longitude === null) return [];
+    if (!barrio) return [];
     return [
       {
         latitude: barrio.latitude,
@@ -71,16 +72,14 @@ export class NeighborhoodDetail {
   /**
    * Dónde abre el mapa. `app-map` lee `center` una sola vez al inicializarse y
    * después, si hay marcadores, hace fitBounds — así que esto manda sobre todo
-   * cuando NO hay nada que encuadrar (barrio recién creado). Prioridad: el
-   * centro guardado del barrio, si no la primera alarma o vivienda que haya.
+   * cuando NO hay nada que encuadrar (barrio recién creado).
+   *
+   * Desde que las coordenadas del barrio son obligatorias, el único caso sin
+   * centro es que el barrio todavía no haya cargado.
    */
   protected readonly centroMapa = computed<[number, number]>(() => {
     const barrio = this.neighborhood();
-    if (barrio?.latitude != null && barrio.longitude != null) {
-      return [barrio.latitude, barrio.longitude];
-    }
-    const alguno = this.alarmMarkers()[0] ?? this.homeMarkers()[0];
-    if (alguno) return [alguno.latitude, alguno.longitude];
+    if (barrio) return [barrio.latitude, barrio.longitude];
     return [-31.4167, -64.1836]; // Córdoba: el default del componente
   });
 
@@ -145,6 +144,21 @@ export class NeighborhoodDetail {
     ...this.homeMarkers(),
     ...this.ubicacionActual(),
   ]);
+
+  /**
+   * Sólo se lista lo que el mapa realmente está dibujando: si el barrio no tiene
+   * ubicación propia, no aparece la fila "Centro del barrio". Una leyenda que
+   * nombra un color que no está en pantalla confunde igual que una que miente.
+   */
+  protected readonly leyenda = computed<MapLegendItem[]>(() =>
+    (
+      [
+        { variant: 'device' as const, count: this.alarmMarkers().length },
+        { variant: 'home' as const, count: this.homeMarkers().length },
+        { variant: 'center' as const, count: this.ubicacionActual().length },
+      ] satisfies MapLegendItem[]
+    ).filter((item) => item.count > 0),
+  );
 
   protected readonly withoutCoordinates = computed(
     () => this.deviceList().filter((d) => d.latitude === null || d.longitude === null).length,

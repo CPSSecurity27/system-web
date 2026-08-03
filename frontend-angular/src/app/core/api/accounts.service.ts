@@ -6,6 +6,7 @@ import { environment } from '../../../environments/environment';
 import { AccountType, UserRole } from '../auth/auth.models';
 import {
   Account,
+  EntityStatus,
   JurisdictionLevel,
   ManagedBy,
   Member,
@@ -57,8 +58,12 @@ export interface OnboardCommunity {
   neighborhood: {
     name: string;
     localityId: number;
-    latitude?: number;
-    longitude?: number;
+    /**
+     * OBLIGATORIAS. El backend las copia también a la CUENTA: el consorcio y su
+     * barrio son el mismo lugar.
+     */
+    latitude: number;
+    longitude: number;
   };
 }
 
@@ -85,8 +90,6 @@ export interface Jurisdiction {
   localityId?: number;
   /** Con nivel DEPARTMENT. */
   departmentId?: number;
-  latitude?: number;
-  longitude?: number;
 }
 
 export interface OnboardCommunityResult {
@@ -100,12 +103,20 @@ export interface OnboardCommunityResult {
 }
 
 /**
- * Alta atómica de una MUNICIPAL: cuenta + OWNER + membresía. Sin barrio y sin
- * contrato, a propósito — la muni carga sus barrios después, contra su cupo.
+ * Alta atómica de una MUNICIPAL: cuenta + OWNER + membresía + CONTRATO. Sin
+ * barrio, a propósito — la muni los carga después, contra su cupo. El contrato
+ * SÍ va: es de la cuenta, así que se firma el día 1 aunque todavía no haya
+ * ningún barrio.
  */
 export interface OnboardMunicipal {
   name: string;
   jurisdiction: Jurisdiction;
+  /**
+   * LA SEDE de la municipalidad, obligatoria. Aparte de la jurisdicción porque
+   * son cosas distintas: una es un edificio y la otra un límite territorial.
+   */
+  latitude: number;
+  longitude: number;
   contract: OnboardContract;
   planId?: number;
   maxNeighborhoods?: number;
@@ -126,10 +137,55 @@ export interface OnboardMunicipalResult {
   temporaryPassword: string;
 }
 
+/**
+ * Un barrio en el TABLERO de clientes. Liviano: solo lo que se dibuja o se lee
+ * en el panel lateral.
+ *
+ * `managedBy` viaja en el BARRIO y no en el cliente porque quién opera se
+ * decide barrio por barrio: una muni puede tener uno llave en mano y otro
+ * autogestionado.
+ */
+export interface MapNeighborhood {
+  id: number;
+  name: string;
+  status: EntityStatus;
+  managedBy: ManagedBy;
+  latitude: number;
+  longitude: number;
+  localityName: string;
+}
+
+/** Un cliente en el TABLERO, con sus barrios adentro. Coordenadas siempre. */
+export interface MapAccount {
+  id: number;
+  name: string;
+  subtype: OrgSubtype;
+  status: EntityStatus;
+  latitude: number;
+  longitude: number;
+  /** Legible: "Córdoba, Capital, Córdoba". */
+  jurisdiction: string;
+  provinceName: string;
+  maxNeighborhoods: number;
+  neighborhoods: MapNeighborhood[];
+}
+
 @Injectable({ providedIn: 'root' })
 export class AccountsService {
   private readonly http = inject(HttpClient);
   private readonly api = environment.apiUrl;
+
+  /**
+   * El TABLERO: todos los clientes que el usuario alcanza, con sus barrios, en
+   * una sola respuesta y SIN paginar.
+   *
+   * Sin paginar porque es un mapa: mostrar los 25 de la página actual haría
+   * concluir que no hay clientes donde sí los hay. El recorte por alcance lo
+   * hace el backend (CPS ve todos; una organización, la suya).
+   */
+  forMap(): Observable<MapAccount[]> {
+    return this.http.get<MapAccount[]>(`${this.api}/accounts/map`);
+  }
 
   /**
    * Para COMBOS de "¿de qué cliente?" (contratos, entregas de stock, dueño de

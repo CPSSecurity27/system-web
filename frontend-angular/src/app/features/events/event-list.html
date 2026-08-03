@@ -1,6 +1,6 @@
 <cps-page-header
   title="Eventos"
-  icon="bi-bell-fill"
+  icon="icon-bell-ring"
   subtitle="El tablero del monitoreo: cada activación, quién la disparó y cómo terminó"
 >
   @if (canResolve()) {
@@ -10,7 +10,7 @@
       class="btn btn-brand btn-sm"
       (click)="showCreate.set(!showCreate())"
     >
-      <i class="bi bi-plus-lg me-1"></i> Registrar evento
+      <i class="icon-plus me-1"></i> Registrar evento
     </button>
   }
 </cps-page-header>
@@ -31,6 +31,20 @@
             <option value="">Elegí un barrio…</option>
             @for (barrio of barrios(); track barrio.id) {
               <option [value]="barrio.id">{{ barrio.name }}</option>
+            }
+          </select>
+        </div>
+        <div>
+          <label for="createMode" class="form-label small fw-medium">Motivo</label>
+          <select
+            id="createMode"
+            class="form-select form-select-sm"
+            style="min-width: 200px"
+            [(ngModel)]="createMode"
+          >
+            <option value="">Sin especificar</option>
+            @for (modo of modos; track modo.code) {
+              <option [value]="modo.code">{{ modo.label }}</option>
             }
           </select>
         </div>
@@ -93,7 +107,7 @@
   [empty]="items().length === 0"
   loadingText="Cargando eventos…"
   emptyText="No hay eventos para mostrar."
-  emptyIcon="bi-bell-slash"
+  emptyIcon="icon-bell-off"
 >
   <div class="table-responsive">
     <table class="table table-hover align-middle">
@@ -102,6 +116,9 @@
           <th scope="col">#</th>
           <th scope="col">Fecha</th>
           <th scope="col">Barrio</th>
+          <!-- El MOTIVO va antes que el origen: es lo primero que el monitor
+               necesita saber. El origen dice por dónde entró, no qué pasa. -->
+          <th scope="col">Motivo</th>
           <th scope="col">Origen</th>
           <th scope="col">Activó</th>
           <th scope="col">Estado</th>
@@ -115,6 +132,13 @@
             <td class="small text-muted font-monospace">{{ event.id }}</td>
             <td class="small">{{ event.createdAt | date: 'dd/MM/yy HH:mm:ss' }}</td>
             <td class="small">{{ barrioName(event.neighborhoodId) }}</td>
+            <td>
+              @if (event.triggerMode) {
+                <cps-alarm-mode [code]="event.triggerMode" />
+              } @else {
+                <span class="text-muted small">—</span>
+              }
+            </td>
             <td>
               <span class="badge text-bg-light border">{{ event.origin }}</span>
               @if (event.scope === 'COMMUNITY') {
@@ -138,10 +162,7 @@
                   title="Respuestas"
                   (click)="toggleDetail(event)"
                 >
-                  <i
-                    class="bi"
-                    [class]="openEventId() === event.id ? 'bi-chevron-up' : 'bi-people'"
-                  ></i>
+                  <i [class]="openEventId() === event.id ? 'icon-chevron-up' : 'icon-users'"></i>
                 </button>
                 @if (event.status === 'OPEN') {
                   <button
@@ -151,7 +172,7 @@
                     [disabled]="saving()"
                     (click)="resolve(event, 'RESOLVED')"
                   >
-                    <i class="bi bi-check-lg"></i>
+                    <i class="icon-check"></i>
                   </button>
                   <button
                     type="button"
@@ -160,7 +181,7 @@
                     [disabled]="saving()"
                     (click)="resolve(event, 'FALSE_ALARM')"
                   >
-                    <i class="bi bi-x-lg"></i>
+                    <i class="icon-x"></i>
                   </button>
                 }
               </td>
@@ -172,10 +193,7 @@
                   title="Respuestas"
                   (click)="toggleDetail(event)"
                 >
-                  <i
-                    class="bi"
-                    [class]="openEventId() === event.id ? 'bi-chevron-up' : 'bi-people'"
-                  ></i>
+                  <i [class]="openEventId() === event.id ? 'icon-chevron-up' : 'icon-users'"></i>
                 </button>
               </td>
             }
@@ -183,7 +201,7 @@
 
           @if (openEventId() === event.id) {
             <tr>
-              <td colspan="8" class="bg-light">
+              <td colspan="9" class="bg-light">
                 <cps-async [loading]="loadingDetail()" loadingText="Cargando respuestas…">
                   <!-- "Estoy yendo": quién avisó que va. Una respuesta por persona. -->
                   <div class="py-2">
@@ -193,7 +211,7 @@
                       <ul class="list-unstyled small mb-2">
                         @for (response of detail()?.responses ?? []; track response.id) {
                           <li class="mb-1">
-                            <i class="bi bi-person-walking me-1 text-brand"></i>
+                            <i class="icon-footprints me-1 text-brand"></i>
                             <strong>{{
                               response.user?.name ?? 'Usuario #' + response.userId
                             }}</strong>
@@ -228,7 +246,7 @@
                             [disabled]="saving()"
                             (click)="respond()"
                           >
-                            <i class="bi bi-person-walking me-1"></i> Estoy yendo
+                            <i class="icon-footprints me-1"></i> Estoy yendo
                           </button>
                         </div>
                       }

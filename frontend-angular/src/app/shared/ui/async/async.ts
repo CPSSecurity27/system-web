@@ -17,7 +17,7 @@ import { Component, input } from '@angular/core';
       </div>
     } @else if (empty()) {
       <div class="text-center text-muted py-5 bg-light rounded">
-        <i class="bi d-block mb-2" [class]="emptyIcon()" style="font-size: 2rem"></i>
+        <i class="d-block mb-2" [class]="emptyIcon()" style="font-size: 2rem"></i>
         {{ emptyText() }}
       </div>
     } @else {
@@ -30,5 +30,5 @@ export class Async {
   readonly empty = input(false);
   readonly loadingText = input('Cargando…');
   readonly emptyText = input('No hay nada para mostrar.');
-  readonly emptyIcon = input('bi-inbox');
+  readonly emptyIcon = input('icon-inbox');
 }

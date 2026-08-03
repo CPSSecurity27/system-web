@@ -29,10 +29,17 @@ describe('cps-alert', () => {
     expect(render('info').textContent).toContain('Algo pasó');
   });
 
-  it('el error usa el tono de marca', () => {
+  // El error va con la familia de EMERGENCIA, no con la de marca: son colores
+  // distintos desde el flip de la Fase C y confundirlos es justo lo que hacía
+  // que "Guardar" y "Emergencia abierta" salieran iguales.
+  it('el error usa el tono de emergencia', () => {
     const el = render('error');
-    expect(el.className).toContain('bg-brand-soft');
-    expect(el.className).toContain('text-brand');
+    expect(el.className).toContain('bg-emergency-soft');
+    expect(el.className).toContain('text-emergency');
+  });
+
+  it('el error NO usa la familia de marca', () => {
+    expect(render('error').className).not.toContain('text-brand');
   });
 
   it('cada variante tiene su tono', () => {
@@ -43,10 +50,10 @@ describe('cps-alert', () => {
 
   it('cada variante tiene su ícono', () => {
     const icon = (v: AlertVariant) => (render(v).querySelector('i') as HTMLElement).className;
-    expect(icon('error')).toContain('bi-exclamation-triangle-fill');
-    expect(icon('warning')).toContain('bi-exclamation-circle');
-    expect(icon('success')).toContain('bi-check-circle');
-    expect(icon('info')).toContain('bi-info-circle');
+    expect(icon('error')).toContain('icon-triangle-alert');
+    expect(icon('warning')).toContain('icon-circle-alert');
+    expect(icon('success')).toContain('icon-circle-check');
+    expect(icon('info')).toContain('icon-info');
   });
 
   it('dense achica el bloque', () => {

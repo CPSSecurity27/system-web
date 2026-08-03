@@ -19,7 +19,12 @@ export type StatusKind = 'event' | 'device';
 
 export const STATUS_MAP: Record<StatusKind, Record<string, StatusLook>> = {
   event: {
-    OPEN: { label: 'Abierto', classes: 'bg-brand-soft text-brand border', icon: 'bi-broadcast' },
+    // Un evento abierto ES una alarma sonando: familia de emergencia, no de marca.
+    OPEN: {
+      label: 'Abierto',
+      classes: 'bg-emergency-soft text-emergency border',
+      icon: 'icon-radio-tower',
+    },
     RESOLVED: { label: 'Resuelto', classes: 'bg-success-soft text-success border' },
     FALSE_ALARM: { label: 'Falsa alarma', classes: 'bg-light text-muted border' },
   },
@@ -31,17 +36,19 @@ export const STATUS_MAP: Record<StatusKind, Record<string, StatusLook>> = {
    * INSTALLED ya no existe (2026-07-31): era lo mismo que OPERATIONAL.
    */
   device: {
-    INVENTORY: { label: 'En stock', classes: 'bg-light text-muted border', icon: 'bi-box-seam' },
+    INVENTORY: { label: 'En stock', classes: 'bg-light text-muted border', icon: 'icon-package' },
     OPERATIONAL: { label: 'Operativa', classes: 'bg-success-soft text-success border' },
+    // Sin `text-warning` el badge sale con el color por defecto de Bootstrap,
+    // que es BLANCO: ámbar clarito sobre ámbar clarito, ilegible.
     MAINTENANCE: {
       label: 'En mantenimiento',
-      classes: 'bg-warning-soft border',
-      icon: 'bi-tools',
+      classes: 'bg-warning-soft text-warning border',
+      icon: 'icon-wrench',
     },
     OUT_OF_SERVICE: {
       label: 'Fuera de servicio',
-      classes: 'bg-brand-soft text-brand border',
-      icon: 'bi-exclamation-triangle',
+      classes: 'bg-emergency-soft text-emergency border',
+      icon: 'icon-triangle-alert',
     },
     RETIRED: { label: 'Dada de baja', classes: 'bg-light text-muted border' },
   },

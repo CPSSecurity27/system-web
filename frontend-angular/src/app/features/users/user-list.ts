@@ -16,13 +16,13 @@ const PAGE_SIZE = 25;
   template: `
     <div class="d-flex align-items-center justify-content-between mb-3">
       <div>
-        <h2 class="h5 fw-bold mb-0"><i class="bi bi-people-fill text-brand me-2"></i>Usuarios</h2>
+        <h2 class="h5 fw-bold mb-0"><i class="icon-users text-brand me-2"></i>Usuarios</h2>
         <!-- El padrón completo es solo de CPS. -->
         <p class="text-muted small mb-0">Padrón de personas del sistema</p>
       </div>
 
       <a routerLink="/usuarios/nuevo" class="btn btn-brand btn-sm">
-        <i class="bi bi-plus-lg me-1"></i> Nueva persona
+        <i class="icon-plus me-1"></i> Nueva persona
       </a>
     </div>
 
@@ -42,8 +42,8 @@ const PAGE_SIZE = 25;
         Cargando usuarios…
       </div>
     } @else if (error()) {
-      <div class="alert bg-brand-soft text-brand border-0" role="alert">
-        <i class="bi bi-exclamation-triangle-fill me-2"></i>{{ error() }}
+      <div class="alert bg-emergency-soft text-emergency border-0" role="alert">
+        <i class="icon-triangle-alert me-2"></i>{{ error() }}
       </div>
     } @else {
       <div class="table-responsive">
@@ -66,7 +66,7 @@ const PAGE_SIZE = 25;
                   {{ user.name }}
                   @if (user.kind === 'INSTITUTIONAL') {
                     <!-- La "cuenta root" de la organización: no es una persona. -->
-                    <i class="bi bi-bank text-brand ms-1" title="Usuario institucional"></i>
+                    <i class="icon-landmark text-brand ms-1" title="Usuario institucional"></i>
                   }
                 </td>
                 <td class="small text-muted font-monospace">{{ user.username ?? '—' }}</td>
@@ -86,7 +86,7 @@ const PAGE_SIZE = 25;
                   @if (user.email) {
                     {{ user.email }}
                     @if (user.emailVerifiedAt) {
-                      <i class="bi bi-patch-check-fill text-success ms-1" title="Verificado"></i>
+                      <i class="icon-badge-check text-success ms-1" title="Verificado"></i>
                     }
                   } @else {
                     <span class="text-muted">Sin correo</span>
@@ -127,7 +127,7 @@ const PAGE_SIZE = 25;
             [disabled]="!canPrev() || loading()"
             (click)="prev()"
           >
-            <i class="bi bi-chevron-left"></i> Anteriores
+            <i class="icon-chevron-left"></i> Anteriores
           </button>
           <button
             type="button"
@@ -135,7 +135,7 @@ const PAGE_SIZE = 25;
             [disabled]="!canNext() || loading()"
             (click)="next()"
           >
-            Siguientes <i class="bi bi-chevron-right"></i>
+            Siguientes <i class="icon-chevron-right"></i>
           </button>
         </div>
       </div>

@@ -108,9 +108,7 @@ export class DeviceInventory {
 
   protected onSelectionChange(event: Event): void {
     const select = event.target as HTMLSelectElement;
-    this.selectedIds.set(
-      Array.from(select.selectedOptions).map((o) => Number(o.value)),
-    );
+    this.selectedIds.set(Array.from(select.selectedOptions).map((o) => Number(o.value)));
   }
 
   /**
@@ -131,23 +129,21 @@ export class DeviceInventory {
     this.error.set(null);
     this.message.set(null);
 
-    this.devices
-      .deliver({ deviceIds: ids, organizationId: organizationId as number })
-      .subscribe({
-        next: ({ delivered }) => {
-          this.saving.set(false);
-          this.deliverForm.reset({ organizationId: null });
-          this.selectedIds.set([]);
-          this.message.set(
-            `${delivered} ${delivered === 1 ? 'equipo entregado' : 'equipos entregados'} al stock de ${this.orgName(organizationId as number)}.`,
-          );
-          this.load();
-        },
-        error: (err) => {
-          this.error.set(apiErrorMessage(err));
-          this.saving.set(false);
-        },
-      });
+    this.devices.deliver({ deviceIds: ids, organizationId: organizationId as number }).subscribe({
+      next: ({ delivered }) => {
+        this.saving.set(false);
+        this.deliverForm.reset({ organizationId: null });
+        this.selectedIds.set([]);
+        this.message.set(
+          `${delivered} ${delivered === 1 ? 'equipo entregado' : 'equipos entregados'} al stock de ${this.orgName(organizationId as number)}.`,
+        );
+        this.load();
+      },
+      error: (err) => {
+        this.error.set(apiErrorMessage(err));
+        this.saving.set(false);
+      },
+    });
   }
 
   protected setPosition(position: { latitude: number; longitude: number }): void {

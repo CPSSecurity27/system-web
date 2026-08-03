@@ -9,18 +9,18 @@
     error de una ACCIÓN (guardar cupos, mover el barrio, transferirlo) hacía
     desaparecer la pantalla entera en vez de mostrarse en su banner de adentro.
   -->
-  <div class="alert bg-brand-soft text-brand border-0" role="alert">
-    <i class="bi bi-exclamation-triangle-fill me-2"></i>{{ error() }}
+  <div class="alert bg-emergency-soft text-emergency border-0" role="alert">
+    <i class="icon-triangle-alert me-2"></i>{{ error() }}
   </div>
 } @else if (neighborhood(); as barrio) {
   <div class="d-flex align-items-center mb-3">
     <a routerLink="/barrios" class="btn btn-sm btn-outline-secondary me-2" title="Volver">
-      <i class="bi bi-arrow-left"></i>
+      <i class="icon-arrow-left"></i>
     </a>
     <div>
       <h2 class="h5 fw-bold mb-0">{{ barrio.name }}</h2>
       <p class="text-muted small mb-0">
-        <i class="bi bi-geo-alt me-1"></i>
+        <i class="icon-map-pin me-1"></i>
         {{ barrio.locality.name }}, {{ barrio.locality.department.name }},
         {{ barrio.locality.department.province.name }}
         ·
@@ -38,49 +38,34 @@
 
   @if (adminMessage()) {
     <div class="alert bg-success-soft border-0 py-2 small">
-      <i class="bi bi-check-circle me-1"></i>{{ adminMessage() }}
+      <i class="icon-circle-check me-1"></i>{{ adminMessage() }}
     </div>
   }
   @if (error()) {
-    <div class="alert bg-brand-soft text-brand border-0 py-2 small" role="alert">
-      <i class="bi bi-exclamation-triangle-fill me-1"></i>{{ error() }}
+    <div class="alert bg-emergency-soft text-emergency border-0 py-2 small" role="alert">
+      <i class="icon-triangle-alert me-1"></i>{{ error() }}
     </div>
   }
 
   <div class="row g-3">
-    <!-- Mapa del barrio: alarmas (verde), viviendas (azul) y el centro (naranja) -->
+    <!-- Mapa del barrio. Los colores de cada punto salen de MAP_VARIANTS y la
+         leyenda los lee de ahí: no se repiten acá. -->
     <!-- Sin `h-100`: abajo va otra tarjeta y el 100% la empujaba al pie de la página. -->
     <div class="col-12 col-xl-7">
       <div class="card border">
         <div class="card-header bg-white border-bottom">
-          <span class="fw-semibold small"> <i class="bi bi-map me-1"></i> El barrio en el mapa </span>
+          <span class="fw-semibold small">
+            <i class="icon-map me-1"></i> El barrio en el mapa
+          </span>
         </div>
         <div class="card-body">
           @if (markers().length > 0) {
             <app-map [markers]="markers()" [center]="centroMapa()" />
 
-            <div class="d-flex gap-3 flex-wrap mt-2 small text-muted">
-              <span>
-                <span class="d-inline-block rounded-circle align-middle me-1"
-                      style="width:10px;height:10px;background:#388e3c"></span>
-                Alarmas ({{ alarmMarkers().length }})
-              </span>
-              <span>
-                <span class="d-inline-block rounded-circle align-middle me-1"
-                      style="width:10px;height:10px;background:#1565c0"></span>
-                Viviendas ({{ homeMarkers().length }})
-              </span>
-              @if (ubicacionActual().length > 0) {
-                <span>
-                  <span class="d-inline-block rounded-circle align-middle me-1"
-                        style="width:10px;height:10px;background:#f57c00"></span>
-                  Centro del barrio
-                </span>
-              }
-            </div>
+            <cps-map-legend class="d-block mt-2" [items]="leyenda()" />
           } @else {
             <div class="text-center text-muted py-5 bg-light rounded">
-              <i class="bi bi-map d-block mb-2" style="font-size: 2rem"></i>
+              <i class="icon-map d-block mb-2" style="font-size: 2rem"></i>
               Este barrio todavía no tiene nada con coordenadas: ni alarmas, ni viviendas, ni
               ubicación propia.
             </div>
@@ -88,7 +73,7 @@
 
           @if (withoutCoordinates() > 0 && markers().length > 0) {
             <p class="text-muted small mb-0 mt-2">
-              <i class="bi bi-info-circle me-1"></i>
+              <i class="icon-info me-1"></i>
               {{ withoutCoordinates() }} alarma(s) sin coordenadas no aparecen en el mapa.
             </p>
           }
@@ -98,7 +83,7 @@
             (online / disparada) todavía no existe en el backend.
           -->
           <p class="text-muted small mb-0 mt-2">
-            <i class="bi bi-broadcast me-1"></i>
+            <i class="icon-radio-tower me-1"></i>
             El estado en vivo (online / disparada) todavía no está disponible.
           </p>
         </div>
@@ -113,7 +98,7 @@
         <div class="card border mt-3">
           <div class="card-header bg-white border-bottom">
             <span class="fw-semibold small">
-              <i class="bi bi-geo-alt me-1"></i> Ubicación del barrio
+              <i class="icon-map-pin me-1"></i> Ubicación del barrio
             </span>
           </div>
           <div class="card-body">
@@ -135,7 +120,7 @@
             <div class="d-flex align-items-center gap-2 mt-2 flex-wrap">
               @if (nuevaUbicacion(); as nueva) {
                 <span class="small font-monospace">
-                  <i class="bi bi-pin-map text-brand me-1"></i>
+                  <i class="icon-map-pin text-brand me-1"></i>
                   {{ nueva.latitude }}, {{ nueva.longitude }}
                 </span>
                 <button
@@ -161,7 +146,7 @@
                 </button>
               } @else if (barrio.latitude !== null) {
                 <span class="small text-muted font-monospace">
-                  <i class="bi bi-check-circle text-success me-1"></i>
+                  <i class="icon-circle-check text-success me-1"></i>
                   {{ barrio.latitude }}, {{ barrio.longitude }}
                 </span>
               }
@@ -177,7 +162,7 @@
         <div
           class="card-header bg-white border-bottom d-flex align-items-center justify-content-between"
         >
-          <span class="fw-semibold small"><i class="bi bi-house-door me-1"></i> Viviendas</span>
+          <span class="fw-semibold small"><i class="icon-house me-1"></i> Viviendas</span>
           <span class="badge text-bg-light border">{{ homeList().length }}</span>
         </div>
         <ul class="list-group list-group-flush">
@@ -188,12 +173,12 @@
                 <span class="fw-medium small">{{ home.address }}</span>
                 @if (home.contactPhone) {
                   <span class="text-muted small d-block">
-                    <i class="bi bi-telephone me-1"></i>{{ home.contactPhone }}
+                    <i class="icon-phone me-1"></i>{{ home.contactPhone }}
                   </span>
                 }
               </div>
               <a [routerLink]="['/viviendas', home.id]" class="btn btn-sm btn-outline-brand">
-                <i class="bi bi-people me-1"></i> Miembros
+                <i class="icon-users me-1"></i> Miembros
               </a>
             </li>
           } @empty {
@@ -207,7 +192,7 @@
         <div
           class="card-header bg-white border-bottom d-flex align-items-center justify-content-between"
         >
-          <span class="fw-semibold small"><i class="bi bi-broadcast-pin me-1"></i> Alarmas</span>
+          <span class="fw-semibold small"><i class="icon-radio-tower me-1"></i> Alarmas</span>
           <span class="badge text-bg-light border">{{ deviceList().length }}</span>
         </div>
         <ul class="list-group list-group-flush">
@@ -218,7 +203,7 @@
                 <span class="text-muted small d-block font-monospace">{{ device.serial }}</span>
               </div>
               <a [routerLink]="['/alarmas', device.id]" class="btn btn-sm btn-outline-secondary">
-                <i class="bi bi-chevron-right"></i>
+                <i class="icon-chevron-right"></i>
               </a>
             </li>
           } @empty {
@@ -236,7 +221,7 @@
         <div class="card border">
           <div class="card-header bg-white border-bottom">
             <span class="fw-semibold small">
-              <i class="bi bi-sliders me-1"></i> Cupos del barrio (tarifa)
+              <i class="icon-sliders-horizontal me-1"></i> Cupos del barrio (tarifa)
             </span>
           </div>
           <div class="card-body">
@@ -298,7 +283,7 @@
               </div>
               <!-- El titular no cuenta en el cupo; bajar el cupo no suspende a nadie. -->
               <p class="text-muted small mb-0 mt-2">
-                <i class="bi bi-info-circle me-1"></i>
+                <i class="icon-info me-1"></i>
                 El titular no cuenta en el cupo. Bajarlo no suspende a nadie: solo frena altas.
               </p>
             </form>
@@ -310,7 +295,7 @@
         <div class="card border">
           <div class="card-header bg-white border-bottom">
             <span class="fw-semibold small">
-              <i class="bi bi-arrow-left-right me-1"></i> Transferir la comunidad
+              <i class="icon-arrow-left-right me-1"></i> Transferir la comunidad
             </span>
           </div>
           <div class="card-body">
@@ -350,7 +335,7 @@
               </div>
               <!-- Descuenta del cupo del destino: si está lleno, ampliarlo primero. -->
               <p class="text-muted small mb-0 mt-2">
-                <i class="bi bi-exclamation-triangle me-1"></i>
+                <i class="icon-triangle-alert me-1"></i>
                 Hogares, vecinos, equipos e historial quedan intactos. El barrio descuenta del cupo
                 del destino: si está lleno, ampliá el cupo primero.
               </p>

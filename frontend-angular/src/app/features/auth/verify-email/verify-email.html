@@ -1,24 +1,24 @@
-<div class="d-flex align-items-center justify-content-center min-vh-100 bg-light">
-  <div class="card border-0 shadow-sm p-4 w-100 text-center" style="max-width: 400px">
+<div class="d-flex align-items-center justify-content-center min-vh-100">
+  <div class="card border p-4 w-100 text-center" style="max-width: 400px">
     <div class="mb-3">
-      <i class="bi bi-envelope-check-fill text-brand" style="font-size: 2.5rem"></i>
+      <i class="icon-mail-check text-brand" style="font-size: 2.5rem"></i>
       <h1 class="h5 fw-bold mt-2 mb-0">Verificación de correo</h1>
     </div>
 
     @if (!token) {
-      <div class="alert bg-brand-soft text-brand border-0 small text-start" role="alert">
-        <i class="bi bi-exclamation-triangle-fill me-1"></i>
+      <div class="alert bg-emergency-soft text-emergency border-0 small text-start" role="alert">
+        <i class="icon-triangle-alert me-1"></i>
         El link no es válido o está incompleto. Pedí uno nuevo desde tu perfil.
       </div>
     } @else if (done()) {
       <div class="alert bg-success-soft border-0 small text-start" role="status">
-        <i class="bi bi-check-circle-fill me-1"></i>
+        <i class="icon-circle-check-big me-1"></i>
         Listo, tu correo quedó verificado.
       </div>
     } @else if (error()) {
       <!-- Token vencido (24 h) o ya usado. -->
-      <div class="alert bg-brand-soft text-brand border-0 small text-start" role="alert">
-        <i class="bi bi-exclamation-triangle-fill me-1"></i> {{ error() }}
+      <div class="alert bg-emergency-soft text-emergency border-0 small text-start" role="alert">
+        <i class="icon-triangle-alert me-1"></i> {{ error() }}
       </div>
     } @else {
       <p class="text-muted small mb-3">
