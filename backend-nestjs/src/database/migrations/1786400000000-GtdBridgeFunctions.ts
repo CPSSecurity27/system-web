@@ -376,6 +376,53 @@ export class GtdBridgeFunctions1786400000000 implements MigrationInterface {
       $fn$
     `);
 
+    // ── fetch_pending_macs ────────────────────────────────────────────
+    // El barrido del GtD al (re)conectar: LISTEN/NOTIFY no tiene memoria, y un
+    // NOTIFY emitido mientras el listener reconectaba no vuelve nunca. Sin
+    // esto, una fila queda 'pending' para siempre (P0-1 del GtD).
+    //
+    // Los predicados COINCIDEN EXACTO con fetch_pending_commands y
+    // fetch_pending_config: si divergen, algo pendiente se vuelve invisible
+    // para el barrido pero visible para el fetch — el peor bug posible acá.
+    await queryRunner.query(`
+      CREATE FUNCTION gtd.fetch_pending_macs()
+      RETURNS TABLE (mac TEXT, canal TEXT)
+      LANGUAGE sql SECURITY DEFINER
+      SET search_path = public, gtd, pg_temp
+      AS $fn$
+        SELECT c.mac, 'gtd_commands'::TEXT
+          FROM gtd.commands c
+         WHERE c.estado = 'pending'
+         GROUP BY c.mac
+        UNION ALL
+        SELECT pc.mac, 'gtd_config'::TEXT
+          FROM gtd.panel_config pc
+         WHERE pc.estado IN ('pending', 'stale');
+      $fn$
+    `);
+
+    // ── mark_config_failed ────────────────────────────────────────────
+    // La cfg que NO se pudo entregar (ej: payload > MQTT_IN_PAYLOAD_MAX del
+    // panel). Sin esto el GtD tiene dos opciones malas: mentir con
+    // mark_config_sent o dejar la fila 'pending' en un loop de NOTIFY inútil
+    // (P0-2). El trigger de NOTIFY solo dispara con pending/stale, así que
+    // 'failed' corta el loop; republicar desde la web (publish_config) la
+    // devuelve a 'pending' y limpia el detalle.
+    await queryRunner.query(`
+      CREATE FUNCTION gtd.mark_config_failed(p_mac TEXT, p_cfg_v BIGINT, p_det TEXT)
+      RETURNS TEXT
+      LANGUAGE plpgsql SECURITY DEFINER
+      SET search_path = public, gtd, pg_temp
+      AS $fn$
+      BEGIN
+        UPDATE gtd.panel_config
+           SET estado = 'failed', detalle = p_det, updated_at = now()
+         WHERE mac = p_mac AND cfg_v = p_cfg_v AND estado IN ('pending', 'sent', 'stale');
+        RETURN CASE WHEN FOUND THEN 'ok' ELSE 'noop' END;
+      END;
+      $fn$
+    `);
+
     // ==================================================================
     // SALIDA — las llama la web (cps_web).
     // Acá las funciones no son aislamiento (el esquema es nuestro): son
@@ -499,7 +546,8 @@ export class GtdBridgeFunctions1786400000000 implements MigrationInterface {
         VALUES (v_mac, p_device_id, v_cfg_v, v_payload, 'pending', p_user_id, now())
         ON CONFLICT (mac) DO UPDATE
           SET cfg_v = EXCLUDED.cfg_v, payload = EXCLUDED.payload,
-              estado = 'pending', updated_by = EXCLUDED.updated_by, updated_at = now();
+              estado = 'pending', detalle = NULL,
+              updated_by = EXCLUDED.updated_by, updated_at = now();
 
         INSERT INTO audit_log (actor_user_id, action, entity_type, entity_id, new_value)
         VALUES (p_user_id, 'gtd.config.publish', 'device', p_device_id,
@@ -659,14 +707,16 @@ export class GtdBridgeFunctions1786400000000 implements MigrationInterface {
           REVOKE INSERT ON event FROM cps_alarms;
           REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA gtd FROM cps_alarms;
           GRANT EXECUTE ON FUNCTION
-            gtd.upsert_panel_state(TEXT, BOOLEAN, TEXT, TEXT, BIGINT, BIGINT, JSONB, BIGINT),
+            gtd.upsert_panel_state(TEXT, TEXT, TEXT, TEXT, BIGINT, BIGINT, JSONB, TEXT, BIGINT, BIGINT, SMALLINT, BOOLEAN),
             gtd.insert_evento(TEXT, TEXT, JSONB, TEXT, BIGINT),
             gtd.confirm_command(TEXT, TEXT, TEXT),
             gtd.upsert_config_espejo(TEXT, BIGINT, JSONB),
             gtd.fetch_pending_commands(TEXT),
             gtd.fetch_pending_config(TEXT),
+            gtd.fetch_pending_macs(),
             gtd.mark_command_sent(TEXT),
-            gtd.mark_config_sent(TEXT, BIGINT)
+            gtd.mark_config_sent(TEXT, BIGINT),
+            gtd.mark_config_failed(TEXT, BIGINT, TEXT)
           TO cps_alarms;
         END IF;
 
@@ -703,6 +753,8 @@ export class GtdBridgeFunctions1786400000000 implements MigrationInterface {
       'gtd.cancel_command(TEXT, INT)',
       'gtd.publish_config(INT, JSONB, INT)',
       'gtd.enqueue_command(INT, TEXT, JSONB, INT)',
+      'gtd.mark_config_failed(TEXT, BIGINT, TEXT)',
+      'gtd.fetch_pending_macs()',
       'gtd.mark_config_sent(TEXT, BIGINT)',
       'gtd.fetch_pending_config(TEXT)',
       'gtd.mark_command_sent(TEXT)',
@@ -710,7 +762,7 @@ export class GtdBridgeFunctions1786400000000 implements MigrationInterface {
       'gtd.upsert_config_espejo(TEXT, BIGINT, JSONB)',
       'gtd.confirm_command(TEXT, TEXT, TEXT)',
       'gtd.insert_evento(TEXT, TEXT, JSONB, TEXT, BIGINT)',
-      'gtd.upsert_panel_state(TEXT, BOOLEAN, TEXT, TEXT, BIGINT, BIGINT, JSONB, BIGINT)',
+      'gtd.upsert_panel_state(TEXT, TEXT, TEXT, TEXT, BIGINT, BIGINT, JSONB, TEXT, BIGINT, BIGINT, SMALLINT, BOOLEAN)',
     ]) {
       await queryRunner.query(`DROP FUNCTION IF EXISTS ${fn}`);
     }
