@@ -199,7 +199,20 @@ comparte solo la base; controles con 4 códigos RF; sin git por decisión del us
    **no se copian al crear un barrio** (nace con los defaults de la base), y
    `community_scope_enabled` hereda el mismo hueco a propósito: arreglarlo toca
    el alta de cliente y es un trabajo aparte.
-9. **Puente con el GtD** — **contrato CERRADO (2026-08-03)**, sin implementar.
+9. ~~**Puente con el GtD**~~ — **HECHO E INTEGRADO (2026-08-04)**. El contrato
+   se cerró el 2026-08-03 y el 2026-08-04 se decidió **liderar el enlace desde
+   acá** (los dos repos en la misma máquina): las 8 preguntas del doc 06 del
+   GtD se resolvieron como decisiones (tabla en `contrato-gtd-postgres.md`
+   §15) y se implementó TODO en los dos repos a la vez — firma v2 de
+   `upsert_panel_state` (estado durmiendo/`sleep_until`, `last_seen` del
+   servidor, `fw`, reloj declarado `ts_device`+`tsq`), `fetch_pending_macs`
+   (el barrido), `mark_config_failed` + estado `failed`, y del lado Python
+   `PgRepo`/`PgListener` reales con spool en disco, guarda de 1024 y
+   normalización de MAC. **16 casos de integración en verde** contra
+   `cps_security_v2` con el rol `cps_alarms` real
+   (`gateway-to-device/tests/test_pg_integracion.py`), incluidos los dos
+   negativos de permisos. La ficha del equipo muestra "Durmiendo hasta las
+   HH:mm". Deploy contra producción: espera el `SALT_MQTT` (PA4).
    Documento: `docs/contrato-gtd-postgres.md`. Una sola base compartida y
    **contrato por funciones** en un esquema `gtd`: el GtD no toca ninguna tabla,
    así un cambio de mapeo es una migración nuestra y no un deploy coordinado.

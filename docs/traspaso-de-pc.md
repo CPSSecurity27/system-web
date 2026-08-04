@@ -131,12 +131,12 @@ misma versión es un no-op sin ack.
 | # | Qué | De quién |
 |---|---|---|
 | 1 | **`SALT_MQTT` de producción** (PA4). Bloquea el alta masiva de equipos por derivación. Algoritmo cerrado: `HMAC-SHA256(SALT_MQTT, MAC_STA)[0..11]` → 24 hex, sin prefijo. Interín: `PANEL_PASSWORD` explícita por MAC, alcanza para probar con una placa | acción humana |
-| 2 | **`PgRepo` / `PgListener`** en Python | equipo GtD |
-| 3 | `rf_rx`, `rf_rx_end`, `audit`, `audit_detalle` en su `UpType` — alimentan la pantalla de alta de controles RF | equipo GtD |
-| 4 | `fw` como parámetro de `upsert_panel_state` (hoy solo llega por el `cfg_full`) | equipo GtD |
-| 5 | **Cifrado en reposo** de `gtd.panel_config` (passwords WiFi) y `gtd.commands` (códigos RF) — DT2 | nuestro |
-| 6 | **`central` no vuelve en el `cfg_full`**: no se puede verificar que alias/ubicación/grupo se aplicaron. Bug de firmware, ya levantado | firmware |
-| 7 | `MQTT_IN_PAYLOAD_MAX = 1024`: una cfg con 5 redes puede no entrar en el panel. Sin probar | probar con placa |
+| ~~2~~ | ~~`PgRepo` / `PgListener` en Python~~ — **HECHO (2026-08-04)**, con spool en disco y barrido de pendientes; ver `gateway-to-device/docs/07-decisiones-integracion.md` | — |
+| ~~3~~ | ~~`rf_rx`, `rf_rx_end`, `audit`, `audit_detalle` en su `UpType`~~ — **HECHO (2026-08-04)**, formas verificadas contra el firmware | — |
+| ~~4~~ | ~~`fw` como parámetro de `upsert_panel_state`~~ — **HECHO (2026-08-04)**, firma v2 | — |
+| 5 | **Cifrado en reposo** de `gtd.panel_config` (passwords WiFi) y `gtd.commands` (códigos RF) — DT2. **Ojo (doc 06 §4 del GtD)**: la cfg retenida deja las passwords en el disco del broker; cifrar Postgres solo NO cierra DT2 — propuesta al firmware en `gateway-to-device/docs/08-propuestas-firmware.md` | nuestro |
+| 6 | **`central` no vuelve en el `cfg_full`**: no se puede verificar que alias/ubicación/grupo se aplicaron. Bug de firmware, ya levantado (refuerzo en `08-propuestas-firmware.md` F1) | firmware |
+| 7 | `MQTT_IN_PAYLOAD_MAX = 1024`: una cfg con 5 redes puede no entrar en el panel. La guarda del lado servidor ya está (`mark_config_failed`); falta el ensayo físico | probar con placa |
 | 8 | **Umbrales de batería PROVISORIOS** (12,0 V baja / 11,8 V crítica). Salen del comportamiento de una plomo-ácido de 12 V, **no** de la especificación real. Validar antes de que alguien salga a la calle por una alerta | nuestro |
 
 ---
