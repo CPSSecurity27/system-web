@@ -45,56 +45,87 @@ export class GtdBridgeFunctions1786400000000 implements MigrationInterface {
     // parámetros son `| None = None`. Si esto se implementa mal, un `status`
     // sin voltajes borra el último vbat conocido — justo el dato que sirve para
     // saber por qué se cayó el equipo.
+    //
+    // v2 (2026-08-04, respuestas al doc 06 del GtD):
+    //  - p_estado reemplaza a p_online: 'durmiendo' NO es 'offline' — "duerme
+    //    hasta las 7" y "se cayó a las 3 AM" son la diferencia entre despertar
+    //    a un técnico y no (P1-4). online se DERIVA (= estado 'online').
+    //  - last_seen lo pone el SERVIDOR (now()): el reloj del panel puede estar
+    //    días atrás con tsq>=2 (P1-3). Lo que el panel declara viaja aparte
+    //    (p_ts_device + p_tsq), para auditar deriva.
+    //  - p_seen=false es el watchdog del GtD marcando offline: el panel NO
+    //    habló, así que last_seen no se toca.
+    //  - p_fw entra en la firma (P2-5): antes solo llegaba por el cfg_full.
     await queryRunner.query(`
       CREATE FUNCTION gtd.upsert_panel_state(
         p_mac          TEXT,
-        p_online       BOOLEAN DEFAULT NULL,
-        p_modo_energia TEXT    DEFAULT NULL,
-        p_alarma_mode  TEXT    DEFAULT NULL,
-        p_cfg_v        BIGINT  DEFAULT NULL,
-        p_rf_gen       BIGINT  DEFAULT NULL,
-        p_energia      JSONB   DEFAULT NULL,
-        p_last_seen    BIGINT  DEFAULT NULL
+        p_estado       TEXT     DEFAULT NULL,
+        p_modo_energia TEXT     DEFAULT NULL,
+        p_alarma_mode  TEXT     DEFAULT NULL,
+        p_cfg_v        BIGINT   DEFAULT NULL,
+        p_rf_gen       BIGINT   DEFAULT NULL,
+        p_energia      JSONB    DEFAULT NULL,
+        p_fw           TEXT     DEFAULT NULL,
+        p_despierta    BIGINT   DEFAULT NULL,
+        p_ts_device    BIGINT   DEFAULT NULL,
+        p_tsq          SMALLINT DEFAULT NULL,
+        p_seen         BOOLEAN  DEFAULT TRUE
       ) RETURNS TEXT
       LANGUAGE plpgsql SECURITY DEFINER
       SET search_path = public, gtd, pg_temp
       AS $fn$
       DECLARE
         v_device_id INT;
-        v_seen      TIMESTAMPTZ := CASE WHEN p_last_seen IS NULL
-                                        THEN NULL ELSE to_timestamp(p_last_seen) END;
+        -- Un estado desconocido mapea a offline (conservador: llama la atención).
+        v_online    BOOLEAN     := CASE WHEN p_estado IS NULL THEN NULL
+                                        ELSE (p_estado = 'online') END;
+        v_sleep     TIMESTAMPTZ := CASE WHEN p_estado = 'durmiendo' AND p_despierta IS NOT NULL
+                                        THEN to_timestamp(p_despierta) ELSE NULL END;
+        v_ts_dev    TIMESTAMPTZ := CASE WHEN p_ts_device IS NULL THEN NULL
+                                        ELSE to_timestamp(p_ts_device) END;
       BEGIN
         SELECT id INTO v_device_id FROM device WHERE mac = p_mac;
 
         IF v_device_id IS NULL THEN
           INSERT INTO gtd.uplink_raw (mac, tipo, payload, resultado)
           VALUES (p_mac, 'panel_state',
-                  jsonb_build_object('online', p_online, 'energia', p_energia,
-                                     'cfg_v', p_cfg_v, 'rf_gen', p_rf_gen),
+                  jsonb_build_object('estado', p_estado, 'energia', p_energia,
+                                     'cfg_v', p_cfg_v, 'rf_gen', p_rf_gen, 'fw', p_fw),
                   'unknown_device');
           RETURN 'unknown_device';
         END IF;
 
         INSERT INTO device_state AS ds (
-          device_id, online, alarm_status, power_mode, cfg_v, rf_gen,
-          vbat, vpanel, vfuente, last_seen, last_heartbeat, updated_at
+          device_id, online, sleep_until, alarm_status, power_mode, cfg_v, rf_gen, fw,
+          vbat, vpanel, vfuente, ts_device, tsq, last_seen, last_heartbeat, updated_at
         ) VALUES (
-          v_device_id, COALESCE(p_online, false), p_alarma_mode, p_modo_energia,
-          COALESCE(p_cfg_v, 0), COALESCE(p_rf_gen, 0),
+          v_device_id, COALESCE(v_online, false), v_sleep, p_alarma_mode, p_modo_energia,
+          COALESCE(p_cfg_v, 0), COALESCE(p_rf_gen, 0), p_fw,
           (p_energia->>'vbat')::NUMERIC, (p_energia->>'vpanel')::NUMERIC,
-          (p_energia->>'vfuente')::NUMERIC, v_seen, v_seen, now()
+          (p_energia->>'vfuente')::NUMERIC, v_ts_dev, p_tsq,
+          CASE WHEN p_seen THEN now() END, CASE WHEN p_seen THEN now() END, now()
         )
         ON CONFLICT (device_id) DO UPDATE SET
-          online         = COALESCE(p_online, ds.online),
+          online         = COALESCE(v_online, ds.online),
+          -- El estado explícito manda: 'durmiendo' fija sleep_until, cualquier
+          -- otro la limpia (despertó o se cayó), NULL no la toca.
+          sleep_until    = CASE WHEN p_estado = 'durmiendo' THEN v_sleep
+                                WHEN p_estado IS NOT NULL   THEN NULL
+                                ELSE ds.sleep_until END,
           alarm_status   = COALESCE(p_alarma_mode, ds.alarm_status),
           power_mode     = COALESCE(p_modo_energia, ds.power_mode),
           cfg_v          = COALESCE(p_cfg_v, ds.cfg_v),
           rf_gen         = COALESCE(p_rf_gen, ds.rf_gen),
+          fw             = COALESCE(p_fw, ds.fw),
           vbat           = COALESCE((p_energia->>'vbat')::NUMERIC, ds.vbat),
           vpanel         = COALESCE((p_energia->>'vpanel')::NUMERIC, ds.vpanel),
           vfuente        = COALESCE((p_energia->>'vfuente')::NUMERIC, ds.vfuente),
-          last_seen      = COALESCE(v_seen, ds.last_seen),
-          last_heartbeat = COALESCE(v_seen, ds.last_heartbeat),
+          ts_device      = COALESCE(v_ts_dev, ds.ts_device),
+          tsq            = COALESCE(p_tsq, ds.tsq),
+          -- last_seen es el reloj del SERVIDOR: cuándo lo escuchamos, no cuándo
+          -- el panel cree que habló. p_seen=false = el panel NO habló.
+          last_seen      = CASE WHEN p_seen THEN now() ELSE ds.last_seen END,
+          last_heartbeat = CASE WHEN p_seen THEN now() ELSE ds.last_heartbeat END,
           updated_at     = now();
 
         -- Hito de primera conexión: es un hecho OBSERVADO por el broker, que es
@@ -104,7 +135,7 @@ export class GtdBridgeFunctions1786400000000 implements MigrationInterface {
                first_connection_source = 'OBSERVED'
          WHERE id = v_device_id
            AND first_connection_at IS NULL
-           AND COALESCE(p_online, false);
+           AND COALESCE(v_online, false);
 
         -- Tras un factory el panel vuelve a cfg_v = 0 y queda con defaults de
         -- fábrica, pero nuestra panel_config sigue diciendo 40. Marcarla stale
@@ -114,9 +145,10 @@ export class GtdBridgeFunctions1786400000000 implements MigrationInterface {
              SET estado = 'stale', updated_at = now()
            WHERE mac = p_mac AND estado <> 'stale';
         ELSIF p_cfg_v IS NOT NULL THEN
+          -- 'failed' incluido: si el panel reporta esa cfg_v, aplicó — se autocura.
           UPDATE gtd.panel_config
              SET estado = 'applied', updated_at = now()
-           WHERE mac = p_mac AND cfg_v <= p_cfg_v AND estado IN ('pending', 'sent');
+           WHERE mac = p_mac AND cfg_v <= p_cfg_v AND estado IN ('pending', 'sent', 'failed');
         END IF;
 
         RETURN 'ok';
