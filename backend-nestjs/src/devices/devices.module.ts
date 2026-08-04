@@ -5,6 +5,7 @@ import { Neighborhood } from '../neighborhoods/entities/neighborhood.entity';
 import { DeviceConfigService } from './device-config.service';
 import { DevicesController } from './devices.controller';
 import { DevicesService } from './devices.service';
+import { ProvisioningService } from './provisioning.service';
 import { BoardModel } from './entities/board-model.entity';
 import { DeviceMaintenance } from './entities/device-maintenance.entity';
 import { DeviceState } from './entities/device-state.entity';
@@ -25,7 +26,7 @@ import { Account } from '../accounts/entities/account.entity';
     ]),
   ],
   controllers: [DevicesController],
-  providers: [DevicesService, DeviceConfigService],
+  providers: [DevicesService, DeviceConfigService, ProvisioningService],
   exports: [DevicesService],
 })
 export class DevicesModule {}

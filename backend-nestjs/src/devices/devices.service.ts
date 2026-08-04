@@ -2,8 +2,10 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Inject,
   Injectable,
   NotFoundException,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
@@ -26,6 +28,7 @@ import {
   UpdateBoardModelDto,
 } from './dto/board-model.dto';
 import { DeviceView, toDeviceView, toDeviceViews } from './dto/device-view';
+import { ProvisioningService } from './provisioning.service';
 import {
   ClaimDeviceDto,
   CreateDeviceDto,
@@ -74,6 +77,10 @@ export class DevicesService {
     private readonly boardModels: Repository<BoardModel>,
     @InjectRepository(Account) private readonly accounts: Repository<Account>,
     private readonly audit: AuditService,
+    // Circular de verdad: el alta encola la credencial y el encolado necesita
+    // resolver el equipo. Nest lo resuelve con forwardRef en los dos lados.
+    @Inject(forwardRef(() => ProvisioningService))
+    private readonly provisioning: ProvisioningService,
   ) {}
 
   /** Instaladas en barrios del alcance. El inventario va por /devices/inventory. */
@@ -159,12 +166,24 @@ export class DevicesService {
       if (!scope.global) {
         throw new ForbiddenException('No tenés acceso a este dispositivo');
       }
-      return device;
+      return this.conEstadoDeCola(device);
     }
 
     const barrios = await this.neighborhoodsInScope(scope);
     this.assertNeighborhood(scope, barrios, device.neighborhoodId);
 
+    return this.conEstadoDeCola(device);
+  }
+
+  /**
+   * Completa el estado de la cola de credenciales. Solo en la FICHA: en los
+   * listados va null, porque una consulta por equipo sobre una lista de 200 no
+   * paga lo que cuesta.
+   */
+  private async conEstadoDeCola(device: DeviceView): Promise<DeviceView> {
+    if (device.provisioning) {
+      device.provisioning.queue = await this.provisioning.estadoDe(device.id);
+    }
     return device;
   }
 
@@ -260,6 +279,11 @@ export class DevicesService {
         status: device.status,
       },
     });
+
+    // El alta de fábrica pide la credencial del broker SOLA: es lo que hace
+    // posible fabricar una tanda sin correr un comando por equipo. Si el
+    // provisioner está caído, la fila queda pendiente y se toma al arrancar.
+    await this.provisioning.encolar(device.id, 'provision', createdBy);
 
     device.boardModel = boardModel;
     return toDeviceView(device, warnings);

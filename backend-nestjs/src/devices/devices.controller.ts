@@ -21,6 +21,7 @@ import {
   RequireMembership,
 } from '../auth/decorators/roles.decorator';
 import { DeviceConfigService } from './device-config.service';
+import { ProvisioningService } from './provisioning.service';
 import { DevicesService } from './devices.service';
 import {
   CreateBoardModelDto,
@@ -88,6 +89,7 @@ export class DevicesController {
   constructor(
     private readonly devices: DevicesService,
     private readonly deviceConfig: DeviceConfigService,
+    private readonly provisioning: ProvisioningService,
     private readonly scopes: ScopeService,
   ) {}
 
@@ -268,6 +270,54 @@ export class DevicesController {
   ): Promise<RedWifiRevelada[]> {
     return this.deviceConfig.revelarWifi(
       id,
+      await this.scopes.forUser(user),
+      user.id,
+    );
+  }
+
+  /**
+   * POST /api/devices/:id/provision — pedir el alta de la credencial.
+   *
+   * Sirve para reintentar un alta fallida y para los equipos que ya existen sin
+   * registrar: no hace falta un backfill aparte. El alta de fábrica ya encola
+   * sola, así que esto es la excepción, no el camino normal.
+   */
+  @Post(':id/provision')
+  @RequireMembership({
+    accountType: AccountType.COMPANY,
+    roles: [UserRole.OWNER, UserRole.ADMIN, UserRole.TECHNICIAN],
+  })
+  async pedirProvision(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<{ mensaje: string }> {
+    return this.provisioning.pedir(
+      id,
+      'provision',
+      await this.scopes.forUser(user),
+      user.id,
+    );
+  }
+
+  /**
+   * POST /api/devices/:id/revoke-credential — dar de baja la credencial.
+   *
+   * SIEMPRE manual, nunca automático: ningún cambio de estado del equipo revoca
+   * nada (decisión de negocio, 2026-08-04). Es el camino para un equipo robado,
+   * reemplazado o dado de baja.
+   */
+  @Post(':id/revoke-credential')
+  @RequireMembership({
+    accountType: AccountType.COMPANY,
+    roles: [UserRole.OWNER, UserRole.ADMIN, UserRole.TECHNICIAN],
+  })
+  async revocarCredencial(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<{ mensaje: string }> {
+    return this.provisioning.pedir(
+      id,
+      'revoke',
       await this.scopes.forUser(user),
       user.id,
     );

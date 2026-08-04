@@ -24,8 +24,18 @@ export interface DeviceProvisioning {
   topics: string[];
   brokerRegistered: boolean;
   provisionedAt: Date | null;
-  /** El comando a correr en el server mientras esto sea manual. */
+  /** El comando a correr en el server, como respaldo si el provisioner no anda. */
   pendingCommand: string | null;
+  /**
+   * La última operación de alta/baja pedida, o null si nunca se pidió ninguna.
+   * Lo completa `DevicesService.findOne`; en los listados va null.
+   */
+  queue: {
+    op: 'provision' | 'revoke';
+    estado: 'pending' | 'done' | 'failed';
+    detalle: string | null;
+    createdAt: string;
+  } | null;
 }
 
 /**
@@ -131,5 +141,7 @@ function toProvisioning(device: Device): DeviceProvisioning | null {
     pendingCommand: registered
       ? null
       : `sudo -E bash deploy/provision-panel.sh ${formatMacHuman(device.mac)}`,
+    // Lo llena `findOne`: este builder es puro y no consulta la base.
+    queue: null,
   };
 }
