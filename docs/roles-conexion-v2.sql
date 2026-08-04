@@ -64,16 +64,21 @@ GRANT USAGE ON SCHEMA gtd TO cps_web, cps_alarms;
 REVOKE ALL ON ALL TABLES IN SCHEMA gtd FROM cps_web, cps_alarms;
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA gtd FROM PUBLIC, cps_web, cps_alarms;
 
--- Entrada: las 8 que son 1:1 con el Protocol Repo del GtD.
+-- Entrada: las 8 que son 1:1 con el Protocol Repo del GtD, más el barrido de
+-- pendientes (fetch_pending_macs) y el camino de vuelta de una cfg que no se
+-- pudo entregar (mark_config_failed). Firma v2 de upsert_panel_state
+-- (2026-08-04): estado durmiendo, reloj declarado y fw.
 GRANT EXECUTE ON FUNCTION
-  gtd.upsert_panel_state(TEXT, BOOLEAN, TEXT, TEXT, BIGINT, BIGINT, JSONB, BIGINT),
+  gtd.upsert_panel_state(TEXT, TEXT, TEXT, TEXT, BIGINT, BIGINT, JSONB, TEXT, BIGINT, BIGINT, SMALLINT, BOOLEAN),
   gtd.insert_evento(TEXT, TEXT, JSONB, TEXT, BIGINT),
   gtd.confirm_command(TEXT, TEXT, TEXT),
   gtd.upsert_config_espejo(TEXT, BIGINT, JSONB),
   gtd.fetch_pending_commands(TEXT),
   gtd.fetch_pending_config(TEXT),
+  gtd.fetch_pending_macs(),
   gtd.mark_command_sent(TEXT),
-  gtd.mark_config_sent(TEXT, BIGINT)
+  gtd.mark_config_sent(TEXT, BIGINT),
+  gtd.mark_config_failed(TEXT, BIGINT, TEXT)
 TO cps_alarms;
 
 -- Salida: las 4 de la web. cps_alarms no tiene por qué poder encolar comandos,

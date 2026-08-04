@@ -647,9 +647,19 @@ CREATE TABLE device_state (
   vbat           NUMERIC(5,2),
   vpanel         NUMERIC(5,2),
   vfuente        NUMERIC(5,2),
-  last_seen      TIMESTAMPTZ,               -- cuándo habló (cualquier mensaje)
+  -- last_seen lo pone el SERVIDOR (now() en upsert_panel_state): el reloj del
+  -- panel puede estar días atrás con tsq>=2. Lo que el panel DECLARA va aparte:
+  last_seen      TIMESTAMPTZ,               -- cuándo lo escuchamos (cualquier mensaje)
   last_heartbeat TIMESTAMPTZ,               -- el latido
-  updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+  -- Hasta cuándo avisó que duerme (status durmiendo). NULL = no duerme. Un panel
+  -- dormido figura online=false: esto distingue "duerme hasta las 7" de "se cayó
+  -- a las 3 AM" — la diferencia entre despertar a un técnico y no.
+  sleep_until    TIMESTAMPTZ,
+  ts_device      TIMESTAMPTZ,               -- el reloj que el panel declara
+  tsq            SMALLINT,                  -- calidad de ese reloj, 0..4, MENOR ES MEJOR
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+  CONSTRAINT chk_device_state_tsq CHECK (tsq IS NULL OR tsq BETWEEN 0 AND 4)
 );
 CREATE INDEX idx_device_state_vbat ON device_state(vbat) WHERE vbat IS NOT NULL;
 -- Aviso a la web SOLO ante cambio real: sin el filtro, la cola de pg_notify se
@@ -954,13 +964,23 @@ CREATE TABLE gtd.panel_config (
   cfg_v      BIGINT NOT NULL CHECK (cfg_v > 0),
   payload    JSONB  NOT NULL,
   estado     TEXT   NOT NULL DEFAULT 'pending',
+  -- Por qué está en 'failed' (ej: "payload 1180 B > 1024"). Lo escribe
+  -- gtd.mark_config_failed; publish_config lo limpia al republicar.
+  detalle    TEXT,
   updated_by INT REFERENCES app_user(id) ON DELETE SET NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 
+  -- Ciclo: pending -> sent -> applied | failed; 'stale' = el panel volvió a
+  -- cfg_v 0 (factory) y hay que republicar completa. El trigger de NOTIFY solo
+  -- dispara con pending/stale: 'failed' corta el loop.
   CONSTRAINT chk_panel_config_estado CHECK (
-    estado IN ('pending', 'sent', 'applied', 'stale')
+    estado IN ('pending', 'sent', 'applied', 'stale', 'failed')
   )
 );
+-- Para el barrido de gtd.fetch_pending_macs — mismo predicado que
+-- fetch_pending_config; commands ya tiene el suyo (ix_commands_pending).
+CREATE INDEX ix_panel_config_pending ON gtd.panel_config(mac)
+  WHERE estado IN ('pending', 'stale');
 CREATE TRIGGER trg_config_notify AFTER INSERT OR UPDATE ON gtd.panel_config
   FOR EACH ROW EXECUTE FUNCTION gtd.notify_gtd_config();
 CREATE TRIGGER trg_commands_notify AFTER INSERT OR UPDATE ON gtd.commands
@@ -998,16 +1018,23 @@ CREATE INDEX ix_uplink_raw_mac ON gtd.uplink_raw(mac, received_at DESC);
 -- Las FUNCIONES (todas SECURITY DEFINER, con search_path fijo). Ver la
 -- migración GtdBridgeFunctions para el cuerpo.
 --
---   ENTRADA (cps_alarms) — 1:1 con el Protocol Repo del GtD:
---     gtd.upsert_panel_state(mac, online, modo_energia, alarma_mode,
---                            cfg_v, rf_gen, energia, last_seen) -> text
+--   ENTRADA (cps_alarms) — 1:1 con el Protocol Repo del GtD (firma v2,
+--   2026-08-04, respuestas al doc 06):
+--     gtd.upsert_panel_state(mac, estado, modo_energia, alarma_mode, cfg_v,
+--                            rf_gen, energia, fw, despierta, ts_device, tsq,
+--                            seen) -> text
+--        estado: 'online'|'durmiendo'|'offline' (NULL = no tocar; online se
+--        deriva). last_seen lo pone el servidor; seen=false = watchdog (el
+--        panel NO habló, last_seen no se toca).
 --     gtd.insert_evento(mac, tipo, payload, eid, ts) -> boolean  (false = dup)
 --     gtd.confirm_command(cid, res, det) -> text
 --     gtd.upsert_config_espejo(mac, cfg_v, payload) -> text
 --     gtd.fetch_pending_commands(mac) -> setof (cid, tipo, payload)
 --     gtd.fetch_pending_config(mac)   -> (cfg_v, payload)
+--     gtd.fetch_pending_macs()        -> setof (mac, canal)   (el barrido P0-1)
 --     gtd.mark_command_sent(cid) -> text
 --     gtd.mark_config_sent(mac, cfg_v) -> text
+--     gtd.mark_config_failed(mac, cfg_v, det) -> text   (la cfg que no salió, P0-2)
 --
 --   SALIDA (cps_web) — atomicidad y auditoría, no aislamiento:
 --     gtd.enqueue_command(device_id, tipo, params, user_id) -> cid
