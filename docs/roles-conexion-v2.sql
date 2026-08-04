@@ -44,13 +44,46 @@ REVOKE UPDATE, DELETE ON event_response FROM cps_web;   -- append-only
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO cps_web;
 
 -- ----------------------------------------------------------------------------
--- cps_alarms: lee configuración, escribe SOLO su territorio
+-- cps_alarms: lee configuración, escribe SOLO por el contrato de funciones
 -- ----------------------------------------------------------------------------
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO cps_alarms;
-GRANT INSERT, UPDATE ON device_state TO cps_alarms;
-GRANT INSERT ON event TO cps_alarms;                    -- crea eventos, NO los resuelve
 GRANT INSERT ON audit_log TO cps_alarms;
 GRANT USAGE, SELECT ON SEQUENCE event_id_seq, audit_log_id_seq TO cps_alarms;
+
+-- Desde el puente con el GtD (2026-08-03) el servicio de alarmas NO escribe
+-- tablas directamente: todo pasa por las funciones SECURITY DEFINER del esquema
+-- `gtd`. Sin estos REVOKE, el GtD podría saltearse el contrato entero y escribir
+-- device_state/event a mano — que es exactamente lo que el contrato evita.
+REVOKE INSERT, UPDATE ON device_state FROM cps_alarms;
+REVOKE INSERT ON event FROM cps_alarms;                 -- crea eventos, NO los resuelve
+
+-- ----------------------------------------------------------------------------
+-- Esquema gtd: nadie toca las tablas, todos pasan por las funciones
+-- ----------------------------------------------------------------------------
+GRANT USAGE ON SCHEMA gtd TO cps_web, cps_alarms;
+REVOKE ALL ON ALL TABLES IN SCHEMA gtd FROM cps_web, cps_alarms;
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA gtd FROM PUBLIC, cps_web, cps_alarms;
+
+-- Entrada: las 8 que son 1:1 con el Protocol Repo del GtD.
+GRANT EXECUTE ON FUNCTION
+  gtd.upsert_panel_state(TEXT, BOOLEAN, TEXT, TEXT, BIGINT, BIGINT, JSONB, BIGINT),
+  gtd.insert_evento(TEXT, TEXT, JSONB, TEXT, BIGINT),
+  gtd.confirm_command(TEXT, TEXT, TEXT),
+  gtd.upsert_config_espejo(TEXT, BIGINT, JSONB),
+  gtd.fetch_pending_commands(TEXT),
+  gtd.fetch_pending_config(TEXT),
+  gtd.mark_command_sent(TEXT),
+  gtd.mark_config_sent(TEXT, BIGINT)
+TO cps_alarms;
+
+-- Salida: las 4 de la web. cps_alarms no tiene por qué poder encolar comandos,
+-- ni cps_web insertar eventos.
+GRANT EXECUTE ON FUNCTION
+  gtd.enqueue_command(INT, TEXT, JSONB, INT),
+  gtd.publish_config(INT, JSONB, INT),
+  gtd.cancel_command(TEXT, INT),
+  gtd.enqueue_rf_batch(INT, JSONB, INT)
+TO cps_web;
 
 -- ----------------------------------------------------------------------------
 -- Tablas FUTURAS: las migraciones corren como `postgres`, y sin esto cada tabla
@@ -64,3 +97,8 @@ ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
   GRANT USAGE, SELECT ON SEQUENCES TO cps_web;
 ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
   GRANT SELECT ON TABLES TO cps_alarms;
+
+-- Para el esquema `gtd` NO se ponen privilegios por defecto A PROPÓSITO: una
+-- tabla nueva ahí tiene que nacer invisible para los dos roles, y el acceso
+-- llegar por una función. Si alguna vez hace falta lo contrario, es una
+-- decisión explícita, no un descuido heredado.

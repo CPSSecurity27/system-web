@@ -61,6 +61,9 @@ va en una migración *y* en la entidad, a mano, en los dos lados.
 | `1785800000000-DeviceInstallationData` | Datos de instalación del equipo (poste, altura, esquina, punto de energía, notas), todos opcionales. Se elimina el estado `INSTALLED`, que era idéntico a `OPERATIONAL` y nadie escribía |
 | `1785900000000-HomeAddressAndNeighborResident` | Viviendas y vecinos: se va `home.name` (la DIRECCIÓN identifica la vivienda) y el GPS pasa a obligatorio; `uq_user_single_titular` (parcial) se reemplaza por `uq_home_member_one_home` UNIQUE(user_id) — **una persona vive en una sola casa**; `app_user.birth_date`; y el cupo `community_scope_enabled` en `neighborhood` y `plan` (disparar TODAS las alarmas del barrio desde la app) |
 
+| `1786000000000-GtdBridgeSchema` | Puente con el GtD, el esquema: `neighborhood.code` (≤15, es lo que viaja al equipo como `central.grupo`), `device_state` crece (`vbat`/`vpanel`/`vfuente`, `power_mode`, `cfg_v`, `rf_gen`, `fw`, `last_seen`), `event` crece (`external_id` = el `eid` del panel y su único parcial que ES el dedup, `ts_device`, `tsq`), y el esquema `gtd` con `commands`, `panel_config`, `config_espejo` y `uplink_raw` |
+| `1786100000000-GtdBridgeFunctions` | Puente con el GtD, el contrato: 8 funciones de entrada 1:1 con su `Protocol Repo` + 4 de salida, todas SECURITY DEFINER, y los triggers de `NOTIFY`. A `cps_alarms` se le REVOCA el INSERT/UPDATE directo sobre `device_state` y `event`: el contrato lo impone el motor. Ver `docs/contrato-gtd-postgres.md` |
+
 > La tabla estuvo desactualizada entre la 4 y la 9: se completó el 2026-08-02
 > leyendo cada migración. Si agregás una, agregá su fila.
 

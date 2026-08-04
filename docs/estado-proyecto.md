@@ -199,18 +199,32 @@ comparte solo la base; controles con 4 códigos RF; sin git por decisión del us
    **no se copian al crear un barrio** (nace con los defaults de la base), y
    `community_scope_enabled` hereda el mismo hueco a propósito: arreglarlo toca
    el alta de cliente y es un trabajo aparte.
-9. **Puente con el GtD** — diseñado, **sin implementar**. Decidido: una sola base
-   compartida, tablas crudas del GtD en un esquema `gtd` y **contrato por
-   funciones** (`gtd.ingest_status/tele/up`, `fetch_pending_commands`, …) en vez
-   de tablas directas, para que un cambio de mapeo sea una migración nuestra y no
-   un deploy coordinado de dos servicios. Falta escribir el `.md` de contrato
-   para el equipo del GtD (ellos implementan `PgRepo`/`PgListener` en Python;
-   hoy corren con `StubRepo` en memoria).
-   Dos cosas detectadas para pedirles: el trigger `trg_panel_state_notify` de su
-   `001_init.sql` dispara un `NOTIFY` por **cada heartbeat de cada equipo**
-   (riesgo de llenar la cola de `pg_notify`, que hace fallar transacciones), y
-   `device_state` se queda corta — el panel reporta `vbat`/`vpanel`/`vfuente`,
-   que es el dato de mantenimiento más importante de un poste.
+9. **Puente con el GtD** — **contrato CERRADO (2026-08-03)**, sin implementar.
+   Documento: `docs/contrato-gtd-postgres.md`. Una sola base compartida y
+   **contrato por funciones** en un esquema `gtd`: el GtD no toca ninguna tabla,
+   así un cambio de mapeo es una migración nuestra y no un deploy coordinado.
+   - Las **8 funciones de entrada son 1:1 con su `Protocol Repo`**
+     (`upsert_panel_state`, `insert_evento`, `confirm_command`,
+     `upsert_config_espejo`, `fetch_pending_*`, `mark_*_sent`). Se descartó la
+     idea original de una función por tópico MQTT (`ingest_status/tele/up`):
+     sus pipelines ya normalizan, y eso los habría obligado a reescribirlos.
+   - **4 funciones de salida** nuestras: `enqueue_command`, `publish_config`,
+     `cancel_command`, `enqueue_rf_batch`.
+   - `panel_state` y `eventos` de ellos **no se importan** (duplicarían
+     `device_state` y `event` — rompe la regla 5). Sí se adoptan `commands` y
+     `panel_config`, más `config_espejo` y `uplink_raw` nuestras.
+   - Migraciones que habilita: `device_state` crece (`vbat`/`vpanel`/`vfuente`,
+     `modo_energia`, `alarma_mode`, `cfg_v`, `rf_gen`, `fw`, `last_seen`) y
+     `event` crece (`external_id` para el dedup por `eid`, `ts_device`, `tsq`).
+   - **Hallazgo grande**: la base RF (qué código pertenece a qué vecino) la carga
+     **el servidor** con `cmd t:rf op:batch`. Un código que no está en el panel
+     **no dispara nada**. Sin ese flujo, el barrio tiene alarmas que no suenan.
+   - Bloqueante que sigue abierto: `SALT_MQTT` de producción (PA4). Hay interín
+     con `PANEL_PASSWORD` explícita para probar con una placa.
+   - **Para entregarle al equipo del GtD**: `docs/gtd-guia-implementacion.md`
+     (cómo escribir `PgRepo`/`PgListener` contra las funciones, con código de
+     referencia en asyncpg). El `.md` de diseño y el porqué está en
+     `docs/contrato-gtd-postgres.md`.
 10. **Servicio de alarmas** (programa separado, MQTT → `device_state` + `event` + FCM):
    diseñarlo recién cuando el resto esté estable.
 11. Más adelante: 2FA para OWNER, estado ACKNOWLEDGED del evento (pospuesto a

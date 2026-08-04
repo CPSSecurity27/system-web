@@ -358,6 +358,12 @@ CREATE TRIGGER trg_account_user_updated BEFORE UPDATE ON account_user
 CREATE TABLE neighborhood (
   id                      SERIAL PRIMARY KEY,
   name                    TEXT NOT NULL,
+  -- Código corto que viaja al equipo como `central.grupo`. El firmware trunca
+  -- en 15 caracteres: "Barrio Parque Los Aromos" no entra. El nombre largo se
+  -- queda en la web; esto es lo que ve el panel.
+  code                    TEXT NOT NULL,
+  CONSTRAINT uq_neighborhood_code UNIQUE (code),
+  CONSTRAINT chk_neighborhood_code CHECK (code ~ '^[A-Z0-9][A-Z0-9-]{0,14}$'),
   status                  entity_status NOT NULL DEFAULT 'ACTIVE',
   locality_id             INT NOT NULL REFERENCES locality(id) ON DELETE RESTRICT,
 
@@ -624,10 +630,33 @@ CREATE TRIGGER trg_device_updated BEFORE UPDATE ON device
 CREATE TABLE device_state (
   device_id      INT PRIMARY KEY REFERENCES device(id) ON DELETE CASCADE,
   online         BOOLEAN NOT NULL DEFAULT false,
-  alarm_status   TEXT,                      -- 'connected' | 'trigger' | ... (catálogo hw)
-  last_heartbeat TIMESTAMPTZ,
+  -- Catálogo del firmware (el viejo 'connected'/'trigger' era de Firebase y
+  -- nunca se escribió):
+  --   off | suspicious | alert | emergency | fire | medical | silent | panic
+  alarm_status   TEXT,
+  power_mode     TEXT,                      -- ACTIVE_240, MODEM_SLEEP, …
+  -- Versión de configuración que el panel DICE estar corriendo. Vuelve a 0 tras
+  -- un factory, y eso deja la gtd.panel_config en 'stale'.
+  cfg_v          BIGINT NOT NULL DEFAULT 0,
+  rf_gen         BIGINT NOT NULL DEFAULT 0, -- generación de la base RF del equipo
+  fw             TEXT,                      -- llega por el cfg_full, no por el estado
+  -- Voltajes en COLUMNAS y no en un JSONB (como los tenía el GtD), por lo mismo
+  -- que los datos de instalación de `device`: es el dato de mantenimiento más
+  -- importante de un poste y hay que poder preguntar "¿cuáles están por debajo
+  -- de 11 V?" sin abrir un documento por fila.
+  vbat           NUMERIC(5,2),
+  vpanel         NUMERIC(5,2),
+  vfuente        NUMERIC(5,2),
+  last_seen      TIMESTAMPTZ,               -- cuándo habló (cualquier mensaje)
+  last_heartbeat TIMESTAMPTZ,               -- el latido
   updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE INDEX idx_device_state_vbat ON device_state(vbat) WHERE vbat IS NOT NULL;
+-- Aviso a la web SOLO ante cambio real: sin el filtro, la cola de pg_notify se
+-- llena y eso hace fallar los COMMIT, no solo las notificaciones. Voltaje y
+-- last_seen NO notifican: para eso el tablero poll-ea (§14).
+CREATE TRIGGER trg_panel_state_notify AFTER INSERT OR UPDATE ON device_state
+  FOR EACH ROW EXECUTE FUNCTION gtd.notify_app_panel_state();
 
 CREATE TABLE device_maintenance (
   id           SERIAL PRIMARY KEY,
@@ -770,7 +799,20 @@ CREATE TABLE event (
 
   origin              event_origin NOT NULL,
   scope               event_scope NOT NULL DEFAULT 'SINGLE',  -- descriptivo, sin cupo
-  trigger_mode        TEXT,                  -- catálogo del hardware (cps001, cps002…)
+  -- Catálogo del firmware, VERBATIM (el viejo cps001/cps002 era de Firebase):
+  --   off | suspicious | alert | emergency | fire | medical | silent | panic
+  trigger_mode        TEXT,
+  -- El eid del panel (<boot_id>-<seq>). Su índice único parcial ES el dedup de
+  -- la redistribución QoS 1: gtd.insert_evento devuelve false cuando choca y el
+  -- GtD depende de ese booleano.
+  external_id         TEXT,
+  ts_device           TIMESTAMPTZ,           -- el ts que reportó el panel
+  -- Calidad de ese reloj, 0..4. MENOR ES MEJOR (0=NTP, 1=DS3231, 2=piso en NVS,
+  -- 3=RTC interno, 4=+6 h sin sync). Con tsq >= 2 hay que ordenar por
+  -- created_at: el ts del equipo puede estar días atrasado y aun así ser
+  -- "plausible" (el arranque MQTT está gateado por valor, no por calidad).
+  tsq                 SMALLINT,
+  CONSTRAINT chk_event_tsq CHECK (tsq IS NULL OR tsq BETWEEN 0 AND 4),
   gps_lat             DOUBLE PRECISION,
   gps_lng             DOUBLE PRECISION,
   location_mode       location_mode,
@@ -791,6 +833,8 @@ CREATE TABLE event (
 CREATE INDEX idx_event_neighborhood ON event(neighborhood_id, created_at DESC);
 CREATE INDEX idx_event_open ON event(neighborhood_id) WHERE status = 'OPEN';
 CREATE INDEX idx_event_device ON event(device_id);
+CREATE UNIQUE INDEX uq_event_external ON event(device_id, external_id)
+  WHERE external_id IS NOT NULL;
 
 CREATE TABLE event_response (
   id         BIGSERIAL PRIMARY KEY,
@@ -866,7 +910,116 @@ CREATE INDEX idx_audit_entity ON audit_log(entity_type, entity_id);
 CREATE INDEX idx_audit_actor  ON audit_log(actor_user_id, created_at DESC);
 
 -- ----------------------------------------------------------------------------
--- 13. Roles de conexión — "un solo escritor" impuesto por la BASE
+-- 13. Puente con el GtD (esquema `gtd`) — contrato por FUNCIONES
+--     El servicio de alarmas NO toca ninguna tabla: llama funciones de acá, y
+--     adentro decidimos a qué tabla va cada cosa. Así un cambio de mapeo es una
+--     migración nuestra y no un deploy coordinado de dos servicios.
+--     Detalle completo: docs/contrato-gtd-postgres.md
+-- ----------------------------------------------------------------------------
+
+CREATE SCHEMA gtd;
+
+-- Cola de bajada (S->D). El NOTIFY 'gtd_commands' despierta al GtD.
+CREATE TABLE gtd.commands (
+  cid          TEXT PRIMARY KEY,
+  mac          TEXT NOT NULL,
+  device_id    INT  NOT NULL REFERENCES device(id) ON DELETE CASCADE,
+  tipo         TEXT NOT NULL,
+  payload      JSONB NOT NULL,
+  estado       TEXT NOT NULL DEFAULT 'pending',
+  detalle      TEXT,
+  requested_by INT REFERENCES app_user(id) ON DELETE SET NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  sent_at      TIMESTAMPTZ,
+  confirmed_at TIMESTAMPTZ,
+
+  CONSTRAINT chk_commands_estado CHECK (
+    estado IN ('pending', 'sent', 'ok', 'error', 'cancelled')
+  ),
+  -- Los 13 del firmware (CmdType). Un typo es un comando que el panel descarta
+  -- en silencio, así que se ataja en la base.
+  CONSTRAINT chk_commands_tipo CHECK (
+    tipo IN ('estado', 'restart', 'alarma', 'scan', 'test', 'ota',
+             'factory', 'rf', 'refresh', 'hora', 'i2c_scan', 'red', 'cal')
+  )
+);
+CREATE INDEX ix_commands_pending ON gtd.commands(mac) WHERE estado = 'pending';
+
+-- Lo que LE MANDAMOS al panel (retained en av/<id>/cfg). cfg_v es ESTRICTAMENTE
+-- creciente: el firmware ignora en silencio —sin ack, ni ok ni error— una
+-- versión menor o igual a la que corre.
+CREATE TABLE gtd.panel_config (
+  mac        TEXT PRIMARY KEY,
+  device_id  INT NOT NULL REFERENCES device(id) ON DELETE CASCADE,
+  cfg_v      BIGINT NOT NULL CHECK (cfg_v > 0),
+  payload    JSONB  NOT NULL,
+  estado     TEXT   NOT NULL DEFAULT 'pending',
+  updated_by INT REFERENCES app_user(id) ON DELETE SET NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+  CONSTRAINT chk_panel_config_estado CHECK (
+    estado IN ('pending', 'sent', 'applied', 'stale')
+  )
+);
+CREATE TRIGGER trg_config_notify AFTER INSERT OR UPDATE ON gtd.panel_config
+  FOR EACH ROW EXECUTE FUNCTION gtd.notify_gtd_config();
+CREATE TRIGGER trg_commands_notify AFTER INSERT OR UPDATE ON gtd.commands
+  FOR EACH ROW EXECUTE FUNCTION gtd.notify_gtd_commands();
+
+-- El ESPEJO no es lo que mandamos: es lo que el panel DICE que corre. Los clamps
+-- del firmware RECORTAN en silencio y ackean 'ok' (si mandás send_tele_s=5 el
+-- panel guarda 30), así que esta es la única fuente confiable de qué config está
+-- vigente — y la base del merge de gtd.publish_config.
+CREATE TABLE gtd.config_espejo (
+  mac        TEXT PRIMARY KEY,
+  device_id  INT NOT NULL REFERENCES device(id) ON DELETE CASCADE,
+  cfg_v      BIGINT NOT NULL,
+  payload    JSONB  NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Dead letter. NO es opcional: event.neighborhood_id es NOT NULL, así que una
+-- alarma de un equipo en INVENTORY no se puede insertar. Sin esto, se pierde.
+-- También recibe el DESARME (t:alarma con mode:"off"), que a propósito no crea
+-- ni resuelve evento.
+CREATE TABLE gtd.uplink_raw (
+  id          BIGSERIAL PRIMARY KEY,
+  mac         TEXT NOT NULL,
+  tipo        TEXT NOT NULL,
+  eid         TEXT,
+  payload     JSONB NOT NULL,
+  ts_device   TIMESTAMPTZ,
+  tsq         SMALLINT,
+  resultado   TEXT NOT NULL,  -- unknown_device | orphan | sin_destino | desarme
+  received_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX ix_uplink_raw_mac ON gtd.uplink_raw(mac, received_at DESC);
+
+-- Las FUNCIONES (todas SECURITY DEFINER, con search_path fijo). Ver la
+-- migración GtdBridgeFunctions para el cuerpo.
+--
+--   ENTRADA (cps_alarms) — 1:1 con el Protocol Repo del GtD:
+--     gtd.upsert_panel_state(mac, online, modo_energia, alarma_mode,
+--                            cfg_v, rf_gen, energia, last_seen) -> text
+--     gtd.insert_evento(mac, tipo, payload, eid, ts) -> boolean  (false = dup)
+--     gtd.confirm_command(cid, res, det) -> text
+--     gtd.upsert_config_espejo(mac, cfg_v, payload) -> text
+--     gtd.fetch_pending_commands(mac) -> setof (cid, tipo, payload)
+--     gtd.fetch_pending_config(mac)   -> (cfg_v, payload)
+--     gtd.mark_command_sent(cid) -> text
+--     gtd.mark_config_sent(mac, cfg_v) -> text
+--
+--   SALIDA (cps_web) — atomicidad y auditoría, no aislamiento:
+--     gtd.enqueue_command(device_id, tipo, params, user_id) -> cid
+--     gtd.publish_config(device_id, patch, user_id) -> cfg_v
+--     gtd.cancel_command(cid, user_id) -> boolean
+--     gtd.enqueue_rf_batch(device_id, lotes, user_id) -> int
+--
+-- Canales NOTIFY (payload = MAC): gtd_commands, gtd_config -> los escucha el
+-- GtD; app_panel_state -> lo escucha la web.
+
+-- ----------------------------------------------------------------------------
+-- 14. Roles de conexión — "un solo escritor" impuesto por la BASE
 --     La web y el servicio de alarmas comparten SOLO esta base (§8 del diseño);
 --     estos GRANTs hacen que la regla no dependa de la disciplina de nadie.
 --
@@ -886,8 +1039,16 @@ CREATE INDEX idx_audit_actor  ON audit_log(actor_user_id, created_at DESC);
 -- REVOKE UPDATE, DELETE ON audit_log FROM cps_web;   -- append-only
 -- REVOKE UPDATE, DELETE ON event_response FROM cps_web;
 --
--- -- El servicio de alarmas: lee configuración, escribe SOLO su territorio
+-- -- El servicio de alarmas: lee configuración, escribe SOLO por el contrato
 -- GRANT SELECT ON ALL TABLES IN SCHEMA public TO cps_alarms;
--- GRANT INSERT, UPDATE ON device_state TO cps_alarms;
--- GRANT INSERT ON event TO cps_alarms;               -- crea eventos, NO los resuelve
 -- GRANT INSERT ON audit_log TO cps_alarms;
+--
+-- -- Desde el puente con el GtD (2026-08-03) NO escribe tablas directamente:
+-- -- todo pasa por las funciones SECURITY DEFINER del esquema gtd. Eso es lo
+-- -- que hace que el contrato lo imponga el motor y no la disciplina.
+-- REVOKE INSERT, UPDATE ON device_state FROM cps_alarms;
+-- REVOKE INSERT ON event FROM cps_alarms;            -- crea eventos, NO los resuelve
+-- GRANT USAGE ON SCHEMA gtd TO cps_alarms, cps_web;
+-- REVOKE ALL ON ALL TABLES IN SCHEMA gtd FROM cps_alarms, cps_web;
+-- GRANT EXECUTE ON <las 8 de entrada>  TO cps_alarms;
+-- GRANT EXECUTE ON <las 4 de salida>   TO cps_web;

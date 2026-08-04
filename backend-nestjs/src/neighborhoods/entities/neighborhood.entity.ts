@@ -46,6 +46,14 @@ export class Neighborhood {
   @Column({ type: 'text' })
   name!: string;
 
+  /**
+   * Código corto que viaja al equipo como `central.grupo`. El firmware lo trunca
+   * en 15 caracteres, así que "Barrio Parque Los Aromos" no entra: el nombre
+   * largo se queda en la web y esto es lo que ve el panel.
+   */
+  @Column({ type: 'text' })
+  code!: string;
+
   @Column({ type: 'enum', enum: EntityStatus, enumName: 'entity_status' })
   status!: EntityStatus;
 

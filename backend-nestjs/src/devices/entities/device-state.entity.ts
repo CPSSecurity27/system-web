@@ -27,9 +27,52 @@ export class DeviceState {
   @Column({ type: 'boolean', default: false })
   online!: boolean;
 
-  /** Catálogo del hardware: 'connected' | 'trigger' | ... */
+  /**
+   * Catálogo del firmware:
+   * off | suspicious | alert | emergency | fire | medical | silent | panic
+   *
+   * (El viejo 'connected'/'trigger' era de Firebase y nunca se escribió.)
+   */
   @Column({ name: 'alarm_status', type: 'text', nullable: true })
   alarmStatus!: string | null;
+
+  /** ACTIVE_240, MODEM_SLEEP, … */
+  @Column({ name: 'power_mode', type: 'text', nullable: true })
+  powerMode!: string | null;
+
+  /**
+   * Versión de configuración que el panel DICE estar corriendo. Vuelve a 0 tras
+   * un `factory`: eso deja la `gtd.panel_config` en `stale` y obliga a
+   * republicarla completa.
+   */
+  @Column({ name: 'cfg_v', type: 'bigint', default: 0 })
+  cfgV!: string;
+
+  /** Generación de la base RF cargada en el equipo (el `cfg_v` de los códigos). */
+  @Column({ name: 'rf_gen', type: 'bigint', default: 0 })
+  rfGen!: string;
+
+  /** Versión de firmware. Llega por el `cfg_full`, no por el estado. */
+  @Column({ type: 'text', nullable: true })
+  fw!: string | null;
+
+  /**
+   * Voltajes, en columnas y no en un JSONB: es el dato de mantenimiento más
+   * importante de un poste y hay que poder preguntar "¿cuáles están por debajo
+   * de 11 V?" sin abrir un documento por fila.
+   */
+  @Column({ type: 'numeric', precision: 5, scale: 2, nullable: true })
+  vbat!: string | null;
+
+  @Column({ type: 'numeric', precision: 5, scale: 2, nullable: true })
+  vpanel!: string | null;
+
+  @Column({ type: 'numeric', precision: 5, scale: 2, nullable: true })
+  vfuente!: string | null;
+
+  /** Cuándo habló por última vez: lo escribe CUALQUIER mensaje, no solo el latido. */
+  @Column({ name: 'last_seen', type: 'timestamptz', nullable: true })
+  lastSeen!: Date | null;
 
   @Column({ name: 'last_heartbeat', type: 'timestamptz', nullable: true })
   lastHeartbeat!: Date | null;

@@ -96,9 +96,33 @@ export class Event {
   })
   scope!: EventScope;
 
-  /** Catálogo del hardware: cps001, cps002... */
+  /**
+   * Catálogo del firmware, verbatim:
+   * off | suspicious | alert | emergency | fire | medical | silent | panic
+   */
   @Column({ name: 'trigger_mode', type: 'text', nullable: true })
   triggerMode!: string | null;
+
+  /**
+   * El `eid` del panel (`<boot_id>-<seq>`). Su índice único parcial
+   * (`uq_event_external`) ES el dedup: `gtd.insert_evento` devuelve false cuando
+   * choca, y el GtD depende de ese booleano para no reprocesar la
+   * redistribución QoS 1.
+   */
+  @Column({ name: 'external_id', type: 'text', nullable: true })
+  externalId!: string | null;
+
+  /** El `ts` que reportó el panel. Puede mentir: mirar `tsq` antes de ordenar. */
+  @Column({ name: 'ts_device', type: 'timestamptz', nullable: true })
+  tsDevice!: Date | null;
+
+  /**
+   * Calidad del reloj del panel, 0..4. **MENOR ES MEJOR**: 0=NTP, 1=DS3231,
+   * 2=piso en NVS, 3=RTC interno, 4=más de 6 h sin sync. Con `tsq >= 2` hay que
+   * ordenar por `createdAt`, no por `tsDevice`.
+   */
+  @Column({ type: 'smallint', nullable: true })
+  tsq!: number | null;
 
   @Column({ name: 'gps_lat', type: 'double precision', nullable: true })
   gpsLat!: number | null;
