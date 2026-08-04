@@ -328,6 +328,62 @@ export interface DeviceState {
   updatedAt: string;
 }
 
+/**
+ * Estado de la configuración. DERIVADO en el backend, no hay columna que lo
+ * guarde: "verificado" es que el espejo del panel alcanzó a lo que le mandamos.
+ */
+export type EstadoConfig =
+  /** El equipo nunca reportó su cfg_full: sin espejo no se puede editar. */
+  | 'SIN_ESPEJO'
+  /** Lo que corre el panel coincide con lo último que mandamos. */
+  | 'VERIFICADO'
+  /** Encolada, el servicio de alarmas todavía no la publicó. */
+  | 'PENDIENTE'
+  /** Publicada en el broker, sin ack todavía. */
+  | 'ENVIADA'
+  /** El panel ackeó, pero el espejo no volvió: no sabemos qué quedó. */
+  | 'APLICADA_SIN_VERIFICAR'
+  /** No se pudo entregar. `detalle` dice por qué. */
+  | 'FALLIDA';
+
+/** Una red del equipo. La password NUNCA viaja: solo si tiene una guardada. */
+export interface RedWifi {
+  ssid: string;
+  prio: number;
+  tienePassword: boolean;
+}
+
+/** Una red vista en el último scan. `guardada` = el panel ya la tiene cargada. */
+export interface ScanRed {
+  ssid: string;
+  rssi: number;
+  seg: boolean;
+  ch: number;
+  guardada: boolean;
+}
+
+export interface DeviceConfig {
+  deviceId: number;
+  estado: EstadoConfig;
+  /** El espejo SIN las redes (van aparte, ya saneadas). null si no hay espejo. */
+  configuracion: Record<string, unknown> | null;
+  redes: RedWifi[];
+  /** `bigint` en Postgres, string acá por lo mismo que los voltajes. */
+  cfgVEspejo: string | null;
+  cfgVPendiente: string | null;
+  detalle: string | null;
+  espejoActualizadoEn: string | null;
+  ultimoScan: { redes: ScanRed[]; recibidoEn: string } | null;
+  /** Si este usuario GESTIONA el barrio del equipo (no solo si lo ve). */
+  puedeEditar: boolean;
+}
+
+/** Una red con su password en claro. Solo CPS, y queda auditado. */
+export interface RedWifiRevelada {
+  ssid: string;
+  psw: string;
+}
+
 export type MaintenanceType = 'INSTALL' | 'SERVICE' | 'REPAIR' | 'CHECK' | 'REPLACE';
 export type MaintenanceStatus = 'PENDING' | 'IN_PROGRESS' | 'DONE' | 'CANCELLED';
 

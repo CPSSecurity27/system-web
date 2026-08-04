@@ -6,10 +6,12 @@ import { environment } from '../../../environments/environment';
 import {
   BoardModel,
   Device,
+  DeviceConfig,
   DeviceState,
   DeviceType,
   InstallationData,
   Maintenance,
+  RedWifiRevelada,
 } from '../models/api.models';
 
 /**
@@ -97,6 +99,57 @@ export class DevicesService {
    */
   state(id: number): Observable<DeviceState | null> {
     return this.http.get<DeviceState | null>(`${this.api}/devices/${id}/state`);
+  }
+
+  /**
+   * La configuración que el equipo DICE que corre (su espejo), más el estado de
+   * lo que le mandamos. NUNCA trae passwords: cada red dice si tiene una.
+   */
+  config(id: number): Observable<DeviceConfig> {
+    return this.http.get<DeviceConfig>(`${this.api}/devices/${id}/config`);
+  }
+
+  /**
+   * Publica un patch. Se mergea contra el espejo POR SECCIÓN del lado del
+   * servidor, así que mandar solo lo que cambió es lo correcto — y además
+   * necesario: el panel acepta 1024 bytes y cada byte cuenta.
+   *
+   * Una red sin `psw` conserva la que ya tiene guardada.
+   */
+  publicarConfig(
+    id: number,
+    patch: Record<string, unknown>,
+  ): Observable<DeviceConfig> {
+    return this.http.put<DeviceConfig>(`${this.api}/devices/${id}/config`, {
+      patch,
+    });
+  }
+
+  /**
+   * Que el equipo busque redes. El resultado NO vuelve acá: llega después por
+   * su cuenta y aparece en el próximo `config()`.
+   */
+  pedirScan(id: number): Observable<{ mensaje: string }> {
+    return this.http.post<{ mensaje: string }>(
+      `${this.api}/devices/${id}/config/scan`,
+      {},
+    );
+  }
+
+  /** Pedirle su configuración actual. Es el desbloqueo cuando no hay espejo. */
+  pedirRefresh(id: number): Observable<{ mensaje: string }> {
+    return this.http.post<{ mensaje: string }>(
+      `${this.api}/devices/${id}/config/refresh`,
+      {},
+    );
+  }
+
+  /** Las passwords en claro. Solo CPS, y queda en `audit_log`. */
+  revelarWifi(id: number): Observable<RedWifiRevelada[]> {
+    return this.http.post<RedWifiRevelada[]>(
+      `${this.api}/devices/${id}/config/reveal-wifi`,
+      {},
+    );
   }
 
   /** Modelos de placa: el desplegable / la referencia de prefijos válidos. */
