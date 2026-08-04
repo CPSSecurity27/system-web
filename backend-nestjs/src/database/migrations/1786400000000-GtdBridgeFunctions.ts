@@ -32,8 +32,8 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * su dni, y el estado vivo lo refleja al instante en `device_state`. Si algún
  * día se quiere una línea de tiempo por evento, los datos están.
  */
-export class GtdBridgeFunctions1786100000000 implements MigrationInterface {
-  name = 'GtdBridgeFunctions1786100000000';
+export class GtdBridgeFunctions1786400000000 implements MigrationInterface {
+  name = 'GtdBridgeFunctions1786400000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
     // ==================================================================

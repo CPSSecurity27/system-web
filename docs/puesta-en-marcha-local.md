@@ -83,7 +83,7 @@ permisos sobre tablas que todavía no existen.
 ```powershell
 cd backend-nestjs
 
-npm run migration:run          # las 12 migraciones (ver backend-nestjs/docs/migraciones.md)
+npm run migration:run          # las 15 migraciones (ver backend-nestjs/docs/migraciones.md)
 
 # Roles de conexión (cps_web / cps_alarms). Idempotente, pero NO opcional:
 # además de crear los roles, es lo que le saca a cps_alarms la escritura directa

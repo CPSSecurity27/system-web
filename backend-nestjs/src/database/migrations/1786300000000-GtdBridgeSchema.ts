@@ -35,8 +35,8 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * que cambia es el CATÁLOGO (el viejo 'connected'/'trigger' de Firebase por el
  * del firmware), y eso es un COMMENT.
  */
-export class GtdBridgeSchema1786000000000 implements MigrationInterface {
-  name = 'GtdBridgeSchema1786000000000';
+export class GtdBridgeSchema1786300000000 implements MigrationInterface {
+  name = 'GtdBridgeSchema1786300000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
     // ------------------------------------------------------------------
