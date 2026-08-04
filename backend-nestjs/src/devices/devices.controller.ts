@@ -6,6 +6,7 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Put,
   Query,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
@@ -16,11 +17,17 @@ import { ScopeService } from '../common/scope.service';
 import type { AuthenticatedUser } from '../auth/auth.service';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { RequireMembership } from '../auth/decorators/roles.decorator';
+import { DeviceConfigService } from './device-config.service';
 import { DevicesService } from './devices.service';
 import {
   CreateBoardModelDto,
   UpdateBoardModelDto,
 } from './dto/board-model.dto';
+import {
+  DeviceConfigView,
+  PublishConfigDto,
+  RedWifiRevelada,
+} from './dto/device-config.dto';
 import { DeviceView } from './dto/device-view';
 import {
   ClaimDeviceDto,
@@ -58,6 +65,7 @@ class FindDevicesQuery {
 export class DevicesController {
   constructor(
     private readonly devices: DevicesService,
+    private readonly deviceConfig: DeviceConfigService,
     private readonly scopes: ScopeService,
   ) {}
 
@@ -140,6 +148,101 @@ export class DevicesController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<DeviceState | null> {
     return this.devices.findState(id, await this.scopes.forUser(user));
+  }
+
+  /**
+   * GET /api/devices/:id/config — la configuración que el equipo DICE que corre.
+   *
+   * Sale del espejo (`gtd.config_espejo`), que es lo único que sabe qué quedó
+   * después de los clamps silenciosos del firmware. NUNCA devuelve passwords:
+   * cada red viaja con `tienePassword`.
+   */
+  @Get(':id/config')
+  async findConfig(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<DeviceConfigView> {
+    return this.deviceConfig.findConfig(id, await this.scopes.forUser(user));
+  }
+
+  /**
+   * PUT /api/devices/:id/config — publica un patch de configuración.
+   *
+   * Lo mergea `gtd.publish_config` contra el espejo POR SECCIÓN: mandar
+   * `{"modulos":{"rf":true}}` no apaga ds3231, eeprom ni supervisor. Solo quien
+   * GESTIONA el barrio (con `managed_by = CPS`, la organización solo mira).
+   */
+  @Put(':id/config')
+  async publishConfig(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: PublishConfigDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<DeviceConfigView> {
+    return this.deviceConfig.publish(
+      id,
+      dto.patch,
+      await this.scopes.forUser(user),
+      user.id,
+    );
+  }
+
+  /**
+   * POST /api/devices/:id/config/scan — que el equipo busque redes WiFi.
+   *
+   * A pedido y nunca automático: el scan interrumpe la máquina de estados del
+   * WiFi y, mientras dura, el panel no está siendo una alarma. El resultado no
+   * vuelve por acá — llega después por `up t:scan`.
+   */
+  @Post(':id/config/scan')
+  async pedirScan(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<{ mensaje: string }> {
+    return this.deviceConfig.pedirScan(
+      id,
+      await this.scopes.forUser(user),
+      user.id,
+    );
+  }
+
+  /**
+   * POST /api/devices/:id/config/refresh — pedirle su configuración actual.
+   * Es el desbloqueo cuando el equipo todavía no reportó su `cfg_full`.
+   */
+  @Post(':id/config/refresh')
+  async pedirRefresh(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<{ mensaje: string }> {
+    return this.deviceConfig.pedirRefresh(
+      id,
+      await this.scopes.forUser(user),
+      user.id,
+    );
+  }
+
+  /**
+   * POST /api/devices/:id/config/reveal-wifi — las passwords en claro.
+   *
+   * SOLO CPS y siempre auditado. Es el único camino de lectura que existe: para
+   * EDITAR una red no hace falta leer su password (una red sin `psw` en el patch
+   * conserva la del espejo), así que restringir la lectura no le saca capacidad
+   * a nadie.
+   */
+  @Post(':id/config/reveal-wifi')
+  @RequireMembership({
+    accountType: AccountType.COMPANY,
+    roles: [UserRole.OWNER, UserRole.ADMIN, UserRole.TECHNICIAN],
+  })
+  async revelarWifi(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<RedWifiRevelada[]> {
+    return this.deviceConfig.revelarWifi(
+      id,
+      await this.scopes.forUser(user),
+      user.id,
+    );
   }
 
   /**
