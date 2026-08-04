@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Home } from '../homes/entities/home.entity';
 import { Neighborhood } from '../neighborhoods/entities/neighborhood.entity';
+import { DeviceConfigService } from './device-config.service';
 import { DevicesController } from './devices.controller';
 import { DevicesService } from './devices.service';
 import { BoardModel } from './entities/board-model.entity';
@@ -24,7 +25,7 @@ import { Account } from '../accounts/entities/account.entity';
     ]),
   ],
   controllers: [DevicesController],
-  providers: [DevicesService],
+  providers: [DevicesService, DeviceConfigService],
   exports: [DevicesService],
 })
 export class DevicesModule {}
