@@ -1,13 +1,15 @@
 # PgRepo contra Postgres — guía para el equipo del GtD
 
-> **De:** equipo web CPS · **Fecha:** 2026-08-03
+> **De:** equipo web CPS · **Fecha:** 2026-08-03 · **Actualizada:** 2026-08-04
 > **Para:** `CPSSecurity27/gateway-to-device`
-> **Estado:** el lado Postgres está **implementado y probado**. Falta `PgRepo` /
-> `PgListener` del lado de ustedes.
+> **Estado (2026-08-04):** el enlace se lideró desde acá y **`PgRepo` /
+> `PgListener` ya están implementados en el repo del GtD** (rama
+> `feat/pgrepo-enlace-web`), contra la firma v2 de este documento. Las 8
+> preguntas del doc 06 quedaron resueltas — la tabla de decisiones está en
+> `contrato-gtd-postgres.md` §15. Esta guía queda como referencia del contrato.
 >
-> Este documento es autosuficiente: con esto alcanza para escribir `PgRepo` sin
-> mirar nuestro esquema. Gracias por las respuestas del 2026-08-03 — casi todo lo
-> de acá salió de ahí.
+> Este documento es autosuficiente: con esto alcanza para entender `PgRepo` sin
+> mirar nuestro esquema.
 
 ---
 
@@ -40,6 +42,12 @@ su `Protocol Repo`. `PgRepo` es un envoltorio de una línea por método.
 ```
 GTD_PG_DSN=postgresql://cps_alarms:<clave>@<host>:5432/cps_security_v2
 ```
+
+**Postgres directo, sin pooler** (respuesta a P2-6). Si algún día aparece un
+pgbouncer en el medio, avisamos ANTES del deploy y el `PgListener` se lleva un
+DSN directo aparte: `LISTEN` sobre un pooler en modo `transaction` falla de
+forma intermitente — el peor modo de falla posible para diagnosticar a
+distancia. En desarrollo (esta máquina): `localhost:5432`, sin nada en el medio.
 
 Lo que ese rol puede hacer:
 
@@ -81,20 +89,38 @@ tirar excepción**: una excepción en Postgres mata la transacción y con ella s
 pipeline. Si les vuelve algo que no es `'ok'`, es información, no una falla que
 haya que reintentar.
 
-### 3.1 `upsert_panel_state`
+### 3.1 `upsert_panel_state` (firma v2, 2026-08-04)
 
 ```sql
 gtd.upsert_panel_state(
   p_mac          TEXT,
-  p_online       BOOLEAN DEFAULT NULL,
-  p_modo_energia TEXT    DEFAULT NULL,
-  p_alarma_mode  TEXT    DEFAULT NULL,
-  p_cfg_v        BIGINT  DEFAULT NULL,
-  p_rf_gen       BIGINT  DEFAULT NULL,
-  p_energia      JSONB   DEFAULT NULL,
-  p_last_seen    BIGINT  DEFAULT NULL   -- epoch en SEGUNDOS
+  p_estado       TEXT     DEFAULT NULL,  -- 'online' | 'durmiendo' | 'offline'
+  p_modo_energia TEXT     DEFAULT NULL,
+  p_alarma_mode  TEXT     DEFAULT NULL,
+  p_cfg_v        BIGINT   DEFAULT NULL,
+  p_rf_gen       BIGINT   DEFAULT NULL,
+  p_energia      JSONB    DEFAULT NULL,
+  p_fw           TEXT     DEFAULT NULL,  -- P2-5: del status, directo
+  p_despierta    BIGINT   DEFAULT NULL,  -- epoch s: hasta cuándo duerme
+  p_ts_device    BIGINT   DEFAULT NULL,  -- el reloj que el panel DECLARA (epoch s)
+  p_tsq          SMALLINT DEFAULT NULL,  -- calidad de ese reloj (0..4)
+  p_seen         BOOLEAN  DEFAULT TRUE   -- false = watchdog (el panel NO habló)
 ) RETURNS TEXT   -- 'ok' | 'unknown_device'
 ```
+
+Cambios v2 (las respuestas a su doc 06):
+
+- **`p_estado` reemplaza a `p_online`** (P1-4): manden el `estado` del canal
+  `status` tal cual. `'durmiendo'` + `p_despierta` fijan `device_state.sleep_until`
+  — "duerme hasta las 7" deja de parecer "se cayó a las 3 AM". `online` lo
+  derivamos nosotros.
+- **`p_last_seen` YA NO EXISTE** (P1-3, tenían razón): `last_seen = now()` del
+  servidor, adentro de la función. El reloj declarado va en `p_ts_device` +
+  `p_tsq`, para auditar deriva.
+- **`p_seen => false`** es para su watchdog de presencia: marca offline SIN
+  tocar `last_seen` (el panel no habló — mentirlo escondería la caída).
+- Llamen con **notación nombrada** (`p_mac => $1, …`), como propusieron en
+  P2-5: el orden deja de importar.
 
 > ### `NULL` significa "no tocar", NO "poner en NULL"
 > Es la semántica de su `Repo` (`| None = None`) y está implementada con
@@ -182,6 +208,10 @@ gtd.mark_command_sent(p_cid TEXT)       -- 'ok' | 'unknown_cid'
 
 gtd.fetch_pending_config(p_mac TEXT)    -- 0 o 1 fila (cfg_v BIGINT, payload JSONB)
 gtd.mark_config_sent(p_mac TEXT, p_cfg_v BIGINT)  -- 'ok' | 'noop'
+
+-- v2 (2026-08-04):
+gtd.fetch_pending_macs()                -- setof (mac TEXT, canal TEXT) — el BARRIDO (P0-1)
+gtd.mark_config_failed(p_mac TEXT, p_cfg_v BIGINT, p_det TEXT)  -- 'ok' | 'noop' (P0-2)
 ```
 
 `payload` de un comando **ya viene armado para publicar**: trae su `t` y su `cid`.
@@ -189,11 +219,24 @@ Publíquenlo tal cual en `av/AV-<MAC>/cmd`.
 
 `marcar enviado` va **después** del PUBLISH, no antes. Leer no es enviar.
 
+**El barrido** (`fetch_pending_macs`): córranlo al arrancar, al reconectar a
+Postgres y al reconectar al broker — `LISTEN/NOTIFY` no tiene memoria y un
+`NOTIFY` perdido no vuelve. `canal` dice por cuál pipeline despachar
+(`gtd_commands` / `gtd_config`), igual que un NOTIFY normal.
+
+**La cfg que no se pudo entregar** (`mark_config_failed`): p.ej. un payload que
+no entra en los 1024 bytes del panel. Ni mientan con `mark_config_sent` ni la
+dejen `pending`: `failed` + detalle corta el loop de NOTIFY, y si la web
+republica, la fila vuelve a `pending` con el detalle limpio.
+
 ---
 
 ## 4. `PgRepo` de referencia
 
-Copiable. Ajusten al estilo del repo.
+> **2026-08-04:** el `PgRepo` REAL ya vive en el repo del GtD
+> (`src/gtd/db/repo.py`), con reintentos con backoff y spool para el canal `up`.
+> Lo de abajo queda como referencia mínima del mapeo — si difieren, manda el
+> código del repo.
 
 ```python
 import json
@@ -224,15 +267,23 @@ class PgRepo:
 
     # ── uplink ──────────────────────────────────────────────────────────
     async def upsert_panel_state(
-        self, mac: str, *, online: bool | None = None,
+        self, mac: str, *, estado: str | None = None,
         modo_energia: str | None = None, alarma_mode: str | None = None,
         cfg_v: int | None = None, rf_gen: int | None = None,
-        energia: dict[str, Any] | None = None, last_seen: int | None = None,
+        energia: dict[str, Any] | None = None, fw: str | None = None,
+        despierta: int | None = None, ts: int | None = None,
+        tsq: int | None = None, seen: bool = True,
     ) -> None:
-        # Posicional: los NULL son significativos ("no tocar"), así que van todos.
+        # Notación NOMBRADA (P2-5): el orden de la firma deja de importar.
+        # Los NULL son significativos ("no tocar"), así que van todos.
         await self._pool.fetchval(
-            "SELECT gtd.upsert_panel_state($1,$2,$3,$4,$5,$6,$7,$8)",
-            mac, online, modo_energia, alarma_mode, cfg_v, rf_gen, energia, last_seen,
+            """SELECT gtd.upsert_panel_state(
+                 p_mac => $1, p_estado => $2, p_modo_energia => $3,
+                 p_alarma_mode => $4, p_cfg_v => $5, p_rf_gen => $6,
+                 p_energia => $7, p_fw => $8, p_despierta => $9,
+                 p_ts_device => $10, p_tsq => $11, p_seen => $12)""",
+            mac, estado, modo_energia, alarma_mode, cfg_v, rf_gen,
+            energia, fw, despierta, ts, tsq, seen,
         )
 
     async def insert_evento(

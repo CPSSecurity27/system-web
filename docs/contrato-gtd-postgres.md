@@ -39,7 +39,9 @@ También se descartó importar sus tablas `panel_state` y `eventos`: duplicaría
 adoptan**: son cola de bajada y no teníamos nada equivalente.
 
 `mark_offline` también se descartó: su watchdog de presencia ya llama
-`upsert_panel_state(mac, online=False)`. Una función aparte sobraba.
+`upsert_panel_state(mac, estado='offline', seen=False)`. Una función aparte
+sobraba. El `seen=False` importa: el watchdog marca offline porque el panel
+**no** habló — `last_seen` no se toca.
 
 > **No mover el watchdog a un cron SQL.** Corre **dentro** del TaskGroup de la
 > conexión MQTT a propósito: si el GtD pierde el broker, muere con él. Un cron en
@@ -56,8 +58,11 @@ tópico él (`topics.cmd_topic(mac)` → `av/AV-<MAC>/cmd`), y los `NOTIFY` viaj
 con la MAC como payload. Nosotros tenemos `serial = 'AV-' || mac` por CHECK, así
 que la traducción es un `'AV-' || p_mac` **de nuestro lado**, que es donde va.
 
-Los `ts` y `last_seen` entran como **`BIGINT` epoch en segundos** (así los manda
-el `Repo`); el `to_timestamp()` es nuestro.
+Los `ts` entran como **`BIGINT` epoch en segundos** (así los manda el `Repo`);
+el `to_timestamp()` es nuestro. **`last_seen` NO viaja: lo pone el servidor**
+(`now()` adentro de `upsert_panel_state`) — el reloj del panel puede estar días
+atrás con `tsq >= 2`, y "cuándo lo escuchamos" es un dato nuestro, no de él
+(P1-3 del doc 06). Lo que el panel declara viaja aparte como `ts_device` + `tsq`.
 
 ## 4. Esquema `gtd` — tablas nuevas
 
@@ -86,10 +91,14 @@ CREATE TABLE gtd.panel_config (
   device_id  INT NOT NULL REFERENCES device(id) ON DELETE CASCADE,
   cfg_v      BIGINT NOT NULL,
   payload    JSONB  NOT NULL,
-  estado     TEXT   NOT NULL DEFAULT 'pending',  -- pending|sent|applied|stale
+  estado     TEXT   NOT NULL DEFAULT 'pending',  -- pending|sent|applied|stale|failed
+  detalle    TEXT,                               -- por qué está en failed
   updated_by INT REFERENCES app_user(id) ON DELETE SET NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Para el barrido de fetch_pending_macs (mismo predicado que fetch_pending_config):
+CREATE INDEX ix_panel_config_pending ON gtd.panel_config (mac)
+  WHERE estado IN ('pending', 'stale');
 
 -- ESPEJO: el último cfg_full que reportó el panel. NO es lo que le mandamos:
 -- es lo que EL PANEL DICE que está corriendo. Es la base del merge (§7) y la
@@ -137,8 +146,17 @@ ALTER TABLE device_state
   ADD COLUMN vbat       NUMERIC(5,2),          -- voltios
   ADD COLUMN vpanel     NUMERIC(5,2),
   ADD COLUMN vfuente    NUMERIC(5,2),
-  ADD COLUMN last_seen  TIMESTAMPTZ;
+  ADD COLUMN last_seen  TIMESTAMPTZ,
+  ADD COLUMN sleep_until TIMESTAMPTZ,          -- hasta cuándo avisó que duerme (P1-4)
+  ADD COLUMN ts_device   TIMESTAMPTZ,          -- el reloj que el panel DECLARA
+  ADD COLUMN tsq         SMALLINT;             -- calidad de ese reloj (0..4, menor mejor)
 ```
+
+**`durmiendo` no es `offline`** (P1-4 del doc 06): un panel en sueño programado
+avisó que se iba y hasta cuándo (`despierta`). `online` sigue siendo booleano
+("¿está conectado AHORA?" — un dormido no lo está), y `sleep_until` es lo que
+distingue "duerme hasta las 7" de "se cayó a las 3 AM". Cualquier estado
+explícito distinto de `durmiendo` la limpia.
 
 **`alarm_status` NO se renombra a `alarma_mode`** aunque el GtD lo llame así: el
 resto de la tabla está en inglés (`online`, `last_heartbeat`) y el rename
@@ -147,8 +165,9 @@ significado. Lo que cambia es el CATÁLOGO — el viejo `'connected'/'trigger'` 
 Firebase por el del firmware — y eso es un `COMMENT`. Idem `modo_energia`, que
 entra como `power_mode`. La traducción vive en la función.
 
-`fw` no llega por `upsert_panel_state` (el `Protocol Repo` no lo pasa): se
-completa desde `upsert_config_espejo`, porque el `cfg_full` trae `id.fw`.
+`fw` llega por las dos vías: `upsert_panel_state` lo recibe en la firma v2
+(P2-5 — el `status` lo trae y el GtD lo pasa) y `upsert_config_espejo` lo
+completa desde `id.fw` del `cfg_full`.
 
 `energia` va en **columnas y no en un JSONB** (como lo tenía el GtD), por lo mismo
 que los datos de instalación de `device` van en columnas: para poder preguntar
@@ -189,10 +208,11 @@ en Postgres mata la transacción y con ella el pipeline.
 
 ---
 
-**`gtd.upsert_panel_state(p_mac text, p_online boolean, p_modo_energia text, p_alarma_mode text, p_cfg_v bigint, p_rf_gen bigint, p_energia jsonb, p_last_seen bigint) → text`**
+**`gtd.upsert_panel_state(p_mac text, p_estado text, p_modo_energia text, p_alarma_mode text, p_cfg_v bigint, p_rf_gen bigint, p_energia jsonb, p_fw text, p_despierta bigint, p_ts_device bigint, p_tsq smallint, p_seen boolean) → text`**
 
 Estado vivo → `device_state`. Escribe `tele`, `status`, LWT y el watchdog de
-presencia; las cuatro cosas entran por acá.
+presencia; las cuatro cosas entran por acá. Firma v2 (2026-08-04): el GtD llama
+con **notación nombrada** (`p_mac => $1, …`), así el orden deja de importar.
 
 > **Semántica crítica: `NULL` significa "no tocar", no "poner en NULL".** En el
 > `Repo` todos los parámetros son `| None = None`. Va `COALESCE(p_x, actual)` en
@@ -200,13 +220,22 @@ presencia; las cuatro cosas entran por acá.
 > `vbat` conocido — justo el dato que sirve para saber por qué se cayó.
 
 Además:
-- `p_energia` se abre a `vbat`/`vpanel`/`vfuente`.
+- **`p_estado`** es el estado del canal `status` tal cual: `'online' |
+  'durmiendo' | 'offline'`. `online` se DERIVA (`= 'online'`); `'durmiendo'` +
+  `p_despierta` fijan `sleep_until`, cualquier otro estado explícito la limpia.
+  Un estado desconocido mapea a offline (conservador: llama la atención).
+- **`last_seen` lo pone la función (`now()`)**, no un parámetro: es el reloj del
+  servidor. `p_ts_device`/`p_tsq` guardan lo que el panel DECLARA, para auditar
+  deriva.
+- **`p_seen = false`** es el watchdog del GtD marcando offline: el panel NO
+  habló, así que `last_seen` no se toca.
+- `p_energia` se abre a `vbat`/`vpanel`/`vfuente`; `p_fw` entra directo (P2-5).
 - **Sella la primera conexión**: si `device.first_connection_at IS NULL`, lo
   escribe con `first_connection_source = 'OBSERVED'`. Es lo que
   `backend-nestjs/docs/activos.md` dice que tiene que pasar y hoy nadie hace.
 - Si el `p_cfg_v` reportado alcanza al pendiente en `gtd.panel_config`, lo marca
-  `applied` (reconciliación; la confirmación primaria es el ack).
-- Si `p_cfg_v = 0` habiendo config guardada → marca `stale` (§7.4, factory).
+  `applied` (incluida una en `failed`: si el panel la reporta, aplicó — se
+  autocura). Si `p_cfg_v = 0` habiendo config guardada → `stale` (§7.4, factory).
 
 Devuelve: `'ok' | 'unknown_device'`.
 
@@ -269,6 +298,22 @@ Después del PUBLISH, no antes.
 
 **`gtd.mark_config_sent(p_mac text, p_cfg_v bigint) → text`** — ídem para config.
 El `applied` lo pone el ack, no esto.
+
+**`gtd.fetch_pending_macs() → setof (mac text, canal text)`** — el BARRIDO
+(P0-1). `LISTEN/NOTIFY` no tiene memoria: un `NOTIFY` emitido mientras el
+listener reconectaba no vuelve nunca, y la fila quedaría `pending` para siempre.
+El GtD lo llama al arrancar, al reconectar a Postgres y al reconectar al broker
+(un PUBLISH que falló a mitad de camino dejó la fila `pending` sin `NOTIFY`
+vivo). `canal` ∈ `'gtd_commands' | 'gtd_config'`. Los predicados coinciden
+EXACTO con los `fetch_pending_*`: si divergen, algo pendiente se vuelve
+invisible para el barrido pero visible para el fetch.
+
+**`gtd.mark_config_failed(p_mac text, p_cfg_v bigint, p_det text) → text`** — la
+cfg que NO se pudo entregar (P0-2), típicamente `"payload 1180 B > 1024"`
+(`MQTT_IN_PAYLOAD_MAX` del panel). Sin esto el GtD tenía dos opciones malas:
+mentir con `mark_config_sent` o dejar la fila en un loop de `NOTIFY` inútil.
+`failed` corta el loop (el trigger solo dispara con `pending`/`stale`);
+republicar desde la web vuelve a `pending` y limpia el `detalle`.
 
 ### 6.2 Salida — las llama la web (`cps_web`)
 
@@ -586,11 +631,39 @@ Actualizar `docs/roles-conexion-v2.sql` (líneas 50-51) y las
 
 ---
 
+## 15. Respuestas al doc 06 del GtD (2026-08-04) — todas resueltas
+
+El 2026-08-04 se decidió **liderar el enlace desde acá** (los dos repos en la
+misma máquina, una sola cabeza): las 8 preguntas dejaron de ser preguntas y se
+implementaron en los dos lados a la vez. Nada estaba desplegado, así que las
+migraciones se editaron EN EL LUGAR — sin ventanas de convivencia de firmas.
+
+| # | Decisión | Dónde quedó |
+|---|---|---|
+| P0-1 | SÍ: `gtd.fetch_pending_macs()` → `(mac, canal)`, mismos predicados que los `fetch_pending_*` + índice parcial en `panel_config` | §6.1 |
+| P0-2 | SÍ: estado `failed` + `gtd.mark_config_failed(mac, cfg_v, det)` + columna `detalle`. Republicar vuelve a `pending` y limpia el detalle | §6.1, §4 |
+| P1-3 | SÍ, tenían razón: `last_seen = now()` del servidor, adentro de la función. El reloj del panel viaja aparte (`ts_device` + `tsq` en `device_state`) | §3, §5, §6.1 |
+| P1-4 | SÍ: `p_estado` ('online'/'durmiendo'/'offline') + `p_despierta` → `sleep_until`. `online` se deriva; cualquier estado ≠ durmiendo la limpia | §5, §6.1 |
+| P2-5 | `fw` en la firma nueva. **Sin convivencia de firmas**: en Postgres, agregar un parámetro con DEFAULT no reemplaza la función — crea una SOBRECARGA, y una llamada vieja matchearía las dos (`function is not unique`). DROP+CREATE de una, con nada desplegado | §6.1 |
+| P2-6 | Postgres **directo, sin pooler**. Si algún día hay pgbouncer, el listener lleva un DSN directo aparte: LISTEN sobre un pooler en modo transaction falla de forma intermitente | §13 |
+| P2-7 | SÍ: `cfg_full` también por `insert_evento` para el histórico en `uplink_raw`, con `redes[].psw` REDACTADO por el GtD antes de mandar — el claro ya vive en el espejo, no se duplica en una tabla append-only | §6.1 |
+| P2-8 | Resuelto por geografía: los dos repos en la misma máquina, DSN local contra `cps_security_v2` con el rol `cps_alarms` real. Test de integración en el repo GtD (`tests/test_pg_integracion.py`) | — |
+
+Del lado del GtD quedó implementado TODO su §3 (a–f): normalización de MAC,
+resiliencia ante caída de Postgres (reintentos + spool en disco del canal `up`),
+uso del booleano de `insert_evento`, guarda de 1024 bytes, `PgListener` con
+reconexión/barrido/colapso de NOTIFY, y los cuatro tipos nuevos.
+
+Y su observación del §4 (la `cfg` **retenida** deja las passwords WiFi en el
+disco de Mosquitto) quedó registrada en §11: cifrar Postgres (DT2) NO cierra
+DT2 — mueve el eslabón débil al broker. Propuesta al firmware en el repo GtD,
+`docs/08-propuestas-firmware.md`.
+
 ## Apéndice — `PgRepo` en una línea por método
 
 | `Protocol Repo` | Función |
 |---|---|
-| `upsert_panel_state(mac, …)` | `gtd.upsert_panel_state(…)` |
+| `upsert_panel_state(mac, *, estado, …, seen)` | `gtd.upsert_panel_state(…)` |
 | `insert_evento(mac, tipo, payload, eid, ts) -> bool` | `gtd.insert_evento(…) → boolean` |
 | `confirm_command(cid, res, det)` | `gtd.confirm_command(…)` |
 | `upsert_config_espejo(mac, cfg_v, payload)` | `gtd.upsert_config_espejo(…)` |
@@ -598,5 +671,8 @@ Actualizar `docs/roles-conexion-v2.sql` (líneas 50-51) y las
 | `fetch_pending_config(mac) -> dict\|None` | `gtd.fetch_pending_config(…)` |
 | `mark_command_sent(cid)` | `gtd.mark_command_sent(…)` |
 | `mark_config_sent(mac, cfg_v)` | `gtd.mark_config_sent(…)` |
+| `mark_config_failed(mac, cfg_v, det)` | `gtd.mark_config_failed(…)` |
+| *(PgListener)* barrido al (re)conectar | `gtd.fetch_pending_macs()` |
 
-`start()` / `close()` son del pool, no del contrato.
+`start()` / `close()` son del pool, no del contrato. Todas las llamadas van con
+**notación nombrada** (`p_mac => $1, …`): el orden de la firma deja de importar.
