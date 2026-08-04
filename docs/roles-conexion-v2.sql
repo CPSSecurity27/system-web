@@ -91,8 +91,38 @@ GRANT EXECUTE ON FUNCTION
   gtd.publish_config(INT, JSONB, INT),
   gtd.cancel_command(TEXT, INT),
   gtd.enqueue_rf_batch(INT, JSONB, INT),
-  gtd.last_scan(INT)
+  gtd.last_scan(INT),
+  gtd.enqueue_provisioning(INT, TEXT, INT)
 TO cps_web;
+
+-- La web LEE la cola de provisioning para mostrar el estado en la ficha del
+-- equipo. No la escribe: para eso está enqueue_provisioning.
+GRANT SELECT ON gtd.provisioning_queue TO cps_web;
+
+-- ----------------------------------------------------------------------------
+-- El PROVISIONER: alta y baja de credenciales en el broker (2026-08-04).
+--
+-- Es un proceso APARTE del GtD, con privilegios propios: escribe
+-- /etc/mosquitto/gtd.passwd y recarga el servicio, cosas que el GtD no puede ni
+-- debe hacer (está encerrado con NoNewPrivileges y ProtectSystem=strict porque
+-- recibe payloads de cada panel).
+--
+-- Su rol solo lee la cola y confirma. NO puede encolar —eso es de la web— ni
+-- ejecutar ninguna función del GtD.
+--
+--   CREATE ROLE cps_provisioner LOGIN PASSWORD '...';
+-- ----------------------------------------------------------------------------
+GRANT USAGE ON SCHEMA gtd TO cps_provisioner;
+REVOKE ALL ON ALL TABLES IN SCHEMA gtd FROM cps_provisioner;
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA gtd FROM cps_provisioner;
+
+GRANT EXECUTE ON FUNCTION
+  gtd.fetch_pending_provisioning(),
+  gtd.confirm_provisioning(BIGINT, TEXT, TEXT)
+TO cps_provisioner;
+
+-- El GtD no participa del alta de credenciales: no se le da nada de la cola.
+REVOKE ALL ON gtd.provisioning_queue FROM cps_alarms;
 
 -- ----------------------------------------------------------------------------
 -- Tablas FUTURAS: las migraciones corren como `postgres`, y sin esto cada tabla

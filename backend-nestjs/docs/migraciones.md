@@ -68,6 +68,8 @@ va en una migración *y* en la entidad, a mano, en los dos lados.
 
 | `1786500000000-GtdConfigFunctions` | Configuración por equipo: `gtd.confirm_config` (el ack de una `cfg` no trae `cid` y caía en el dead letter; ahora marca `applied` y encola solo el `cmd t:refresh` que trae el espejo de vuelta, con `cid` determinístico para que un ack reentregado no encole dos) y `gtd.last_scan` (último `up t:scan` del equipo, leído de `uplink_raw` — sin tabla nueva). Ver `docs/superpowers/specs/2026-08-04-configuracion-por-equipo-design.md` |
 
+| `1786600000000-ProvisioningQueue` | Alta y baja de equipos en el broker: tabla `gtd.provisioning_queue` (histórica, una fila por operación, **sin passwords** — se derivan del `SALT_MQTT`), `enqueue_provisioning` / `fetch_pending_provisioning` / `confirm_provisioning`, canal `gtd_provisioning` y el rol `cps_provisioner` (solo lee la cola y confirma; no puede encolar ni tocar las funciones del GtD). Un `confirm` con error NO toca `device`: el hito solo se mueve cuando el broker aceptó de verdad |
+
 > La tabla estuvo desactualizada entre la 4 y la 9: se completó el 2026-08-02
 > leyendo cada migración. Si agregás una, agregá su fila.
 

@@ -1053,6 +1053,27 @@ CREATE INDEX ix_uplink_raw_mac ON gtd.uplink_raw(mac, received_at DESC);
 --        El último up t:scan. Sale de gtd.uplink_raw, donde los scans YA se
 --        guardan: no hace falta tabla. La función existe para que la intención
 --        quede explícita y se pueda cambiar el almacenamiento sin tocar la web.
+--     gtd.enqueue_provisioning(device_id, op, user_id) -> bigint
+--        Pide el alta ('provision') o la baja ('revoke') de la credencial del
+--        equipo en el broker. Encolar dos veces la misma op devuelve el id que
+--        ya estaba: el script es idempotente y repetir el trabajo no suma.
+--
+--   PROVISIONER (cps_provisioner) — proceso APARTE del GtD, con privilegios
+--   propios. El GtD está encerrado (NoNewPrivileges, ProtectSystem=strict)
+--   porque recibe payloads de cada panel; registrar en el broker necesita
+--   escribir /etc/mosquitto y recargar el servicio. Comparten el repo (la
+--   derivación HMAC tiene que coincidir con el firmware) pero no el proceso.
+--
+--     gtd.fetch_pending_provisioning() -> setof (id, mac, op)
+--     gtd.confirm_provisioning(id, res, det) -> text
+--        Con res='ok' mueve el hito device.mqtt_provisioned_at (o lo pone en
+--        NULL si era un revoke). Con cualquier otra cosa marca la fila `failed`
+--        con el detalle y NO TOCA `device`: el hito solo se mueve cuando el
+--        broker aceptó de verdad. Devuelve 'noop' si la fila ya estaba cerrada.
+--
+--   gtd.provisioning_queue es HISTÓRICA (una fila por operación, no por equipo)
+--   y no guarda ninguna password: la credencial se deriva en el momento con el
+--   SALT_MQTT, que vive solo en el entorno del provisioner.
 --
 -- Canales NOTIFY (payload = MAC): gtd_commands, gtd_config -> los escucha el
 -- GtD; app_panel_state -> lo escucha la web.
