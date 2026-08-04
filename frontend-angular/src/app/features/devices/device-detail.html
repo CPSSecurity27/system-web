@@ -327,6 +327,11 @@
                 <dd class="col-7">
                   @if (vivo.online) {
                     <span class="badge bg-success-soft text-success border">Online</span>
+                  } @else if (durmiendoHasta(); as hasta) {
+                    <!-- Durmiendo NO es caído: avisó que se iba y hasta cuándo. -->
+                    <span class="badge bg-light text-muted border">
+                      Durmiendo hasta las {{ hasta | date: 'HH:mm' }}
+                    </span>
                   } @else {
                     <span class="badge bg-light text-muted border">Offline</span>
                   }

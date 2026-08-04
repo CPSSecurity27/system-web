@@ -319,6 +319,12 @@ export interface DeviceState {
   /** Cuándo habló: lo escribe cualquier mensaje, no solo el latido. */
   lastSeen: string | null;
   lastHeartbeat: string | null;
+  /** Hasta cuándo avisó que duerme. NULL = no duerme (durmiendo ≠ caído). */
+  sleepUntil: string | null;
+  /** El reloj que el panel declara (puede estar días atrás con tsq alto). */
+  tsDevice: string | null;
+  /** Calidad de ese reloj, 0..4, MENOR ES MEJOR. */
+  tsq: number | null;
   updatedAt: string;
 }
 

@@ -70,12 +70,32 @@ export class DeviceState {
   @Column({ type: 'numeric', precision: 5, scale: 2, nullable: true })
   vfuente!: string | null;
 
-  /** Cuándo habló por última vez: lo escribe CUALQUIER mensaje, no solo el latido. */
+  /**
+   * Cuándo habló por última vez. Lo pone el SERVIDOR (now() en
+   * gtd.upsert_panel_state), no el reloj del panel: con tsq>=2 ese reloj puede
+   * estar días atrás. Lo escribe CUALQUIER mensaje, no solo el latido.
+   */
   @Column({ name: 'last_seen', type: 'timestamptz', nullable: true })
   lastSeen!: Date | null;
 
   @Column({ name: 'last_heartbeat', type: 'timestamptz', nullable: true })
   lastHeartbeat!: Date | null;
+
+  /**
+   * Hasta cuándo avisó que duerme. NULL = no está durmiendo. Un panel dormido
+   * figura online=false: esta columna distingue "duerme hasta las 7" de
+   * "se cayó a las 3 AM" — la diferencia entre despertar a un técnico y no.
+   */
+  @Column({ name: 'sleep_until', type: 'timestamptz', nullable: true })
+  sleepUntil!: Date | null;
+
+  /** El reloj que el panel DECLARA. Con tsq>=2 puede estar días atrás. */
+  @Column({ name: 'ts_device', type: 'timestamptz', nullable: true })
+  tsDevice!: Date | null;
+
+  /** Calidad de ese reloj, 0..4, MENOR ES MEJOR (0=NTP, 4=sin sync). */
+  @Column({ type: 'smallint', nullable: true })
+  tsq!: number | null;
 
   @Column({ name: 'updated_at', type: 'timestamptz', default: () => 'now()' })
   updatedAt!: Date;

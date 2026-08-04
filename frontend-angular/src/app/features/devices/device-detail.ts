@@ -152,6 +152,18 @@ export class DeviceDetail {
     );
   });
 
+  /**
+   * El panel avisó que duerme y hasta cuándo: silencio ESPERADO, no una caída.
+   * Vencida la hora de despertar deja de mostrarse (si sigue mudo, el badge
+   * offline y el silencio ya cuentan la verdad).
+   */
+  protected readonly durmiendoHasta = computed<Date | null>(() => {
+    const crudo = this.state()?.sleepUntil;
+    if (!crudo) return null;
+    const hasta = new Date(crudo);
+    return hasta.getTime() > Date.now() ? hasta : null;
+  });
+
   protected readonly vbat = computed<number | null>(() => {
     const crudo = this.state()?.vbat;
     if (crudo == null) return null;
