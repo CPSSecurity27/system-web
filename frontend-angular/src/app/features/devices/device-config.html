@@ -1,0 +1,272 @@
+@if (cargando()) {
+  <p class="text-muted">Cargando la configuración del equipo…</p>
+} @else {
+
+  <!-- Estado de la publicación: la pantalla dice la verdad en cada momento -->
+  @switch (config()?.estado) {
+    @case ('SIN_ESPEJO') {
+      <div class="alert alert-warning">
+        <strong>El equipo nunca reportó su configuración.</strong>
+        <p class="mb-2 small">
+          Sin saber qué está corriendo, mandarle un cambio parcial apagaría
+          módulos sin querer. Pedile la configuración actual: la manda al toque
+          si está conectado, o cuando despierte.
+        </p>
+        <button type="button" class="btn btn-sm btn-warning"
+                [disabled]="!config()?.puedeEditar" (click)="pedirRefresh()">
+          Pedir configuración al equipo
+        </button>
+      </div>
+    }
+    @case ('FALLIDA') {
+      <div class="alert alert-danger">
+        <strong>No se pudo entregar la configuración.</strong>
+        <p class="mb-2 small">{{ config()?.detalle }}</p>
+        <button type="button" class="btn btn-sm btn-danger"
+                [disabled]="guardando()" (click)="guardar()">
+          Reintentar
+        </button>
+      </div>
+    }
+    @case ('PENDIENTE') {
+      <div class="alert alert-info small mb-3">
+        Configuración <strong>v{{ config()?.cfgVPendiente }}</strong> en cola.
+        @if (durmiendo()) { {{ motivoSinScan() }}: la va a tomar al despertar. }
+        @else { Esperando que el equipo la reciba. }
+      </div>
+    }
+    @case ('ENVIADA') {
+      <div class="alert alert-info small mb-3">
+        Enviada al equipo, esperando confirmación…
+        @if (durmiendo() || estadoVivo()?.online !== true) { {{ motivoSinScan() }}. }
+      </div>
+    }
+    @case ('APLICADA_SIN_VERIFICAR') {
+      <div class="alert alert-info small mb-3">
+        El equipo confirmó que la aplicó. Verificando qué quedó exactamente…
+        <span class="text-muted">
+          (el firmware puede recortar valores en silencio)
+        </span>
+      </div>
+    }
+    @case ('VERIFICADO') {
+      <p class="text-muted small mb-3">
+        Sin cambios pendientes · verificado contra el equipo
+        @if (config()?.espejoActualizadoEn) {
+          el {{ config()?.espejoActualizadoEn | date: 'short' }}
+        }
+      </p>
+    }
+  }
+
+  @if (error()) { <div class="alert alert-danger small">{{ error() }}</div> }
+  @if (aviso()) { <div class="alert alert-success small">{{ aviso() }}</div> }
+
+  @if (!config()?.puedeEditar && !sinEspejo()) {
+    <div class="alert alert-secondary small">
+      Este barrio lo opera CPS: podés ver la configuración, pero no modificarla.
+    </div>
+  }
+
+  <fieldset [disabled]="bloqueado()">
+
+    <!-- ── Redes WiFi ─────────────────────────────────────────────── -->
+    <section class="card mb-3">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span>Redes WiFi</span>
+        <span class="small">
+          @if (config()?.ultimoScan) {
+            <span class="text-muted me-2">
+              Redes vistas el {{ config()?.ultimoScan?.recibidoEn | date: 'short' }}
+            </span>
+          }
+          <button type="button" class="btn btn-sm btn-outline-secondary"
+                  [disabled]="!puedeEscanear()" (click)="pedirScan()">
+            Buscar redes
+          </button>
+        </span>
+      </div>
+      <div class="card-body">
+        @if (!puedeEscanear() && motivoSinScan()) {
+          <p class="text-muted small">{{ motivoSinScan() }}: no se le puede pedir un scan ahora.</p>
+        }
+
+        @for (red of redes(); track $index) {
+          <div class="row g-2 align-items-end mb-2">
+            <div class="col-md-4">
+              <label class="form-label small">SSID</label>
+              <input class="form-control form-control-sm" [(ngModel)]="red.ssid"
+                     [ngModelOptions]="{ standalone: true }" />
+            </div>
+            <div class="col-md-4">
+              <label class="form-label small">
+                Contraseña
+                @if (red.tienePassword) {
+                  <span class="text-muted">(guardada — dejala vacía para conservarla)</span>
+                }
+              </label>
+              <input type="password" class="form-control form-control-sm"
+                     [(ngModel)]="red.psw" [ngModelOptions]="{ standalone: true }"
+                     [placeholder]="red.tienePassword ? '••••••••' : ''" />
+              @if (passwordRevelada(red.ssid); as clara) {
+                <small class="text-danger">{{ clara }}</small>
+              }
+            </div>
+            <div class="col-md-2">
+              <label class="form-label small">Prioridad</label>
+              <input type="number" class="form-control form-control-sm"
+                     [(ngModel)]="red.prio" [ngModelOptions]="{ standalone: true }" />
+            </div>
+            <div class="col-md-2">
+              <button type="button" class="btn btn-sm btn-outline-danger"
+                      (click)="quitarRed($index)">Quitar</button>
+            </div>
+          </div>
+
+          @if (config()?.ultimoScan?.redes; as vistas) {
+            <div class="mb-3 ps-1">
+              @for (v of vistas; track v.ssid) {
+                <button type="button" class="btn btn-sm btn-link p-0 me-2"
+                        (click)="elegirDelScan($index, v.ssid)">
+                  {{ v.ssid }}
+                  <span class="text-muted">({{ v.rssi }} dBm@if (v.guardada) {, guardada})</span>
+                </button>
+              }
+            </div>
+          }
+        }
+
+        <button type="button" class="btn btn-sm btn-outline-primary"
+                [disabled]="redes().length >= 5" (click)="agregarRed()">
+          Agregar red
+        </button>
+        <small class="text-muted ms-2">El equipo guarda hasta 5.</small>
+      </div>
+    </section>
+
+    <!-- ── Módulos ────────────────────────────────────────────────── -->
+    <section class="card mb-3">
+      <div class="card-header">Módulos</div>
+      <div class="card-body">
+        @for (m of ['ds3231', 'eeprom', 'supervisor', 'rf']; track m) {
+          <div class="form-check">
+            <input type="checkbox" class="form-check-input" [id]="'mod-' + m"
+                   [checked]="$any(borrador()['modulos'])?.[m]"
+                   (change)="cambiarEscalar('modulos.' + m, $any($event.target).checked)" />
+            <label class="form-check-label" [for]="'mod-' + m">{{ m }}</label>
+          </div>
+        }
+        @for (a of avisosDeApagado(); track a) {
+          <div class="alert alert-warning small mt-2 mb-0">{{ a }}</div>
+        }
+      </div>
+    </section>
+
+    <!-- ── Tiempos, hora y mantenimiento ──────────────────────────── -->
+    <section class="card mb-3">
+      <div class="card-header">Tiempos y mantenimiento</div>
+      <div class="card-body row g-3">
+        <div class="col-md-4">
+          <label class="form-label small">Telemetría cada (segundos)</label>
+          <input type="number" class="form-control form-control-sm"
+                 [value]="$any(borrador()['tiempos'])?.['send_tele_s']"
+                 (change)="cambiarEscalar('tiempos.send_tele_s', +$any($event.target).value)" />
+          <small class="text-muted">Entre 30 y 86400.</small>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label small">Huso horario (segundos)</label>
+          <input type="number" class="form-control form-control-sm"
+                 [value]="$any(borrador()['hora'])?.['tz_offset_s']"
+                 (change)="cambiarEscalar('hora.tz_offset_s', +$any($event.target).value)" />
+          <small class="text-muted">Argentina: −10800.</small>
+        </div>
+        <div class="col-md-4">
+          <div class="form-check mt-4">
+            <input type="checkbox" class="form-check-input" id="mante"
+                   [checked]="$any(borrador()['mante'])?.['on']"
+                   (change)="cambiarEscalar('mante.on', $any($event.target).checked)" />
+            <label class="form-check-label" for="mante">Modo mantenimiento</label>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Red avanzada ───────────────────────────────────────────── -->
+    <section class="card mb-3">
+      <div class="card-header">Red avanzada (roaming)</div>
+      <div class="card-body row g-3">
+        <div class="col-md-4">
+          <label class="form-label small">RSSI de cambio</label>
+          <input type="number" class="form-control form-control-sm"
+                 [value]="$any(borrador()['red_avanzada'])?.['roam_rssi']"
+                 (change)="cambiarEscalar('red_avanzada.roam_rssi', +$any($event.target).value)" />
+          <small class="text-muted">Entre −90 y −50.</small>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label small">Diferencia mínima</label>
+          <input type="number" class="form-control form-control-sm"
+                 [value]="$any(borrador()['red_avanzada'])?.['roam_delta']"
+                 (change)="cambiarEscalar('red_avanzada.roam_delta', +$any($event.target).value)" />
+          <small class="text-muted">Entre 5 y 30.</small>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label small">Espera entre cambios (s)</label>
+          <input type="number" class="form-control form-control-sm"
+                 [value]="$any(borrador()['red_avanzada'])?.['roam_cooldown_s']"
+                 (change)="cambiarEscalar('red_avanzada.roam_cooldown_s', +$any($event.target).value)" />
+          <small class="text-muted">Entre 60 y 3600.</small>
+        </div>
+      </div>
+    </section>
+  </fieldset>
+
+  <!-- ── Solo lectura: lo que no se toca desde acá ──────────────── -->
+  <section class="card mb-3 bg-body-tertiary">
+    <div class="card-header">Datos del equipo (no se editan acá)</div>
+    <div class="card-body small">
+      <p class="mb-1">
+        <strong>Identidad</strong> — el alias, la ubicación y el grupo se
+        <em>generan</em> con el nombre del equipo y el código del barrio. Si se
+        pudieran tipear, en seis meses el poste se llamaría distinto en la web y
+        en el equipo y no habría forma de saber cuál miente.
+      </p>
+      <p class="mb-1">
+        <strong>Base RF</strong> y <strong>calibración</strong> — se cambian con
+        sus propias acciones, no con la configuración.
+      </p>
+      @if ($any(config()?.configuracion)?.['id']?.['fw']; as fw) {
+        <p class="mb-0"><strong>Firmware</strong> — {{ fw }}</p>
+      }
+    </div>
+  </section>
+
+  <!-- ── Guardar: el diff primero ───────────────────────────────── -->
+  @if (hayCambios()) {
+    <div class="card border-primary mb-3">
+      <div class="card-header">Vas a cambiar</div>
+      <ul class="list-group list-group-flush">
+        @for (c of cambios(); track c.campo) {
+          <li class="list-group-item small">
+            <code>{{ c.campo }}</code>: {{ c.de }} → <strong>{{ c.a }}</strong>
+          </li>
+        }
+      </ul>
+    </div>
+  }
+
+  <div class="d-flex gap-2">
+    <button type="button" class="btn btn-primary"
+            [disabled]="!hayCambios() || guardando() || bloqueado()"
+            (click)="guardar()">
+      {{ guardando() ? 'Enviando…' : 'Guardar y enviar al equipo' }}
+    </button>
+    <button type="button" class="btn btn-outline-secondary"
+            [disabled]="!hayCambios()" (click)="descartar()">
+      Descartar cambios
+    </button>
+    <button type="button" class="btn btn-outline-secondary ms-auto"
+            [disabled]="bloqueado()" (click)="pedirRefresh()">
+      Pedir configuración actual
+    </button>
+  </div>
+}
