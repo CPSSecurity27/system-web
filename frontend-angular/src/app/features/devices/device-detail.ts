@@ -1,7 +1,8 @@
 import { DatePipe } from '@angular/common';
 import { Component, computed, inject, signal } from '@angular/core';
+import { takeUntilDestroyed, toObservable } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, RouterLink } from '@angular/router';
-import { catchError, forkJoin, of } from 'rxjs';
+import { EMPTY, catchError, forkJoin, of, switchMap, timer } from 'rxjs';
 
 import { DevicesService } from '../../core/api/devices.service';
 import { NeighborhoodsService } from '../../core/api/neighborhoods.service';
@@ -23,6 +24,14 @@ export class DeviceDetail {
   protected readonly auth = inject(AuthService);
 
   protected readonly id = Number(this.route.snapshot.paramMap.get('id'));
+
+  /**
+   * Pestañas dentro de la ficha. Van por signal y no por ruta hija: la pantalla
+   * carga UNA alarma y las dos vistas comparten esa carga. Si algún día hace
+   * falta dejar el estado abierto en una pantalla de monitoreo con URL propia,
+   * pasarlo a rutas hijas es un paso corto.
+   */
+  protected readonly tab = signal<'ficha' | 'estado'>('ficha');
 
   protected readonly device = signal<Device | null>(null);
   protected readonly maintenances = signal<Maintenance[]>([]);
@@ -86,6 +95,79 @@ export class DeviceDetail {
     );
   });
 
+  /**
+   * Cada cuánto se relee el estado vivo. El panel manda su telemetría cada 300 s
+   * por defecto, así que refrescar más seguido no trae dato nuevo — 20 s es para
+   * que un cambio de conexión o un disparo se vean casi al toque sin castigar la
+   * API. Cuando el backend exponga el `NOTIFY app_panel_state` (que ya existe y
+   * ya filtra por cambio real) esto se reemplaza por push y el polling se va.
+   */
+  private static readonly PERIODO_MS = 20_000;
+
+  /**
+   * A partir de cuánto silencio el `online` deja de ser creíble. Son 3 tandas de
+   * telemetría (300 s de default en el firmware): con eso, un equipo que en la
+   * base figura conectado pero hace 15 minutos que no habla es un dato viejo, no
+   * un equipo sano. Pasa si se cae el gateway: nadie lo marca offline y la fila
+   * queda congelada diciendo que está todo bien.
+   */
+  private static readonly SILENCIO_MAX_MIN = 15;
+
+  /**
+   * Umbrales de batería, en voltios. PROVISORIOS: salen del comportamiento
+   * conocido de una plomo-ácido de 12 V (12,6 V en reposo a plena carga; por
+   * debajo de 11,8 V es descarga profunda), que es lo que sugiere el 12.60 que
+   * reporta el equipo. NO están confirmados contra la especificación real de la
+   * batería — hay que validarlos con quien la eligió antes de colgarles una
+   * alerta operativa.
+   */
+  private static readonly VBAT_BAJO = 12.0;
+  private static readonly VBAT_CRITICO = 11.8;
+
+  /** Cuándo se leyó el estado por última vez (el reloj de la web, no del equipo). */
+  protected readonly ultimaLectura = signal<Date | null>(null);
+
+  /** El equipo nunca habló: no es que falte el dato, es que todavía no conectó. */
+  protected readonly nuncaConecto = computed(
+    () => this.device()?.milestones.firstConnectionAt === null,
+  );
+
+  /** Minutos desde que el equipo habló por última vez. */
+  protected readonly minutosDeSilencio = computed<number | null>(() => {
+    const vivo = this.state();
+    const ultimo = vivo?.lastSeen ?? vivo?.lastHeartbeat;
+    if (!ultimo) return null;
+    return Math.floor((Date.now() - new Date(ultimo).getTime()) / 60_000);
+  });
+
+  /**
+   * Figura conectado pero hace rato que no habla. Se avisa en vez de mostrar el
+   * badge verde a secas: un "online" congelado es peor que no tener dato, porque
+   * se le cree.
+   */
+  protected readonly datoDudoso = computed(() => {
+    const minutos = this.minutosDeSilencio();
+    return (
+      this.state()?.online === true && minutos !== null && minutos >= DeviceDetail.SILENCIO_MAX_MIN
+    );
+  });
+
+  protected readonly vbat = computed<number | null>(() => {
+    const crudo = this.state()?.vbat;
+    if (crudo == null) return null;
+    const valor = Number(crudo);
+    return Number.isFinite(valor) ? valor : null;
+  });
+
+  /** Semáforo de batería. null = sin dato; ver la nota de los umbrales. */
+  protected readonly nivelBateria = computed<'ok' | 'baja' | 'critica' | null>(() => {
+    const valor = this.vbat();
+    if (valor === null) return null;
+    if (valor < DeviceDetail.VBAT_CRITICO) return 'critica';
+    if (valor < DeviceDetail.VBAT_BAJO) return 'baja';
+    return 'ok';
+  });
+
   protected readonly markers = computed<MapMarker[]>(() => {
     const device = this.device();
     if (!device || device.latitude === null || device.longitude === null) {
@@ -131,6 +213,32 @@ export class DeviceDetail {
         this.loading.set(false);
       },
     });
+
+    /**
+     * El estado se recarga solo, pero SOLO con la pestaña abierta: dejar la
+     * ficha en pantalla no tiene por qué generar tráfico cada 20 segundos.
+     * Cambiar de pestaña corta el timer (switchMap) y volver lo reinicia con una
+     * lectura inmediata.
+     *
+     * Un error no rompe la vista ni corta el ciclo: se conserva la última
+     * lectura buena y se vuelve a intentar en el próximo tick. Un pico de la API
+     * no puede dejar la pantalla de monitoreo en blanco.
+     */
+    toObservable(this.tab)
+      .pipe(
+        switchMap((tab) =>
+          tab === 'estado'
+            ? timer(0, DeviceDetail.PERIODO_MS).pipe(
+                switchMap(() => this.devices.state(this.id).pipe(catchError(() => EMPTY))),
+              )
+            : EMPTY,
+        ),
+        takeUntilDestroyed(),
+      )
+      .subscribe((state) => {
+        this.state.set(state);
+        this.ultimaLectura.set(new Date());
+      });
   }
 
   protected setUbicacion(position: { latitude: number; longitude: number }): void {

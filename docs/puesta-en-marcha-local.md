@@ -83,9 +83,12 @@ permisos sobre tablas que todavía no existen.
 ```powershell
 cd backend-nestjs
 
-npm run migration:run          # InitialSchemaV2 + VecinoEmailLogin + AccountPlansAndRoleQuotas
+npm run migration:run          # las 12 migraciones (ver backend-nestjs/docs/migraciones.md)
 
-# roles de conexión (cps_web / cps_alarms). Idempotente.
+# Roles de conexión (cps_web / cps_alarms). Idempotente, pero NO opcional:
+# además de crear los roles, es lo que le saca a cps_alarms la escritura directa
+# sobre device_state y event y reparte los EXECUTE de las funciones del esquema
+# `gtd`. Sin esto, el contrato con el servicio de alarmas no lo impone nadie.
 & $psql -U postgres -h localhost -d cps_security_v2 -f ..\docs\roles-conexion-v2.sql
 
 # cuenta COMPANY "CPS Security" + OWNER institucional + ADMIN
@@ -137,6 +140,8 @@ npm test
 | `The Angular CLI requires a minimum Node.js version of v20.19` | Node viejo | `nvm use 22.20.0` y abrir una terminal nueva |
 | `ENOENT ... open 'system-web\package.json'` en el install | se usó `npm --prefix` | entrar a la carpeta con `cd` |
 | `psql: no se reconoce` | PostgreSQL no está en el PATH | invocarlo con la ruta completa |
+| `psql` se queda colgado sin devolver nada | está pidiendo la contraseña por consola | `$env:PGPASSWORD="<clave>"` antes de invocarlo |
+| Una clave con `ñ`/acentos no anda al loguearse | se pasó por línea de comandos y Windows la mutiló | cargarla por el formulario o por archivo, nunca por `argv` |
 | El backend arranca pero todo da 500 de permisos | falta correr `roles-conexion-v2.sql` | correrlo (paso 6) |
 | Migraciones fallan por CHECK constraints | la base tenía datos viejos | borrar la base y rehacerla desde cero (paso 5) |
 | No llega ningún mail | `SMTP_HOST` vacío | es lo esperado en local: el link sale por la consola del backend |

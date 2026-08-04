@@ -298,8 +298,26 @@ export interface Device {
 export interface DeviceState {
   deviceId: number;
   online: boolean;
-  /** Catálogo del hardware: 'connected' | 'trigger' | ... */
+  /**
+   * Catálogo del firmware:
+   * off | suspicious | alert | emergency | fire | medical | silent | panic
+   */
   alarmStatus: string | null;
+  /** ACTIVE_240, MODEM_SLEEP, … */
+  powerMode: string | null;
+  /**
+   * Voltajes. Llegan como STRING: son `numeric` en Postgres y el driver de pg no
+   * los pasa a number para no perder precisión. Hay que parsearlos.
+   */
+  vbat: string | null;
+  vpanel: string | null;
+  vfuente: string | null;
+  /** `bigint` en Postgres, string acá por lo mismo. */
+  cfgV: string;
+  rfGen: string;
+  fw: string | null;
+  /** Cuándo habló: lo escribe cualquier mensaje, no solo el latido. */
+  lastSeen: string | null;
   lastHeartbeat: string | null;
   updatedAt: string;
 }

@@ -18,7 +18,48 @@
     </div>
   </div>
 
-  <div class="row g-3">
+  <!--
+    Pestañas de la ficha. El estado en vivo va aparte de lo que el equipo ES:
+    son dos cosas distintas (una la escribe CPS, la otra SOLO el servicio de
+    alarmas) y mezclarlas en una tarjeta las hacía parecer el mismo dato.
+  -->
+  <ul class="nav nav-tabs mb-3">
+    <li class="nav-item">
+      <button
+        type="button"
+        class="nav-link"
+        [class.active]="tab() === 'ficha'"
+        (click)="tab.set('ficha')"
+      >
+        <i class="icon-radio-tower me-1"></i> Ficha
+      </button>
+    </li>
+    <li class="nav-item">
+      <button
+        type="button"
+        class="nav-link"
+        [class.active]="tab() === 'estado'"
+        (click)="tab.set('estado')"
+        title="Lo que el equipo está reportando ahora"
+      >
+        <i class="icon-heart-pulse me-1"></i> Estado en vivo
+        @if (state()?.online) {
+          <span class="badge rounded-pill bg-success-soft text-success border ms-1">·</span>
+        }
+      </button>
+    </li>
+  </ul>
+
+  <!--
+    d-none y no [hidden]: `.row` es display:flex y, como estilo de autor, le gana
+    al display:none del user-agent que trae el atributo hidden. La utilidad de
+    Bootstrap lleva !important y sí lo apaga.
+
+    Y se OCULTA en vez de destruirse (@if) para no recrear el mapa en cada
+    cambio de pestaña: Leaflet re-inicializa, vuelve a encuadrar y pierde el pin
+    que el técnico todavía no guardó.
+  -->
+  <div class="row g-3" [class.d-none]="tab() !== 'ficha'">
     <div class="col-12 col-xl-5">
       <div class="card border h-100">
         <div class="card-body">
@@ -83,36 +124,20 @@
             }
           </div>
 
-          <!-- Estado VIVO ≠ estado del equipo. Lo escribe SOLO el servicio de alarmas. -->
-          @if (state(); as vivo) {
-            <div class="border-top mt-3 pt-3">
-              <p class="fw-semibold small mb-2">
-                <i class="icon-radio-tower me-1"></i> Estado en vivo
-              </p>
-              <dl class="row mb-0 small">
-                <dt class="col-5 text-muted fw-normal">Conexión</dt>
-                <dd class="col-7">
-                  @if (vivo.online) {
-                    <span class="badge bg-success-soft text-success border">Online</span>
-                  } @else {
-                    <span class="badge bg-light text-muted border">Offline</span>
-                  }
-                </dd>
-                <dt class="col-5 text-muted fw-normal">Alarma</dt>
-                <dd class="col-7">{{ vivo.alarmStatus ?? '—' }}</dd>
-                <dt class="col-5 text-muted fw-normal">Último latido</dt>
-                <dd class="col-7">
-                  {{ vivo.lastHeartbeat ? (vivo.lastHeartbeat | date: 'dd/MM/yy HH:mm:ss') : '—' }}
-                </dd>
-              </dl>
-            </div>
-          } @else {
-            <div class="alert bg-warning-soft border-0 py-2 small mt-3 mb-0">
-              <i class="icon-radio-tower me-1"></i>
-              <strong>Sin datos de estado en vivo.</strong> Los va a reportar el servicio de alarmas
-              (el programa que habla con los equipos), que todavía no está construido.
-            </div>
-          }
+          <!--
+            El estado VIVO ya no vive acá: tiene su propia pestaña, porque se
+            refresca solo y creció a diez campos. Queda el enlace para no
+            esconderlo de quien venía buscándolo en esta tarjeta.
+          -->
+          <div class="border-top mt-3 pt-3">
+            <button
+              type="button"
+              class="btn btn-sm btn-outline-secondary"
+              (click)="tab.set('estado')"
+            >
+              <i class="icon-radio-tower me-1"></i> Ver estado en vivo
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -201,7 +226,7 @@
   </div>
 
   <!-- Bitácora del técnico -->
-  <div class="card border mt-3">
+  <div class="card border mt-3" [class.d-none]="tab() !== 'ficha'">
     <div
       class="card-header bg-white border-bottom d-flex align-items-center justify-content-between"
     >
@@ -254,4 +279,194 @@
       </table>
     </div>
   </div>
+
+  <!-- ══ ESTADO EN VIVO ═══════════════════════════════════════════════════
+       Lo escribe ÚNICAMENTE el servicio de alarmas. La web solo lee: acá no
+       hay un solo control que escriba nada.
+  -->
+  @if (tab() === 'estado') {
+    @if (nuncaConecto()) {
+      <!--
+        No es "falta el dato": es que el equipo todavía no habló nunca. Se dice
+        así porque es información útil para fábrica, no un hueco.
+      -->
+      <div class="card border">
+        <div class="card-body text-center text-muted py-5">
+          <i class="icon-radio-tower d-block mb-2" style="font-size: 2rem"></i>
+          <p class="mb-1"><strong class="text-body">Esta alarma nunca conectó.</strong></p>
+          <p class="small mb-0">
+            El estado en vivo aparece cuando el equipo se conecta al broker por primera vez. Hasta
+            entonces no hay nada que mostrar — y eso ya dice algo.
+          </p>
+        </div>
+      </div>
+    } @else if (state(); as vivo) {
+      @if (datoDudoso()) {
+        <!--
+          Un "online" congelado es peor que no tener dato, porque se le cree. Si
+          el equipo figura conectado pero hace 15 minutos que no habla, o se cayó
+          sin avisar o se cayó el gateway y nadie lo marcó offline.
+        -->
+        <div class="alert bg-warning-soft border-0 py-2 small">
+          <i class="icon-triangle-alert me-1"></i>
+          <strong>Este dato puede estar viejo.</strong>
+          El equipo figura conectado pero hace {{ minutosDeSilencio() }} minutos que no reporta.
+        </div>
+      }
+
+      <div class="row g-3">
+        <!-- Conexión y alarma: lo que mira el monitoreo -->
+        <div class="col-12 col-lg-6">
+          <div class="card border h-100">
+            <div class="card-header bg-white border-bottom">
+              <span class="fw-semibold small"><i class="icon-heart-pulse me-1"></i> Conexión</span>
+            </div>
+            <div class="card-body">
+              <dl class="row mb-0 small">
+                <dt class="col-5 text-muted fw-normal">Estado</dt>
+                <dd class="col-7">
+                  @if (vivo.online) {
+                    <span class="badge bg-success-soft text-success border">Online</span>
+                  } @else {
+                    <span class="badge bg-light text-muted border">Offline</span>
+                  }
+                </dd>
+
+                <dt class="col-5 text-muted fw-normal">Modo de alarma</dt>
+                <dd class="col-7">
+                  @if (vivo.alarmStatus && vivo.alarmStatus !== 'off') {
+                    <span class="badge bg-emergency-soft text-emergency border">
+                      {{ vivo.alarmStatus }}
+                    </span>
+                  } @else {
+                    <span class="text-muted">{{ vivo.alarmStatus ?? '—' }}</span>
+                  }
+                </dd>
+
+                <dt class="col-5 text-muted fw-normal">Modo de energía</dt>
+                <dd class="col-7 font-monospace">{{ vivo.powerMode ?? '—' }}</dd>
+
+                <dt class="col-5 text-muted fw-normal">Habló</dt>
+                <dd class="col-7">
+                  @if (vivo.lastSeen) {
+                    {{ vivo.lastSeen | date: 'dd/MM/yy HH:mm:ss' }}
+                    <span class="text-muted">({{ minutosDeSilencio() }} min)</span>
+                  } @else {
+                    —
+                  }
+                </dd>
+              </dl>
+            </div>
+          </div>
+        </div>
+
+        <!-- Alimentación: el dato de mantenimiento de un poste -->
+        <div class="col-12 col-lg-6">
+          <div class="card border h-100">
+            <div class="card-header bg-white border-bottom">
+              <span class="fw-semibold small"><i class="icon-power me-1"></i> Alimentación</span>
+            </div>
+            <div class="card-body">
+              <dl class="row mb-0 small">
+                <dt class="col-5 text-muted fw-normal">Batería</dt>
+                <dd class="col-7">
+                  @if (vivo.vbat === null) {
+                    <span class="text-muted">—</span>
+                  } @else {
+                    <span class="font-monospace">{{ vivo.vbat }} V</span>
+                    @switch (nivelBateria()) {
+                      @case ('critica') {
+                        <span class="badge bg-emergency-soft text-emergency border ms-1"
+                          >Crítica</span
+                        >
+                      }
+                      @case ('baja') {
+                        <span class="badge bg-warning-soft text-warning border ms-1">Baja</span>
+                      }
+                    }
+                  }
+                </dd>
+
+                <dt class="col-5 text-muted fw-normal">Panel solar</dt>
+                <dd class="col-7 font-monospace">
+                  {{ vivo.vpanel !== null ? vivo.vpanel + ' V' : '—' }}
+                </dd>
+
+                <dt class="col-5 text-muted fw-normal">Fuente</dt>
+                <dd class="col-7 font-monospace">
+                  {{ vivo.vfuente !== null ? vivo.vfuente + ' V' : '—' }}
+                </dd>
+              </dl>
+
+              @if (vivo.vbat === null) {
+                <p class="text-muted small mb-0 mt-2">
+                  Los voltajes llegan con la telemetría, que el equipo manda cada 5 minutos.
+                </p>
+              }
+            </div>
+          </div>
+        </div>
+
+        <!-- Lo que el equipo tiene cargado -->
+        <div class="col-12">
+          <div class="card border">
+            <div class="card-header bg-white border-bottom">
+              <span class="fw-semibold small"><i class="icon-cpu me-1"></i> Qué tiene cargado</span>
+            </div>
+            <div class="card-body">
+              <dl class="row mb-0 small">
+                <dt class="col-6 col-md-3 text-muted fw-normal">Firmware</dt>
+                <dd class="col-6 col-md-3 font-monospace">{{ vivo.fw ?? '—' }}</dd>
+
+                <dt class="col-6 col-md-3 text-muted fw-normal">Configuración</dt>
+                <dd
+                  class="col-6 col-md-3 font-monospace"
+                  title="Versión de config que el equipo dice estar corriendo"
+                >
+                  v{{ vivo.cfgV }}
+                </dd>
+
+                <dt class="col-6 col-md-3 text-muted fw-normal">Base RF</dt>
+                <dd
+                  class="col-6 col-md-3 font-monospace"
+                  title="Generación de los códigos de control cargados"
+                >
+                  gen {{ vivo.rfGen }}
+                </dd>
+
+                <dt class="col-6 col-md-3 text-muted fw-normal">Últ. latido</dt>
+                <dd class="col-6 col-md-3">
+                  {{ vivo.lastHeartbeat ? (vivo.lastHeartbeat | date: 'dd/MM/yy HH:mm:ss') : '—' }}
+                </dd>
+              </dl>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <p class="text-muted small mt-2 mb-0">
+        <i class="icon-refresh-cw me-1"></i>
+        Se actualiza solo cada 20 segundos.
+        @if (ultimaLectura(); as leido) {
+          Última lectura: {{ leido | date: 'HH:mm:ss' }}.
+        }
+      </p>
+    } @else {
+      <!--
+        Conectó alguna vez pero no hay fila de estado: es el caso de hoy, con el
+        servicio de alarmas todavía sin escribir en la base.
+      -->
+      <div class="card border">
+        <div class="card-body text-center text-muted py-5">
+          <i class="icon-radio-tower d-block mb-2" style="font-size: 2rem"></i>
+          <p class="mb-1"><strong class="text-body">Sin datos de estado.</strong></p>
+          <p class="small mb-0">
+            Los reporta el servicio de alarmas, el programa que habla con los equipos por MQTT. El
+            puente con la base ya está hecho de este lado; falta que ese servicio empiece a
+            escribir.
+          </p>
+        </div>
+      </div>
+    }
+  }
 }
