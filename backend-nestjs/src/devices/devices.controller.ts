@@ -16,7 +16,10 @@ import { AccountType, UserRole } from '../common/enums';
 import { ScopeService } from '../common/scope.service';
 import type { AuthenticatedUser } from '../auth/auth.service';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { RequireMembership } from '../auth/decorators/roles.decorator';
+import {
+  MembershipRequirement,
+  RequireMembership,
+} from '../auth/decorators/roles.decorator';
 import { DeviceConfigService } from './device-config.service';
 import { DevicesService } from './devices.service';
 import {
@@ -49,6 +52,25 @@ class FindDevicesQuery {
   @Min(1)
   neighborhoodId?: number;
 }
+
+/**
+ * Quién CONFIGURA un equipo, por rol. El otro eje —en qué barrio— lo resuelve
+ * `assertManagesNeighborhood` adentro del servicio: los dos son obligatorios.
+ *
+ * El MONITOR queda afuera a propósito: mira el tablero y resuelve eventos, no
+ * toca la infraestructura. Apagar el módulo `rf` desde la pantalla de monitoreo
+ * dejaría un poste sordo a los controles remotos sin que nadie lo note.
+ */
+const CONFIGURAN_EQUIPOS: MembershipRequirement[] = [
+  {
+    accountType: AccountType.COMPANY,
+    roles: [UserRole.OWNER, UserRole.ADMIN, UserRole.TECHNICIAN],
+  },
+  {
+    accountType: AccountType.ORGANIZATION,
+    roles: [UserRole.OWNER, UserRole.ADMIN, UserRole.TECHNICIAN],
+  },
+];
 
 /**
  * Alarmas comunitarias (v2): infraestructura del BARRIO, con inventario.
@@ -169,10 +191,14 @@ export class DevicesController {
    * PUT /api/devices/:id/config — publica un patch de configuración.
    *
    * Lo mergea `gtd.publish_config` contra el espejo POR SECCIÓN: mandar
-   * `{"modulos":{"rf":true}}` no apaga ds3231, eeprom ni supervisor. Solo quien
-   * GESTIONA el barrio (con `managed_by = CPS`, la organización solo mira).
+   * `{"modulos":{"rf":true}}` no apaga ds3231, eeprom ni supervisor.
+   *
+   * Dos ejes, los dos obligatorios: el ROL dice qué (el MONITOR mira, no
+   * configura) y el ALCANCE dice dónde (`assertManagesNeighborhood`, en el
+   * servicio: con `managed_by = CPS` la organización solo mira).
    */
   @Put(':id/config')
+  @RequireMembership(...CONFIGURAN_EQUIPOS)
   async publishConfig(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: PublishConfigDto,
@@ -194,6 +220,7 @@ export class DevicesController {
    * vuelve por acá — llega después por `up t:scan`.
    */
   @Post(':id/config/scan')
+  @RequireMembership(...CONFIGURAN_EQUIPOS)
   async pedirScan(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: AuthenticatedUser,
@@ -210,6 +237,7 @@ export class DevicesController {
    * Es el desbloqueo cuando el equipo todavía no reportó su `cfg_full`.
    */
   @Post(':id/config/refresh')
+  @RequireMembership(...CONFIGURAN_EQUIPOS)
   async pedirRefresh(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: AuthenticatedUser,
