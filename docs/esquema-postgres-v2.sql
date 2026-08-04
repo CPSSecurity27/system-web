@@ -1035,12 +1035,24 @@ CREATE INDEX ix_uplink_raw_mac ON gtd.uplink_raw(mac, received_at DESC);
 --     gtd.mark_command_sent(cid) -> text
 --     gtd.mark_config_sent(mac, cfg_v) -> text
 --     gtd.mark_config_failed(mac, cfg_v, det) -> text   (la cfg que no salió, P0-2)
+--     gtd.confirm_config(mac, cfg_v, res, det) -> text
+--        El ack de una cfg NO trae cid (el firmware lo arma con cfg_v y nada
+--        más), así que se correlaciona por mac + cfg_v. Marca `applied` y
+--        ENCOLA SOLA el cmd t:refresh: aplicar una cfg no refresca el espejo de
+--        forma confiable —app_roam_set/autooff/mante llaman a cfg_full_touch()
+--        por dentro, `tiempos` no— y sin el espejo no se puede saber qué quedó
+--        después de los clamps. El cid del refresh es determinístico para que
+--        un ack reentregado por QoS 1 no encole dos.
 --
 --   SALIDA (cps_web) — atomicidad y auditoría, no aislamiento:
 --     gtd.enqueue_command(device_id, tipo, params, user_id) -> cid
 --     gtd.publish_config(device_id, patch, user_id) -> cfg_v
 --     gtd.cancel_command(cid, user_id) -> boolean
 --     gtd.enqueue_rf_batch(device_id, lotes, user_id) -> int
+--     gtd.last_scan(device_id) -> (redes, received_at)
+--        El último up t:scan. Sale de gtd.uplink_raw, donde los scans YA se
+--        guardan: no hace falta tabla. La función existe para que la intención
+--        quede explícita y se pueda cambiar el almacenamiento sin tocar la web.
 --
 -- Canales NOTIFY (payload = MAC): gtd_commands, gtd_config -> los escucha el
 -- GtD; app_panel_state -> lo escucha la web.
