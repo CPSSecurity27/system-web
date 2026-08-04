@@ -215,11 +215,11 @@ export interface BoardModel {
 }
 
 /**
- * Lo que le falta al equipo para poder conectarse al broker MQTT.
+ * La credencial del equipo en el broker MQTT.
  *
- * Hoy es un LOG, no una acción: la credencial se deriva de la MAC con un salt de
- * producción que todavía no está del lado servidor, así que la web muestra el
- * comando pendiente en vez de fingir que el equipo quedó listo.
+ * El alta de fábrica la pide sola: encola en la base y un proceso aparte (el
+ * provisioner) la registra en Mosquitto. `pendingCommand` queda como respaldo
+ * para hacerlo a mano si ese proceso no está corriendo.
  */
 export interface DeviceProvisioning {
   /** Usuario MQTT = client_id = `<id>` del tópico. Los tres son el mismo string. */
@@ -227,7 +227,15 @@ export interface DeviceProvisioning {
   topics: string[];
   brokerRegistered: boolean;
   provisionedAt: string | null;
+  /** El comando manual, como respaldo. */
   pendingCommand: string | null;
+  /** La última operación pedida. null si nunca se pidió ninguna. */
+  queue: {
+    op: 'provision' | 'revoke';
+    estado: 'pending' | 'done' | 'failed';
+    detalle: string | null;
+    createdAt: string;
+  } | null;
 }
 
 /**

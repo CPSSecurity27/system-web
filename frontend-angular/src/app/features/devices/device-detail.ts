@@ -195,6 +195,57 @@ export class DeviceDetail {
     ];
   });
 
+  /**
+   * Dado de baja pero con credencial viva. Nada revoca solo (decisión de
+   * negocio), así que el olvido sería invisible: acá se hace visible.
+   */
+  protected readonly credencialHuerfana = computed(() => {
+    const d = this.device();
+    return d?.status === 'RETIRED' && d?.provisioning?.brokerRegistered === true;
+  });
+
+  protected readonly provisionando = signal(false);
+
+  protected pedirProvision(): void {
+    this.provisionando.set(true);
+    this.devices.pedirProvision(this.id).subscribe({
+      next: () => this.refrescarEquipo(),
+      error: (e: unknown) => {
+        this.error.set(apiErrorMessage(e));
+        this.provisionando.set(false);
+      },
+    });
+  }
+
+  protected revocarCredencial(): void {
+    if (
+      !confirm(
+        'El equipo va a dejar de poder conectarse al broker. ¿Seguro?',
+      )
+    ) {
+      return;
+    }
+    this.provisionando.set(true);
+    this.devices.revocarCredencial(this.id).subscribe({
+      next: () => this.refrescarEquipo(),
+      error: (e: unknown) => {
+        this.error.set(apiErrorMessage(e));
+        this.provisionando.set(false);
+      },
+    });
+  }
+
+  /** Vuelve a pedir el equipo para ver el estado nuevo de la cola. */
+  private refrescarEquipo(): void {
+    this.devices.get(this.id).subscribe({
+      next: (device) => {
+        this.device.set(device);
+        this.provisionando.set(false);
+      },
+      error: () => this.provisionando.set(false),
+    });
+  }
+
   constructor() {
     forkJoin({
       device: this.devices.get(this.id),

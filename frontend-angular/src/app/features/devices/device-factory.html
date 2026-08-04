@@ -118,20 +118,37 @@
           }
 
           <!--
-            Honestidad: el equipo está en el sistema pero TODAVÍA no puede
-            conectarse. Mientras la derivación de la credencial dependa del
-            SALT_MQTT que no está del lado servidor, esto es un comando a mano.
+            El alta pide la credencial sola: queda encolada y la registra el
+            provisioner. Si ese proceso no está corriendo, la fila espera — por
+            eso se sigue mostrando el comando manual como respaldo.
           -->
           @if (device.provisioning; as prov) {
             @if (!prov.brokerRegistered) {
               <div class="border-top pt-2">
-                <p class="small text-muted mb-1">
-                  <i class="icon-network me-1"></i>
-                  Falta darlo de alta en el broker. Correr en el server:
-                </p>
-                <code class="d-block bg-light rounded p-2 small text-break">
-                  {{ prov.pendingCommand }}
-                </code>
+                @if (prov.queue?.estado === 'pending') {
+                  <p class="small text-muted mb-1">
+                    <span class="spinner-border spinner-border-sm me-1"></span>
+                    Credencial pedida al broker: en cola.
+                  </p>
+                } @else if (prov.queue?.estado === 'failed') {
+                  <p class="small text-danger mb-1">
+                    <i class="icon-triangle-alert me-1"></i>
+                    No se pudo registrar: {{ prov.queue?.detalle }}
+                  </p>
+                } @else {
+                  <p class="small text-muted mb-1">
+                    <i class="icon-network me-1"></i>
+                    Falta darlo de alta en el broker.
+                  </p>
+                }
+                <details>
+                  <summary class="small text-muted">
+                    Hacerlo a mano en el server
+                  </summary>
+                  <code class="d-block bg-light rounded p-2 small text-break mt-1">
+                    {{ prov.pendingCommand }}
+                  </code>
+                </details>
               </div>
             }
           }

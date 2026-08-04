@@ -149,6 +149,82 @@
               <i class="icon-radio-tower me-1"></i> Ver estado en vivo
             </button>
           </div>
+
+          <!--
+            CREDENCIAL DEL BROKER. Sin esto el equipo no puede conectarse, por
+            más que esté instalado y con corriente. El alta de fábrica la pide
+            sola; acá se ve cómo salió y se puede reintentar o dar de baja.
+          -->
+          @if (alarma.provisioning; as prov) {
+            <div class="border-top mt-3 pt-3">
+              <p class="fw-semibold small mb-2">
+                <i class="icon-key me-1"></i> Credencial del broker
+              </p>
+
+              @if (credencialHuerfana()) {
+                <div class="alert bg-warning-soft border-0 small py-2">
+                  <i class="icon-triangle-alert me-1"></i>
+                  Este equipo está dado de baja pero <strong>conserva su
+                  credencial</strong>. La baja no es automática: hay que
+                  revocarla a mano.
+                </div>
+              }
+
+              @switch (prov.queue?.estado) {
+                @case ('pending') {
+                  <p class="small text-muted mb-2">
+                    <span class="spinner-border spinner-border-sm me-1"></span>
+                    {{ prov.queue?.op === 'revoke' ? 'Baja' : 'Alta' }} en cola…
+                  </p>
+                }
+                @case ('failed') {
+                  <div class="alert bg-emergency-soft text-emergency border-0 small py-2">
+                    No se pudo
+                    {{ prov.queue?.op === 'revoke' ? 'dar de baja' : 'registrar' }}:
+                    {{ prov.queue?.detalle }}
+                  </div>
+                }
+              }
+
+              @if (prov.brokerRegistered) {
+                <p class="small mb-2">
+                  Registrada el {{ prov.provisionedAt | date: 'short' }} · usuario
+                  <code class="font-monospace">{{ prov.mqttUsername }}</code>
+                </p>
+                <button
+                  type="button"
+                  class="btn btn-sm btn-outline-danger"
+                  [disabled]="provisionando()"
+                  (click)="revocarCredencial()"
+                >
+                  Revocar credencial
+                </button>
+              } @else {
+                <p class="small text-muted mb-2">
+                  Sin registrar: el equipo <strong>no puede conectarse</strong>
+                  al broker.
+                </p>
+                <button
+                  type="button"
+                  class="btn btn-sm btn-brand"
+                  [disabled]="provisionando()"
+                  (click)="pedirProvision()"
+                >
+                  Registrar en el broker
+                </button>
+                @if (prov.pendingCommand) {
+                  <details class="mt-2">
+                    <summary class="small text-muted">
+                      Hacerlo a mano en el servidor
+                    </summary>
+                    <code class="d-block bg-light rounded p-2 small text-break mt-1">
+                      {{ prov.pendingCommand }}
+                    </code>
+                  </details>
+                }
+              }
+            </div>
+          }
         </div>
       </div>
     </div>

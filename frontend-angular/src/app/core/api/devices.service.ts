@@ -152,6 +152,27 @@ export class DevicesService {
     );
   }
 
+  /**
+   * Pedir el alta de la credencial en el broker. Solo CPS.
+   *
+   * El alta de fábrica ya encola sola: esto es para reintentar un fallo o para
+   * los equipos que quedaron sin registrar.
+   */
+  pedirProvision(id: number): Observable<{ mensaje: string }> {
+    return this.http.post<{ mensaje: string }>(
+      `${this.api}/devices/${id}/provision`,
+      {},
+    );
+  }
+
+  /** Dar de baja la credencial. Siempre manual: ningún estado la revoca sola. */
+  revocarCredencial(id: number): Observable<{ mensaje: string }> {
+    return this.http.post<{ mensaje: string }>(
+      `${this.api}/devices/${id}/revoke-credential`,
+      {},
+    );
+  }
+
   /** Modelos de placa: el desplegable / la referencia de prefijos válidos. */
   boardModels(): Observable<BoardModel[]> {
     return this.http.get<BoardModel[]>(`${this.api}/devices/board-models`);
