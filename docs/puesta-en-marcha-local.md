@@ -142,6 +142,8 @@ npm test
 | `psql: no se reconoce` | PostgreSQL no está en el PATH | invocarlo con la ruta completa |
 | `psql` se queda colgado sin devolver nada | está pidiendo la contraseña por consola | `$env:PGPASSWORD="<clave>"` antes de invocarlo |
 | Una clave con `ñ`/acentos no anda al loguearse | se pasó por línea de comandos y Windows la mutiló | cargarla por el formulario o por archivo, nunca por `argv` |
+| `psql` dice `sintaxis de entrada no válida para tipo json` y el JSON llegó sin comillas | PowerShell se come las comillas dobles dentro de `psql -c "…"` | el SQL con JSON va **por archivo**: `psql -f script.sql`. Vale también para los here-strings: `@'…'@` no alcanza |
+| Un `SELECT *` en PowerShell dispara un guard del entorno | el `*` se interpreta como comodín de ruta | listar las columnas explícitamente, o `count(1)` en vez de `count(*)` |
 | El backend arranca pero todo da 500 de permisos | falta correr `roles-conexion-v2.sql` | correrlo (paso 6) |
 | Migraciones fallan por CHECK constraints | la base tenía datos viejos | borrar la base y rehacerla desde cero (paso 5) |
 | No llega ningún mail | `SMTP_HOST` vacío | es lo esperado en local: el link sale por la consola del backend |
