@@ -86,7 +86,11 @@ export class GtdBridgeSchema1786300000000 implements MigrationInterface {
         ADD COLUMN vbat       NUMERIC(5,2),
         ADD COLUMN vpanel     NUMERIC(5,2),
         ADD COLUMN vfuente    NUMERIC(5,2),
-        ADD COLUMN last_seen  TIMESTAMPTZ
+        ADD COLUMN last_seen  TIMESTAMPTZ,
+        ADD COLUMN sleep_until TIMESTAMPTZ,
+        ADD COLUMN ts_device   TIMESTAMPTZ,
+        ADD COLUMN tsq         SMALLINT,
+        ADD CONSTRAINT chk_device_state_tsq CHECK (tsq IS NULL OR tsq BETWEEN 0 AND 4)
     `);
 
     await queryRunner.query(`
@@ -100,6 +104,18 @@ export class GtdBridgeSchema1786300000000 implements MigrationInterface {
     await queryRunner.query(`
       COMMENT ON COLUMN device_state.cfg_v IS
         'Versión de configuración que el panel dice estar corriendo. 0 tras un factory: obliga a republicar.'
+    `);
+    await queryRunner.query(`
+      COMMENT ON COLUMN device_state.sleep_until IS
+        'Hasta cuándo avisó que duerme (status durmiendo). NULL = no duerme. Un panel dormido figura online=false: esta columna distingue "duerme hasta las 7" de "se cayó a las 3 AM".'
+    `);
+    await queryRunner.query(`
+      COMMENT ON COLUMN device_state.ts_device IS
+        'El reloj que el panel DECLARA. Con tsq>=2 puede estar días atrás: NUNCA usarlo como last_seen — last_seen lo pone el servidor.'
+    `);
+    await queryRunner.query(`
+      COMMENT ON COLUMN device_state.tsq IS
+        'Calidad del reloj del panel, 0..4, MENOR ES MEJOR (0=NTP, 4=sin sync).'
     `);
 
     // Para el tablero de mantenimiento: "¿qué postes tienen la batería baja?"
@@ -183,13 +199,24 @@ export class GtdBridgeSchema1786300000000 implements MigrationInterface {
         cfg_v      BIGINT NOT NULL CHECK (cfg_v > 0),
         payload    JSONB  NOT NULL,
         estado     TEXT   NOT NULL DEFAULT 'pending',
+        detalle    TEXT,
         updated_by INT REFERENCES app_user(id) ON DELETE SET NULL,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 
         CONSTRAINT chk_panel_config_estado CHECK (
-          estado IN ('pending', 'sent', 'applied', 'stale')
+          estado IN ('pending', 'sent', 'applied', 'stale', 'failed')
         )
       )
+    `);
+    await queryRunner.query(`
+      COMMENT ON COLUMN gtd.panel_config.detalle IS
+        'Por qué está en failed (lo escribe gtd.mark_config_failed, ej: "payload 1180 B > 1024"). Se limpia al republicar.'
+    `);
+    // Para el barrido de gtd.fetch_pending_macs: mismo predicado que
+    // fetch_pending_config. commands ya tiene el suyo (ix_commands_pending).
+    await queryRunner.query(`
+      CREATE INDEX ix_panel_config_pending ON gtd.panel_config(mac)
+        WHERE estado IN ('pending', 'stale')
     `);
     await queryRunner.query(`
       COMMENT ON TABLE gtd.panel_config IS
@@ -278,6 +305,10 @@ export class GtdBridgeSchema1786300000000 implements MigrationInterface {
     await queryRunner.query(`DROP INDEX IF EXISTS idx_device_state_vbat`);
     await queryRunner.query(`
       ALTER TABLE device_state
+        DROP CONSTRAINT IF EXISTS chk_device_state_tsq,
+        DROP COLUMN IF EXISTS tsq,
+        DROP COLUMN IF EXISTS ts_device,
+        DROP COLUMN IF EXISTS sleep_until,
         DROP COLUMN IF EXISTS last_seen,
         DROP COLUMN IF EXISTS vfuente,
         DROP COLUMN IF EXISTS vpanel,
