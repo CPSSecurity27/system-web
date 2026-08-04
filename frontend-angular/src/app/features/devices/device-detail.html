@@ -48,6 +48,17 @@
         }
       </button>
     </li>
+    <li class="nav-item">
+      <button
+        type="button"
+        class="nav-link"
+        [class.active]="tab() === 'config'"
+        (click)="tab.set('config')"
+        title="Lo que el equipo tiene configurado: WiFi, módulos, tiempos"
+      >
+        <i class="icon-sliders me-1"></i> Configuración
+      </button>
+    </li>
   </ul>
 
   <!--
@@ -474,4 +485,12 @@
       </div>
     }
   }
+}
+
+<!-- ══ CONFIGURACIÓN ════════════════════════════════════════════════════
+     Lee el ESPEJO (lo que el equipo dice que corre) y publica un patch
+     contra él. Ver docs/superpowers/specs/2026-08-04-configuracion-por-equipo-design.md
+-->
+@if (tab() === 'config') {
+  <app-device-config [deviceId]="id" [estadoVivo]="state()" />
 }

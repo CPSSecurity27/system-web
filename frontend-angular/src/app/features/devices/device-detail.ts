@@ -11,10 +11,11 @@ import { apiErrorMessage } from '../../core/http/api-error';
 import { Device, DeviceState, Maintenance } from '../../core/models/api.models';
 import { Status } from '../../shared/ui/status/status';
 import { Map, MapMarker } from '../../shared/map/map';
+import { DeviceConfigTab } from './device-config';
 
 @Component({
   selector: 'app-device-detail',
-  imports: [RouterLink, DatePipe, Map, Status],
+  imports: [RouterLink, DatePipe, Map, Status, DeviceConfigTab],
   templateUrl: './device-detail.html',
 })
 export class DeviceDetail {
@@ -31,7 +32,7 @@ export class DeviceDetail {
    * falta dejar el estado abierto en una pantalla de monitoreo con URL propia,
    * pasarlo a rutas hijas es un paso corto.
    */
-  protected readonly tab = signal<'ficha' | 'estado'>('ficha');
+  protected readonly tab = signal<'ficha' | 'estado' | 'config'>('ficha');
 
   protected readonly device = signal<Device | null>(null);
   protected readonly maintenances = signal<Maintenance[]>([]);
