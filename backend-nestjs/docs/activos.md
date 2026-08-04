@@ -297,3 +297,63 @@ POST /api/devices/:id/config/reveal-wifi     solo CPS; auditado
 
 El **scan es a pedido, nunca automático**: interrumpe la máquina de estados del
 WiFi y, mientras dura, el panel no está siendo una alarma.
+
+## Credencial del broker (2026-08-04)
+
+Sin credencial en Mosquitto, un equipo **no puede conectarse** por más que esté
+instalado y con corriente. La web no la registra: **encola** y un proceso aparte
+—el provisioner, en el repo del GtD— hace el trabajo.
+
+Diseño: `docs/superpowers/specs/2026-08-04-provisioner-broker-design.md`.
+
+### El flujo
+
+```
+POST /devices  →  gtd.provisioning_queue (pending)  →  NOTIFY gtd_provisioning
+                                                              ↓
+                                            provisioner (proceso privilegiado)
+                                            deriva HMAC → mosquitto_passwd → reload
+                                                              ↓
+                            gtd.confirm_provisioning → device.mqtt_provisioned_at
+```
+
+**El alta de fábrica encola sola**, en la misma transacción que crea el equipo:
+no puede quedar un equipo fabricado sin pedido de credencial. Es lo que hace
+posible fabricar una tanda sin correr un comando por equipo.
+
+### Por qué el provisioner es un proceso aparte del GtD
+
+El GtD está encerrado a propósito (`NoNewPrivileges`, `ProtectSystem=strict`)
+porque recibe payloads de cada panel por MQTT. Registrar en el broker necesita lo
+contrario: escribir `/etc/mosquitto/gtd.passwd` y recargar el servicio. Meterlo
+adentro sería desarmar ese encierro en el proceso más expuesto del sistema.
+
+Comparten el repo —la derivación HMAC tiene que coincidir byte a byte con el
+firmware— pero no el proceso.
+
+### El `SALT_MQTT` no vive acá
+
+La password se **deriva**, no se guarda: quien tiene el salt puede calcular la
+credencial de cualquier panel de la flota. Vive **solo** en el entorno del
+provisioner. La web nunca lo ve — solo dice "registrá esta MAC".
+
+Por eso `gtd.provisioning_queue` no guarda ninguna password.
+
+### Endpoints
+
+```
+POST /api/devices/:id/provision           solo CPS; reintentar o registrar uno viejo
+POST /api/devices/:id/revoke-credential   solo CPS; SIEMPRE manual
+```
+
+**La baja nunca es automática.** Ningún cambio de estado del equipo revoca nada,
+ni `RETIRED` ni `OUT_OF_SERVICE` (decisión de negocio). Como el olvido sería
+invisible, la ficha **avisa** cuando un equipo dado de baja conserva su
+credencial.
+
+### Un fallo no mueve el hito
+
+`confirm_provisioning` con un resultado distinto de `ok` marca la fila `failed`
+con el detalle y **no toca `device`**. El hito `mqtt_provisioned_at` solo se
+mueve cuando el broker aceptó de verdad. Y no se reintenta solo: los tres modos
+de falla —salt equivocado, broker roto, equipo inválido— piden una persona.

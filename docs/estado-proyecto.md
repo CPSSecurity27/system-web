@@ -269,12 +269,47 @@ comparte solo la base; controles con 4 códigos RF; sin git por decisión del us
     masivas sobre N equipos; y el cifrado en reposo (DT2), que sigue abierto y con
     la observación del GtD de que cifrar Postgres no alcanza mientras la `cfg`
     viaje retenida en el broker.
-11. **Servicio de alarmas** (programa separado, MQTT → `device_state` + `event` + FCM):
+11. ~~**Alta de equipos en el broker**~~ — **HECHA (2026-08-04)**. Fabricar un
+    equipo desde la web ahora pide su credencial MQTT sola. Diseño en
+    `docs/superpowers/specs/2026-08-04-provisioner-broker-design.md`.
+    - **Sin túnel HTTP**: la web encola en `gtd.provisioning_queue` y un proceso
+      aparte drena la cola. Web y GtD siguen compartiendo solo la base.
+    - **El provisioner es un proceso APARTE del GtD** (`python -m gtd.provisioner`,
+      su propio systemd unit). El GtD está encerrado a propósito
+      (`NoNewPrivileges`, `ProtectSystem=strict`) porque recibe payloads de cada
+      panel; registrar en el broker necesita escribir `/etc/mosquitto` y recargar
+      el servicio. Comparten el repo —la derivación HMAC tiene que coincidir con
+      el firmware— pero no el proceso.
+    - **No reimplementa el HMAC**: invoca `deploy/provision-panel.sh`, que ya
+      valida el salt contra un vector de verificación conocido y aborta sin
+      registrar si no coincide.
+    - **El `SALT_MQTT` vive solo en el provisioner.** La web nunca lo ve, y la
+      cola no guarda ninguna password: se derivan.
+    - Al script se le agregaron `revoke`, `--no-reload` y `--no-probe`. Los dos
+      flags no son cosméticos: con 200 equipos serían 200 reloads, y la prueba de
+      verificación publicaría 200 `status` falsos que el GtD tomaría como
+      conexiones reales, ensuciando `first_connection_at` de toda la tanda.
+    - **La baja es SIEMPRE manual**: ningún cambio de estado revoca nada
+      (decisión de negocio). Como el olvido sería invisible, la ficha avisa
+      cuando un equipo en `RETIRED` conserva su credencial.
+    - Un `confirm` con error NO toca `device`: el hito solo se mueve cuando el
+      broker aceptó de verdad.
+
+    **Queda pendiente**: el `SALT_MQTT` de producción (PA4, acción humana — el
+    flujo se prueba igual con un salt de desarrollo y una placa flasheada con el
+    mismo), y **el despliegue**, que no se hizo. Cuando llegue: la Raspberry ya
+    tiene PostgreSQL 17.10 corriendo (el `deploy/README.md` del GtD decía lo
+    contrario y se corrigió), la base de producción se va a llamar
+    **`cpssecurityarg`**, y hay que verificar las 16 migraciones contra 17 —acá
+    se desarrolla en 18—. El GtD desplegado está en `6c5d600`, o sea antes del
+    plan 1, corriendo con `StubRepo` y `GTD_PG_DSN` vacío.
+12. **Servicio de alarmas** (programa separado, MQTT → `device_state` + `event` + FCM):
    diseñarlo recién cuando el resto esté estable.
-12. Más adelante: 2FA para OWNER, estado ACKNOWLEDGED del evento (pospuesto a
+13. Más adelante: 2FA para OWNER, estado ACKNOWLEDGED del evento (pospuesto a
     propósito), alcance del personal de CPS (ver punto 7), tests e2e del modelo v2
     (`sembrar()` de `test/helpers.ts` sigue armando el modelo v1 y su suite está en
-    rojo; el e2e de configuración no lo usa, siembra su propio fixture v2).
+    rojo; los e2e de configuración y de provisioning no lo usan, siembran su
+    propio fixture v2).
 
 ## 4. Mapa de documentación
 
