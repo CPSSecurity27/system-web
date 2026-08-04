@@ -224,3 +224,76 @@ POST   /api/remotes/:id/codes                solo CPS; se cifra antes de inserta
 GET    /api/remotes/:id/codes/:cid/reveal    solo CPS; auditado
 DELETE /api/remotes/:id/codes/:cid           solo CPS
 ```
+
+## Configuración del equipo (2026-08-04)
+
+**No hay tabla de configuración.** `gtd.config_espejo` (lo que el panel DICE que
+corre, después de los clamps silenciosos del firmware) es la verdad de lectura, y
+`gtd.publish_config` el único camino de escritura. Una tabla propia sería un
+tercer lugar donde vive el mismo dato, libre de contradecir al espejo y a la cola.
+
+Diseño completo y el porqué de cada decisión:
+`docs/superpowers/specs/2026-08-04-configuracion-por-equipo-design.md`.
+
+### Quién puede qué
+
+| Rol | Ver | Configurar | Ver passwords WiFi |
+|---|---|---|---|
+| CPS (OWNER/ADMIN/TECHNICIAN) | sí | sí | sí (auditado) |
+| ORGANIZATION, barrio con `managed_by = ORGANIZATION` | sí | sí | no |
+| ORGANIZATION, barrio con `managed_by = CPS` | sí | **no** | no |
+| MONITOR (cualquiera) | sí | **no** | no |
+
+**Los dos ejes son obligatorios y se validan por separado.** El ROL va en
+`@RequireMembership(...CONFIGURAN_EQUIPOS)` del controller; el ALCANCE, en
+`assertManagesNeighborhood` dentro del servicio. Con solo el segundo, un MONITOR
+de la organización pasaba: tiene el barrio en su alcance y `managesNeighborhood`
+responde por la CUENTA, no por el usuario. Lo agarró el e2e.
+
+### Los límites son del firmware
+
+Viven en `src/devices/device-config.limits.ts`, cada uno con su archivo y línea de
+origen. Se validan de nuestro lado **aunque el firmware clampe**, porque el
+firmware clampa en silencio y ackea `ok`: sin esto, alguien pide 5 s de telemetría,
+la pantalla dice "aplicado" y el equipo quedó en 30.
+
+| Campo | Límite |
+|---|---|
+| `redes` | 5 (`WIFI_MAX_PROFILES`) |
+| `tiempos.send_tele_s` | 30 … 86400 |
+| `red_avanzada.roam_rssi` | −90 … −50 |
+| `red_avanzada.roam_delta` | 5 … 30 |
+| `red_avanzada.roam_cooldown_s` | 60 … 3600 |
+| payload mergeado | 1024 B (`MQTT_IN_PAYLOAD_MAX`) |
+
+El de 1024 se mide sobre el payload **ya mergeado** (el patch solo no dice nada: el
+merge le suma las secciones completas) y todo corre en una TRANSACCIÓN. Si no
+entra, se revierte: como `pg_notify` es transaccional, el GtD nunca se entera del
+intento y el `cfg_v` no se quema.
+
+### Las passwords no salen
+
+El `GET` nunca las devuelve — cada red viaja con `tienePassword`. Al guardar, una
+red **sin** `psw` conserva la del espejo: el servidor la repone antes de llamar a
+`publish_config` (`rehidratarPasswords`).
+
+Eso último no es una comodidad: `publish_config` reemplaza el ARRAY ENTERO de
+redes (`COALESCE(patch->'redes', base->'redes')`, no un merge red por red). Sin la
+rehidratación, guardar cualquier cambio de WiFi habría borrado las contraseñas de
+todo el barrio.
+
+El único camino de lectura es `POST /devices/:id/config/reveal-wifi`, solo CPS y
+siempre en `audit_log`.
+
+### Endpoints
+
+```
+GET  /api/devices/:id/config                 espejo + estado de la cola + último scan
+PUT  /api/devices/:id/config                 publica un patch (gestores y técnicos)
+POST /api/devices/:id/config/scan            que el equipo busque redes
+POST /api/devices/:id/config/refresh         pedirle su cfg actual (desbloquea "sin espejo")
+POST /api/devices/:id/config/reveal-wifi     solo CPS; auditado
+```
+
+El **scan es a pedido, nunca automático**: interrumpe la máquina de estados del
+WiFi y, mientras dura, el panel no está siendo una alarma.

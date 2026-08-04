@@ -180,7 +180,48 @@ gtd.confirm_command(p_cid TEXT, p_res TEXT DEFAULT NULL, p_det TEXT DEFAULT NULL
 RETURNS TEXT   -- 'ok' | 'unknown_cid'
 ```
 
-Del `up t:ack`. `p_res = 'ok'` cierra bien, cualquier otra cosa cierra en error.
+Del `up t:ack` **que trae `cid`** (el ack de un comando). El ack de una `cfg` va
+por otro lado — ver 3.3 bis.
+
+### 3.3 bis · `confirm_config` (2026-08-04)
+
+```sql
+gtd.confirm_config(p_mac TEXT, p_cfg_v BIGINT,
+                   p_res TEXT DEFAULT 'ok', p_det TEXT DEFAULT NULL)
+RETURNS TEXT   -- 'ok' | 'noop' | 'unknown_device'
+```
+
+**El ack de una `cfg` NO trae `cid`**: el firmware lo arma con `cfg_v` y nada más
+(`mqtt_build_up_ack_cfg`). Por eso se correlaciona por `(mac, cfg_v)` y necesita
+función propia — mandándolo por `insert_evento` caía en `uplink_raw` como
+`sin_destino` y la confirmación se perdía.
+
+En el pipeline queda así:
+
+```python
+elif t == UpType.ACK.value:
+    if model.cid:                       # ack de comando
+        await repo.confirm_command(model.cid, res=model.res, det=model.det)
+    elif model.cfg_v is not None:       # ack de configuración
+        await repo.confirm_config(mac, model.cfg_v,
+                                  res=model.res or "ok", det=model.det)
+    await repo.insert_evento(mac, t, doc, ts=model.ts)
+```
+
+**`'noop'` es normal y no hay que loguearlo como error**: es el ack reentregado
+por QoS 1 de una `cfg` que ya estaba aplicada, o de una versión que no es la que
+mandamos.
+
+Adentro, además de marcar la `cfg` como aplicada, **encola sola un `cmd
+t:refresh`**. No es un capricho: aplicar una `cfg` no refresca el espejo de forma
+confiable —`app_roam_set`, `app_autooff_set_mode` y `app_mante_set` llaman a
+`cfg_full_touch()` por dentro, pero `tiempos` y `redes` no—, y sin el espejo
+nuevo no se puede saber qué quedó después de los clamps. Del lado de ustedes no
+hay que hacer nada: el `refresh` aparece por el `NOTIFY` de siempre. El `cid` es
+determinístico, así que un ack repetido no encola dos.
+
+Cuando el firmware acepte la propuesta F4 (una línea en `mq_apply_cfg`), esto se
+saca y se ahorra un comando por cada cambio de configuración.
 
 ### 3.4 `upsert_config_espejo`
 

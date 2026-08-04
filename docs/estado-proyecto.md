@@ -238,10 +238,43 @@ comparte solo la base; controles con 4 códigos RF; sin git por decisión del us
      (cómo escribir `PgRepo`/`PgListener` contra las funciones, con código de
      referencia en asyncpg). El `.md` de diseño y el porqué está en
      `docs/contrato-gtd-postgres.md`.
-10. **Servicio de alarmas** (programa separado, MQTT → `device_state` + `event` + FCM):
+10. ~~**Configuración por equipo**~~ — **HECHA (2026-08-04)**. Pestaña
+    "Configuración" en la ficha de la alarma: redes WiFi, módulos, tiempos, hora,
+    auto-off, roaming y mantenimiento. Diseño en
+    `docs/superpowers/specs/2026-08-04-configuracion-por-equipo-design.md`,
+    detalle de permisos y límites en `backend-nestjs/docs/activos.md`.
+    - **Sin tabla de configuración**: el espejo (`gtd.config_espejo`) es la verdad
+      de lectura y `gtd.publish_config` el único camino de escritura. Una tabla
+      propia sería un tercer lugar donde vive el mismo dato.
+    - **La configuración es POR EQUIPO**, sin capa de barrio. Se descartó la
+      herencia a propósito: cada panel reporta y se configura individualmente.
+      Para el caso "40 postes con el mismo WiFi" queda anotado el atajo de copiar
+      la configuración de otro equipo — **no está implementado**.
+    - **Confirmación en escalera**: el ack marca `applied`, un `cmd t:refresh`
+      encadenado trae el espejo y recién ahí es *verificado*. El `tele` (cada 300 s,
+      retenido) reconcilia solo si las dos primeras se pierden. La pantalla nunca
+      muestra como vigente algo que el equipo no confirmó.
+    - Migración `GtdConfigFunctions`: `gtd.confirm_config` (el ack de una `cfg` no
+      trae `cid` y caía en el dead letter) y `gtd.last_scan`.
+    - **El scan de redes es a pedido**: interrumpe la máquina de estados del WiFi
+      y, mientras dura, el panel no está siendo una alarma.
+    - **Hallazgo de seguridad**: el MONITOR podía configurar equipos. El rol dice
+      QUÉ y la membresía dice DÓNDE, y solo estaba el segundo eje. Lo agarró el e2e.
+    - Tres propuestas nuevas al firmware (F4-F6) en
+      `gateway-to-device/docs/08-propuestas-firmware.md`. La F4 es una línea que
+      nos deja sacar el `refresh` encadenado de toda la flota.
+
+    **Queda anotado, sin hacer**: copiar configuración de otro equipo; `cmd t:test`
+    (probar un SSID puntual, es la herramienta del técnico en la calle); campañas
+    masivas sobre N equipos; y el cifrado en reposo (DT2), que sigue abierto y con
+    la observación del GtD de que cifrar Postgres no alcanza mientras la `cfg`
+    viaje retenida en el broker.
+11. **Servicio de alarmas** (programa separado, MQTT → `device_state` + `event` + FCM):
    diseñarlo recién cuando el resto esté estable.
-11. Más adelante: 2FA para OWNER, estado ACKNOWLEDGED del evento (pospuesto a
-    propósito), alcance del personal de CPS (ver punto 7), tests e2e del modelo v2.
+12. Más adelante: 2FA para OWNER, estado ACKNOWLEDGED del evento (pospuesto a
+    propósito), alcance del personal de CPS (ver punto 7), tests e2e del modelo v2
+    (`sembrar()` de `test/helpers.ts` sigue armando el modelo v1 y su suite está en
+    rojo; el e2e de configuración no lo usa, siembra su propio fixture v2).
 
 ## 4. Mapa de documentación
 

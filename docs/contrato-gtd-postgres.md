@@ -315,6 +315,32 @@ mentir con `mark_config_sent` o dejar la fila en un loop de `NOTIFY` inútil.
 `failed` corta el loop (el trigger solo dispara con `pending`/`stale`);
 republicar desde la web vuelve a `pending` y limpia el `detalle`.
 
+**`gtd.confirm_config(p_mac text, p_cfg_v bigint, p_res text, p_det text) → text`**
+(2026-08-04) — el ack de una `cfg`. **No trae `cid`**: el firmware lo arma con
+`cfg_v` y nada más (`mqtt_build_up_ack_cfg`), así que se correlaciona por
+`(mac, cfg_v)` y no puede ir por `confirm_command`. Antes de esta función el ack
+se mandaba por `insert_evento` y terminaba en `uplink_raw` como `sin_destino`:
+la confirmación existía y la tirábamos.
+
+Devuelve `'ok' | 'noop' | 'unknown_device'`. **`'noop'` es normal**: el ack
+reentregado por QoS 1 de una `cfg` ya aplicada.
+
+Y hace una cosa más, que es la única función de ENTRADA que escribe en la cola de
+SALIDA: **encola sola un `cmd t:refresh`**. Aplicar una `cfg` no refresca el
+espejo de forma confiable — `app_roam_set`, `app_autooff_set_mode` y
+`app_mante_set` llaman a `cfg_full_touch()` por dentro, pero `tiempos` y `redes`
+usan sus setters directos y no. Sin espejo nuevo no se puede saber qué quedó
+después de los clamps silenciosos, que es justo lo que la pantalla necesita
+mostrar. El `cid` es determinístico (`refresh-<mac>-<cfg_v>`) para que un ack
+repetido no encole dos.
+
+Va DESPUÉS del ack y no junto con la `cfg` a propósito: son tópicos distintos y
+un refresh que gane la carrera refrescaría la configuración vieja.
+
+> Esto se saca el día que el firmware acepte la propuesta **F4** (una línea:
+> `cfg_full_touch()` al final de `mq_apply_cfg`). Está en
+> `gateway-to-device/docs/08-propuestas-firmware.md`.
+
 ### 6.2 Salida — las llama la web (`cps_web`)
 
 Acá las funciones no son aislamiento (el esquema es nuestro): son **atomicidad y
@@ -369,6 +395,23 @@ la cantidad de lotes encolados (hasta 5 clientes por lote, 4 códigos por client
 > `p_lotes`. Consecuencia: **`gtd.commands.payload` de un `t:rf` lleva códigos RF
 > en claro**, igual que `panel_config` lleva passwords WiFi. El cifrado en reposo
 > (§11) tiene que cubrir las dos tablas, no solo una.
+
+---
+
+**`gtd.last_scan(p_device_id int) → (redes jsonb, received_at timestamptz)`**
+(2026-08-04)
+
+El último `up t:scan` del equipo, para la pantalla de configuración. **No hay
+tabla nueva**: los scans ya caen en `gtd.uplink_raw` con el payload completo
+(todo lo que no es `alarma` termina ahí). La función existe para que la intención
+quede explícita y para poder cambiar el almacenamiento después sin tocar la web.
+
+El panel manda hasta 20 redes con `ssid`, `rssi`, `seg`, `ch` y `guardada` — esta
+última es la que permite ofrecer las redes vistas como autocompletado del SSID,
+que elimina el error de tipeo que deja un poste sin conectar.
+
+> **El scan se pide, nunca es automático.** Interrumpe la máquina de estados del
+> WiFi (`task_wifi.c:541`): mientras escanea, el panel no está siendo una alarma.
 
 ## 7. El circuito de configuración
 
