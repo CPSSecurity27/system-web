@@ -118,8 +118,15 @@ REVOKE ALL ON ALL FUNCTIONS IN SCHEMA gtd FROM cps_provisioner;
 
 GRANT EXECUTE ON FUNCTION
   gtd.fetch_pending_provisioning(),
-  gtd.confirm_provisioning(BIGINT, TEXT, TEXT)
+  gtd.confirm_provisioning(BIGINT, TEXT, TEXT),
+  gtd.confirm_manufacture(BIGINT, TEXT, TEXT, TEXT, TEXT)
 TO cps_provisioner;
+
+-- Para el barrido de huérfanos: comparar los usuarios de gtd.passwd contra los
+-- seriales que siguen vivos. Un alta que falló a mitad de camino puede dejar una
+-- credencial registrada sin equipo que la use, y una credencial viva que nadie
+-- reclama es la clase de cosa que no se descubre sola. Solo estas tres columnas.
+GRANT SELECT (id, serial, mac) ON device TO cps_provisioner;
 
 -- El GtD no participa del alta de credenciales: no se le da nada de la cola.
 REVOKE ALL ON gtd.provisioning_queue FROM cps_alarms;

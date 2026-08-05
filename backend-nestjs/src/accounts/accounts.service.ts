@@ -25,6 +25,7 @@ import { ServiceContract } from '../contracts/entities/service-contract.entity';
 import { Department } from '../geography/entities/department.entity';
 import { Locality } from '../geography/entities/locality.entity';
 import { Neighborhood } from '../neighborhoods/entities/neighborhood.entity';
+import { codigoLibreDeBarrio } from '../neighborhoods/neighborhood-code';
 import { User } from '../users/entities/user.entity';
 import {
   AddMemberDto,
@@ -375,6 +376,12 @@ export class AccountsService {
         const neighborhood = await manager.save(
           manager.create(Neighborhood, {
             name: dto.neighborhood.name,
+            // Igual que en el alta suelta: el código corto se DERIVA del
+            // nombre. Los dos caminos tienen que producir lo mismo, por eso
+            // la lógica está compartida y no duplicada acá.
+            code: await codigoLibreDeBarrio(dto.neighborhood.name, (code) =>
+              manager.existsBy(Neighborhood, { code }),
+            ),
             localityId: dto.neighborhood.localityId,
             latitude: dto.neighborhood.latitude,
             longitude: dto.neighborhood.longitude,

@@ -133,10 +133,26 @@ export enum DeviceMilestoneSource {
  * segundo lugar donde vive el mismo dato, libre de contradecir a las fechas.
  */
 export enum DeviceStage {
-  CREATED = 'CREATED',
-  PROVISIONED = 'PROVISIONED',
-  LABELED = 'LABELED',
+  /**
+   * Existe, está registrado en el broker y tiene sus credenciales del portal.
+   * Las tres cosas pasan en el mismo instante desde que el alta es atómica
+   * (2026-08-04): antes eran dos peldaños, CREATED y PROVISIONED, y mantenerlos
+   * separados solo servía para que un equipo revocado apareciera como "creado".
+   */
+  MANUFACTURED = 'MANUFACTURED',
+  /**
+   * El broker lo vio por primera vez. Es un hecho OBSERVADO, no algo que alguien
+   * marque: por la regla 5 lo escribe el servicio de alarmas.
+   *
+   * Ojo: significa "se conectó alguna vez", NO "está online ahora". Lo segundo
+   * es estado vivo y vive en `device_state`; confundirlos haría que un equipo
+   * caído aparezca como si nunca hubiera funcionado.
+   */
   CONNECTED = 'CONNECTED',
+  /** Prueba funcional del equipo ya conectado: sirena, RF, sensores. */
+  TESTED = 'TESTED',
+  /** Visto bueno para que salga de fábrica. Lo da una persona, no se deriva. */
+  READY = 'READY',
 }
 
 export enum MaintenanceType {

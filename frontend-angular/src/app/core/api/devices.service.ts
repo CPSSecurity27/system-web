@@ -30,7 +30,6 @@ export interface CreateDevice {
   type?: DeviceType;
   organizationId?: number;
   neighborhoodId?: number;
-  tested?: boolean;
 }
 
 /**
@@ -61,8 +60,28 @@ export interface ClaimDevice extends InstallationData {
   claimCode: string;
   neighborhoodId: number;
   name?: string;
-  latitude?: number;
-  longitude?: number;
+  /**
+   * OBLIGATORIAS: el tablero de monitoreo es un mapa y una alarma sin punto es
+   * una alarma que nadie va a mirar cuando suene. La base lo impone con
+   * `chk_device_gps` y el DTO del backend las exige.
+   */
+  latitude: number;
+  longitude: number;
+}
+
+/**
+ * ADOPTAR: sumar un equipo al stock propio con serial + código.
+ *
+ * El otro uso del código además de instalar. Solo sobre equipos SIN DUEÑO: uno
+ * que ya es de alguien se entrega, no se adopta.
+ *
+ * `organizationId` se omite si pertenecés a una sola organización. CPS SÍ tiene
+ * que mandarlo: su stock es la fábrica, así que adopta en nombre de un cliente.
+ */
+export interface AdoptDevice {
+  serial: string;
+  claimCode: string;
+  organizationId?: number;
 }
 
 /** Entrega de LOTE: fábrica → organización, en una sola llamada. Solo CPS. */
@@ -84,13 +103,57 @@ export class DevicesService {
     });
   }
 
-  /** CPS: todo el stock; organización: SU stock. */
-  inventory(): Observable<Device[]> {
-    return this.http.get<Device[]>(`${this.api}/devices/inventory`);
+  /**
+   * El STOCK: lo que está LISTO para entregar o instalar. CPS ve todo; una
+   * organización, el suyo.
+   *
+   * Un equipo entra al stock cuando alguien le da el visto bueno de fábrica, no
+   * cuando se fabrica: antes de eso vive en la pantalla de Fábrica, que es donde
+   * se lo termina de poner a punto.
+   *
+   * `incluirSinAprobar` trae también los que no tienen el visto bueno. Lo usa
+   * SOLO la pantalla de fábrica — sin eso, un equipo recién fabricado
+   * desaparecería de la única pantalla desde la que se lo puede aprobar.
+   */
+  inventory(incluirSinAprobar = false): Observable<Device[]> {
+    return this.http.get<Device[]>(`${this.api}/devices/inventory`, {
+      params: incluirSinAprobar ? { incluirSinAprobar: 'true' } : {},
+    });
   }
 
   get(id: number): Observable<Device> {
     return this.http.get<Device>(`${this.api}/devices/${id}`);
+  }
+
+  // --- Papelera -------------------------------------------------------------
+
+  /** Los removidos. No aparecen en `list()` ni en `inventory()`. Solo CPS. */
+  removidos(): Observable<Device[]> {
+    return this.http.get<Device[]>(`${this.api}/devices/removed`);
+  }
+
+  /**
+   * A la papelera: lo saca de todas las listas y REVOCA su credencial del
+   * broker. Si estaba instalado, lo desvincula del barrio.
+   */
+  remover(id: number): Observable<Device> {
+    return this.http.post<Device>(`${this.api}/devices/${id}/remove`, {});
+  }
+
+  /**
+   * De vuelta a circulación, al STOCK DE FÁBRICA. Le genera un claim code nuevo
+   * —el anterior quedó impreso en una etiqueta— y vuelve a pedir su credencial.
+   */
+  reactivar(id: number): Observable<Device> {
+    return this.http.post<Device>(`${this.api}/devices/${id}/restore`, {});
+  }
+
+  /**
+   * Borrado DEFINITIVO, solo desde la papelera y solo OWNER. Se lleva la
+   * bitácora de mantenimiento; un equipo con eventos no se puede borrar.
+   */
+  borrarDefinitivo(id: number): Observable<{ mensaje: string }> {
+    return this.http.delete<{ mensaje: string }>(`${this.api}/devices/${id}`);
   }
 
   /**
@@ -178,9 +241,27 @@ export class DevicesService {
     return this.http.get<BoardModel[]>(`${this.api}/devices/board-models`);
   }
 
-  /** Solo CPS (fabricación). MAC o número de placa repetidos dan 409. */
+  /**
+   * FABRICAR: solo CPS. MAC o número de placa repetidos dan 409.
+   *
+   * Es ATÓMICA y por eso puede tardar: no vuelve hasta que el provisioner
+   * registró la credencial en el broker y derivó las del portal. Si algo falla,
+   * el backend BORRA el equipo y responde 503 — no queda nada a medias y se
+   * puede reintentar con los mismos datos.
+   */
   create(device: CreateDevice): Observable<Device> {
     return this.http.post<Device>(`${this.api}/devices`, device);
+  }
+
+  /**
+   * La password del usuario `cps` del portal. Endpoint aparte y no un campo de
+   * la ficha: es la credencial de nivel FÁBRICA, el firmware manda no
+   * imprimirla nunca, y cada lectura queda en audit_log. Solo OWNER/ADMIN de CPS.
+   */
+  passwordCps(id: number): Observable<{ usuario: 'cps'; password: string }> {
+    return this.http.get<{ usuario: 'cps'; password: string }>(
+      `${this.api}/devices/${id}/portal-cps`,
+    );
   }
 
   /**
@@ -201,14 +282,25 @@ export class DevicesService {
    */
   updateMilestones(
     id: number,
-    milestones: { labeled?: boolean; connected?: boolean },
+    milestones: { labeled?: boolean; connected?: boolean; tested?: boolean; ready?: boolean },
   ): Observable<Device> {
     return this.http.patch<Device>(`${this.api}/devices/${id}/milestones`, milestones);
   }
 
-  /** El técnico (CPS o de la org dueña del stock) vincula el equipo a SU barrio. */
+  /**
+   * INSTALAR con serial + código. Lo que gobierna es de QUIÉN ES el equipo, no
+   * el código: sin dueño lo reclama cualquiera; con dueño, solo esa
+   * organización o CPS hacia un barrio de ella.
+   *
+   * El código NO se quema: si el equipo se remueve, vuelve al stock con él.
+   */
   claim(claim: ClaimDevice): Observable<Device> {
     return this.http.post<Device>(`${this.api}/devices/claim`, claim);
+  }
+
+  /** Sumar un equipo SIN DUEÑO al stock propio. No lo instala. */
+  adopt(adopt: AdoptDevice): Observable<Device> {
+    return this.http.post<Device>(`${this.api}/devices/adopt`, adopt);
   }
 
   /**

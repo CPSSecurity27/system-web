@@ -5,10 +5,12 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
   forwardRef,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { In, IsNull, Not, Repository } from 'typeorm';
 import { randomBytes } from 'node:crypto';
 import type { AuthenticatedUser } from '../auth/auth.service';
 import { AuditService } from '../common/audit.service';
@@ -19,6 +21,7 @@ import {
   DeviceType,
   MaintenanceStatus,
 } from '../common/enums';
+import { PortalCryptoService } from '../common/portal-crypto.service';
 import { AccessScope } from '../common/scope.service';
 import { Account } from '../accounts/entities/account.entity';
 import { Home } from '../homes/entities/home.entity';
@@ -27,9 +30,10 @@ import {
   CreateBoardModelDto,
   UpdateBoardModelDto,
 } from './dto/board-model.dto';
-import { DeviceView, toDeviceView, toDeviceViews } from './dto/device-view';
+import { DeviceView, toDeviceView } from './dto/device-view';
 import { ProvisioningService } from './provisioning.service';
 import {
+  AdoptDeviceDto,
   ClaimDeviceDto,
   CreateDeviceDto,
   CreateMaintenanceDto,
@@ -77,6 +81,8 @@ export class DevicesService {
     private readonly boardModels: Repository<BoardModel>,
     @InjectRepository(Account) private readonly accounts: Repository<Account>,
     private readonly audit: AuditService,
+    private readonly config: ConfigService,
+    private readonly portalCrypto: PortalCryptoService,
     // Circular de verdad: el alta encola la credencial y el encolado necesita
     // resolver el equipo. Nest lo resuelve con forwardRef en los dos lados.
     @Inject(forwardRef(() => ProvisioningService))
@@ -92,9 +98,9 @@ export class DevicesService {
 
     if (neighborhoodId) {
       this.assertNeighborhood(scope, barrios, neighborhoodId);
-      return toDeviceViews(
+      return this.conEstadosDeCola(
         await this.devices.find({
-          where: { neighborhoodId },
+          where: { neighborhoodId, removedAt: IsNull() },
           relations: { boardModel: true },
           order: { name: 'ASC' },
         }),
@@ -102,9 +108,9 @@ export class DevicesService {
     }
 
     if (scope.global) {
-      return toDeviceViews(
+      return this.conEstadosDeCola(
         await this.devices.find({
-          where: { status: In(nonInventoryStatuses()) },
+          where: { status: In(nonInventoryStatuses()), removedAt: IsNull() },
           relations: { boardModel: true },
           order: { name: 'ASC' },
         }),
@@ -112,9 +118,9 @@ export class DevicesService {
     }
     if (barrios.length === 0) return [];
 
-    return toDeviceViews(
+    return this.conEstadosDeCola(
       await this.devices.find({
-        where: { neighborhoodId: In(barrios) },
+        where: { neighborhoodId: In(barrios), removedAt: IsNull() },
         relations: { boardModel: true },
         order: { name: 'ASC' },
       }),
@@ -122,19 +128,54 @@ export class DevicesService {
   }
 
   /**
-   * El stock: CPS ve todo el inventario (fábrica + stocks de clientes); una
-   * organización ve SOLO su propio stock.
+   * El STOCK: lo que está listo para entregar o instalar.
+   *
+   * CPS ve todo el inventario (fábrica + stocks de clientes); una organización
+   * ve SOLO su propio stock.
+   *
+   * ## Solo los APROBADOS
+   *
+   * Un equipo entra al stock cuando alguien le da el visto bueno de fábrica
+   * (`ready_at`), no cuando se fabrica. Antes del visto bueno el equipo existe y
+   * se ve en la pantalla de FÁBRICA, que es donde se lo termina de poner a
+   * punto; "stock" significa mercadería lista, no mercadería a medio hacer.
+   *
+   * Decisión del usuario (2026-08-05): es el botón "Listo" el que habilita al
+   * equipo en el inventario.
+   *
+   * Consecuencia a tener presente: un equipo entregado a una organización SIN
+   * el visto bueno le queda invisible —no está en su stock y no ve la fábrica—.
+   * Hoy no puede pasar por accidente porque la entrega la hace CPS mirando la
+   * lista, pero si alguna vez `deliver` se automatiza, ahí hay un agujero.
+   *
+   * ## Orden
+   *
+   * Lo ÚLTIMO que entró primero. Estaba al revés y el equipo recién aprobado
+   * caía al final de la lista, justo donde nadie lo busca.
    */
-  async findInventory(actor: AuthenticatedUser): Promise<DeviceView[]> {
+  async findInventory(
+    actor: AuthenticatedUser,
+    incluirSinAprobar = false,
+  ): Promise<DeviceView[]> {
     const esCps = actor.memberships.some(
       (m) => m.accountType === AccountType.COMPANY,
     );
     if (esCps) {
-      return toDeviceViews(
+      // La pantalla de FÁBRICA necesita ver los equipos ANTES del visto bueno:
+      // es donde se los termina de poner a punto. Sin esta salida, el equipo
+      // recién fabricado desaparecería de la única pantalla desde la que se lo
+      // puede aprobar. Solo CPS, que es la única que ve la fábrica.
+      const aprobados = incluirSinAprobar ? undefined : Not(IsNull());
+
+      return this.conEstadosDeCola(
         await this.devices.find({
-          where: { status: DeviceStatus.INVENTORY },
+          where: {
+            status: DeviceStatus.INVENTORY,
+            removedAt: IsNull(),
+            ...(aprobados ? { readyAt: aprobados } : {}),
+          },
           relations: { boardModel: true },
-          order: { id: 'ASC' },
+          order: { id: 'DESC' },
         }),
       );
     }
@@ -144,11 +185,16 @@ export class DevicesService {
       .map((m) => m.accountId);
     if (orgIds.length === 0) return [];
 
-    return toDeviceViews(
+    return this.conEstadosDeCola(
       await this.devices.find({
-        where: { status: DeviceStatus.INVENTORY, organizationId: In(orgIds) },
+        where: {
+          status: DeviceStatus.INVENTORY,
+          organizationId: In(orgIds),
+          removedAt: IsNull(),
+          readyAt: Not(IsNull()),
+        },
         relations: { boardModel: true },
-        order: { id: 'ASC' },
+        order: { id: 'DESC' },
       }),
     );
   }
@@ -159,7 +205,7 @@ export class DevicesService {
       relations: { boardModel: true },
     });
     if (!entidad) throw new NotFoundException(`No existe el dispositivo ${id}`);
-    const device = toDeviceView(entidad);
+    const device = this.vista(entidad);
 
     if (device.neighborhoodId === null) {
       // Inventario: solo CPS lo ve por acá (el stock de una org va por /inventory).
@@ -176,15 +222,47 @@ export class DevicesService {
   }
 
   /**
-   * Completa el estado de la cola de credenciales. Solo en la FICHA: en los
-   * listados va null, porque una consulta por equipo sobre una lista de 200 no
-   * paga lo que cuesta.
+   * La vista de UN equipo, con la password de `admin` descifrada.
+   *
+   * Solo por acá: los LISTADOS la dejan en null a propósito. La etiqueta se
+   * imprime de a un equipo, así que el front pide la ficha antes de imprimir —
+   * un request más a cambio de que una lista de 200 equipos no sea un volcado de
+   * 200 passwords en una respuesta HTTP.
    */
+  private vista(device: Device, warnings: string[] = []): DeviceView {
+    return toDeviceView(device, warnings, (blob) =>
+      this.portalCrypto.decrypt(blob),
+    );
+  }
+
+  /** Completa el estado de la cola de credenciales de UN equipo. */
   private async conEstadoDeCola(device: DeviceView): Promise<DeviceView> {
     if (device.provisioning) {
       device.provisioning.queue = await this.provisioning.estadoDe(device.id);
     }
     return device;
+  }
+
+  /**
+   * Lo mismo para una lista, en una sola consulta.
+   *
+   * Antes los listados devolvían `queue: null` siempre, y eso hacía que un
+   * equipo con la credencial en cola se viera idéntico a uno al que nunca se le
+   * pidió nada — justo lo que la tabla de fábrica necesita distinguir.
+   */
+  private async conEstadosDeCola(
+    entidades: Device[],
+    warnings: string[] = [],
+  ): Promise<DeviceView[]> {
+    const vistas = entidades.map((d) => toDeviceView(d, warnings));
+    const estados = await this.provisioning.estadosDe(vistas.map((v) => v.id));
+
+    for (const vista of vistas) {
+      if (vista.provisioning) {
+        vista.provisioning.queue = estados.get(vista.id) ?? null;
+      }
+    }
+    return vistas;
   }
 
   /** Estado vivo (lo escribe el servicio de alarmas; la web solo lee). */
@@ -202,6 +280,16 @@ export class DevicesService {
    * (ALOY0043). El serial NO se elige — se deriva de la MAC, porque ese string
    * es también el usuario MQTT y el `<id>` del tópico con el que el equipo va a
    * hablar con el servicio de alarmas.
+   *
+   * ES ATÓMICA: no vuelve hasta que el provisioner registró la credencial en el
+   * broker Y derivó las del portal local. Si algo de eso falla, el equipo se
+   * BORRA y nadie queda a medio fabricar.
+   *
+   * No puede ser una transacción de base y por eso es una compensación: el
+   * provisioner no ve la fila encolada hasta el COMMIT, así que esperar adentro
+   * de la transacción sería esperar para siempre. Lo que sobrevive al borrado es
+   * el `audit_log` — la fila de la cola se va por CASCADE, y un intento fallido
+   * sin rastro es un intento que se repite a ciegas.
    */
   async create(dto: CreateDeviceDto, createdBy: number): Promise<DeviceView> {
     // Los otros tipos del enum están reservados y nunca se probaron: dejar
@@ -224,6 +312,15 @@ export class DevicesService {
 
     if (dto.neighborhoodId) {
       await this.assertNeighborhoodExists(dto.neighborhoodId);
+
+      // Alta CON barrio es CPS instalando directo, y una alarma instalada sin
+      // punto en el mapa no se puede monitorear. Lo impone `chk_device_gps`
+      // igual; acá se atrapa antes para que el error se entienda.
+      if (dto.latitude === undefined || dto.longitude === undefined) {
+        throw new BadRequestException(
+          'Un equipo que se instala directo necesita su ubicación en el mapa.',
+        );
+      }
     }
     if (dto.organizationId && dto.neighborhoodId) {
       throw new BadRequestException(
@@ -251,7 +348,9 @@ export class DevicesService {
         manufacturedAt: dto.manufacturedAt
           ? new Date(dto.manufacturedAt)
           : new Date(),
-        tested: dto.tested ?? false,
+        // El testeo ya no se declara en el alta: es un hito POSTERIOR a la
+        // primera conexión (la prueba funcional del equipo andando), y marcarlo
+        // acá sería afirmar que se probó algo que todavía no habló con nadie.
         imei: dto.imei ?? null,
         iccid: dto.iccid ?? null,
         mac,
@@ -280,38 +379,319 @@ export class DevicesService {
       },
     });
 
-    // El alta de fábrica pide la credencial del broker SOLA: es lo que hace
-    // posible fabricar una tanda sin correr un comando por equipo. Si el
-    // provisioner está caído, la fila queda pendiente y se toma al arrancar.
-    await this.provisioning.encolar(device.id, 'provision', createdBy);
+    await this.fabricar(device, createdBy);
 
-    device.boardModel = boardModel;
-    return toDeviceView(device, warnings);
+    // Se relee porque las columnas que importan —mqtt_provisioned_at y las dos
+    // credenciales cifradas— las escribió el PROVISIONER, no esta transacción.
+    // La instancia en memoria no las tiene y devolverla sería mostrar un equipo
+    // recién fabricado como si le faltara todo.
+    const fresco = await this.devices.findOne({
+      where: { id: device.id },
+      relations: { boardModel: true },
+    });
+
+    return this.vista(fresco ?? device, warnings);
+  }
+
+  // --- Papelera de equipos --------------------------------------------------
+
+  /** Los removidos, que no aparecen en ningún otro listado. Solo CPS. */
+  async findRemoved(scope: AccessScope): Promise<DeviceView[]> {
+    if (!scope.global) {
+      throw new ForbiddenException('Solo CPS ve los equipos removidos');
+    }
+    return this.conEstadosDeCola(
+      await this.devices.find({
+        where: { removedAt: Not(IsNull()) },
+        relations: { boardModel: true },
+        order: { removedAt: 'DESC' },
+      }),
+    );
   }
 
   /**
-   * CLAIM: el técnico instala el poste y reclama el equipo con serial + código.
-   * - CPS reclama cualquier equipo en inventario, para cualquier barrio que alcance.
-   * - El personal de una organización solo reclama equipos de SU stock, para SUS
-   *   barrios. El stock de fábrica (sin organización) es reclamable solo por CPS:
-   *   primero CPS "entrega" el lote (update organizationId), después la muni instala.
+   * REMOVER: saca el equipo de circulación y revoca su credencial del broker.
+   *
+   * Si estaba instalado, lo DESVINCULA del barrio (decisión del usuario,
+   * 2026-08-05). Eso significa que una acción de la pantalla de fábrica cambia
+   * la infraestructura de un barrio sin que se vea desde allá — por eso queda
+   * solo para CPS y siempre con `audit_log`.
+   *
+   * El equipo no se borra: se puede dar de alta de nuevo desde la papelera.
+   */
+  async remove(
+    id: number,
+    actor: AuthenticatedUser,
+    scope: AccessScope,
+  ): Promise<DeviceView> {
+    if (!scope.global) {
+      throw new ForbiddenException('Solo CPS puede remover equipos');
+    }
+
+    const device = await this.findOne(id, scope);
+    if (device.removedAt !== null) {
+      throw new ConflictException('Ese equipo ya está removido');
+    }
+
+    await this.devices.update(id, {
+      removedAt: new Date(),
+      removedBy: actor.id,
+      updatedBy: actor.id,
+      // Vuelve al stock de fábrica: el CHECK de custodia exige que todo lo que
+      // no está en INVENTORY tenga barrio, así que desvincular y cambiar el
+      // estado son la misma operación, no dos.
+      neighborhoodId: null,
+      status: DeviceStatus.INVENTORY,
+      // Una fecha de instalación en un equipo que ya no está instalado no
+      // describe nada: la historia de la instalación vive en la bitácora.
+      installedAt: null,
+    });
+
+    await this.audit.record({
+      actorUserId: actor.id,
+      action: 'device.remove',
+      entityType: 'device',
+      entityId: id,
+      neighborhoodId: device.neighborhoodId,
+      oldValue: {
+        serial: device.serial,
+        status: device.status,
+        neighborhoodId: device.neighborhoodId,
+      },
+    });
+
+    // La credencial se da de baja SIEMPRE que se remueve: un equipo fuera de
+    // circulación con credencial activa es exactamente el olvido invisible que
+    // el spec del provisioner quería evitar. Si el provisioner no está, la fila
+    // queda pendiente y se toma cuando arranque.
+    await this.provisioning.encolar(id, 'revoke', actor.id);
+
+    return this.findOne(id, scope);
+  }
+
+  /**
+   * REACTIVAR: lo devuelve a circulación y vuelve a pedir su credencial.
+   *
+   * Vuelve al stock de fábrica, no al barrio donde estaba: reinstalarlo es un
+   * claim, con su técnico y sus datos de instalación.
+   */
+  async restore(
+    id: number,
+    actor: AuthenticatedUser,
+    scope: AccessScope,
+  ): Promise<DeviceView> {
+    if (!scope.global) {
+      throw new ForbiddenException('Solo CPS puede reactivar equipos');
+    }
+
+    const device = await this.findOne(id, scope);
+    if (device.removedAt === null) {
+      throw new ConflictException('Ese equipo no está removido');
+    }
+
+    await this.devices.update(id, {
+      removedAt: null,
+      removedBy: null,
+      updatedBy: actor.id,
+      // Sin claim code no se puede instalar, y el anterior se imprimió en una
+      // etiqueta que puede andar dando vueltas. Uno nuevo.
+      claimCode: generateClaimCode(),
+    });
+
+    await this.audit.record({
+      actorUserId: actor.id,
+      action: 'device.restore',
+      entityType: 'device',
+      entityId: id,
+      newValue: { serial: device.serial },
+    });
+
+    // Se re-pide la credencial: al remover se revocó, así que sin esto el
+    // equipo volvería a la lista sin poder conectarse a nada.
+    await this.provisioning.encolar(id, 'provision', actor.id);
+
+    return this.findOne(id, scope);
+  }
+
+  /**
+   * BORRADO DEFINITIVO. Solo desde la papelera y solo CPS.
+   *
+   * Se lleva puesto todo lo que cuelgue del equipo, incluida la bitácora de
+   * mantenimiento (decisión del usuario, 2026-08-05: `device_maintenance` es ON
+   * DELETE CASCADE).
+   *
+   * Los EVENTOS no: `event.device_id` es ON DELETE RESTRICT porque son
+   * append-only. Un equipo que llegó a reportar algo no se borra, y la base lo
+   * rechaza. Acá se traduce ese rechazo a algo que se entienda, en vez de dejar
+   * salir un 500 con el nombre de una constraint.
+   */
+  async hardDelete(
+    id: number,
+    actor: AuthenticatedUser,
+    scope: AccessScope,
+  ): Promise<{ mensaje: string }> {
+    if (!scope.global) {
+      throw new ForbiddenException('Solo CPS puede borrar equipos');
+    }
+
+    const device = await this.findOne(id, scope);
+    if (device.removedAt === null) {
+      throw new ConflictException(
+        'Primero remové el equipo. El borrado definitivo solo se hace desde la papelera.',
+      );
+    }
+
+    // El audit_log va ANTES del borrado: `entity_id` no tiene FK, así que la
+    // fila sobrevive al equipo y queda el rastro de qué serial se borró.
+    await this.audit.record({
+      actorUserId: actor.id,
+      action: 'device.hard_delete',
+      entityType: 'device',
+      entityId: id,
+      oldValue: {
+        serial: device.serial,
+        mac: device.mac,
+        boardNumber: device.boardNumber,
+      },
+    });
+
+    try {
+      await this.devices.delete(id);
+    } catch (e) {
+      if (esViolacionDeClaveForanea(e)) {
+        throw new ConflictException(
+          `No se puede borrar ${device.serial}: tiene eventos registrados, y los ` +
+            'eventos no se borran nunca. El equipo se queda en removidos.',
+        );
+      }
+      throw e;
+    }
+
+    return { mensaje: `Se borró ${device.serial} definitivamente.` };
+  }
+
+  /**
+   * La password del usuario `cps` del portal, en claro. SOLO CPS.
+   *
+   * Endpoint aparte y no un campo más de la ficha porque es la credencial de
+   * nivel fábrica: el firmware manda no imprimirla nunca y no tiene por qué
+   * viajar cada vez que alguien abre un equipo. Cada lectura deja `audit_log`
+   * con quién y cuándo — si algún día aparece publicada, se puede saber por
+   * dónde salió.
+   */
+  async findPortalCps(
+    id: number,
+    actor: AuthenticatedUser,
+    scope: AccessScope,
+  ): Promise<{ usuario: 'cps'; password: string }> {
+    const device = await this.findOne(id, scope);
+
+    const password = this.portalCrypto.decrypt(device.portalCpsEnc);
+    if (!password) {
+      throw new NotFoundException(
+        'Este equipo no tiene credenciales del portal derivadas, o la clave ' +
+          'de cifrado no las puede leer. Re-fabricá la credencial.',
+      );
+    }
+
+    await this.audit.record({
+      actorUserId: actor.id,
+      action: 'device.portal.cps.read',
+      entityType: 'device',
+      entityId: device.id,
+      neighborhoodId: device.neighborhoodId,
+      newValue: { serial: device.serial },
+    });
+
+    return { usuario: 'cps', password };
+  }
+
+  /**
+   * Encola la fabricación y espera. Si falla, borra el equipo y tira.
+   *
+   * El `audit_log` se escribe ANTES del borrado a propósito: `entity_id` no
+   * tiene FK, así que la fila sobrevive al equipo y queda el rastro de qué MAC
+   * se intentó fabricar y por qué no salió.
+   */
+  private async fabricar(device: Device, actorUserId: number): Promise<void> {
+    const timeout = Number(
+      this.config.get<number>('PROVISIONING_TIMEOUT_MS') ?? 30_000,
+    );
+
+    let queueId: number;
+    try {
+      queueId = await this.provisioning.encolar(
+        device.id,
+        'manufacture',
+        actorUserId,
+      );
+    } catch (e) {
+      await this.deshacerFabricacion(device, actorUserId, (e as Error).message);
+      throw new ConflictException(
+        `No se pudo pedir la fabricación: ${(e as Error).message}`,
+      );
+    }
+
+    const resultado = await this.provisioning.esperar(queueId, timeout);
+
+    if (resultado?.estado === 'done') return;
+
+    const motivo =
+      resultado === null
+        ? `el provisioner no contestó en ${Math.round(timeout / 1000)} s`
+        : (resultado.detalle ?? 'sin detalle');
+
+    await this.deshacerFabricacion(device, actorUserId, motivo);
+
+    // 503 y no 500: no es un error de la web, es que el servicio del que
+    // depende no está. El operador puede reintentar el mismo equipo tal cual.
+    throw new ServiceUnavailableException(
+      `No se fabricó el equipo: ${motivo}. No quedó nada a medias — ` +
+        `revisá que el provisioner esté corriendo y volvé a intentar.`,
+    );
+  }
+
+  private async deshacerFabricacion(
+    device: Device,
+    actorUserId: number,
+    motivo: string,
+  ): Promise<void> {
+    await this.audit.record({
+      actorUserId,
+      action: 'device.manufacture.failed',
+      entityType: 'device',
+      entityId: device.id,
+      neighborhoodId: device.neighborhoodId,
+      oldValue: { serial: device.serial, mac: device.mac, motivo },
+    });
+
+    // La fila de la cola se va con él (ON DELETE CASCADE). Si el provisioner
+    // alcanzó a escribir en el broker, la credencial queda huérfana: la limpia
+    // el barrido del provisioner al arrancar.
+    await this.devices.delete(device.id);
+  }
+
+  /**
+   * CLAIM: instalar el equipo en un barrio, con serial + código.
+   *
+   * Lo que gobierna NO es el código —que es siempre el mismo y nunca se quema—
+   * sino DE QUIÉN ES el equipo (2026-08-05):
+   *
+   *   sin dueño (fábrica CPS)  cualquiera que tenga el código lo reclama
+   *   de una organización      solo esa organización, o CPS a un barrio de ella
+   *   instalado                nadie: ya está en servicio
+   *
+   * Esa es la regla que impide que alguien fotografíe la etiqueta de un equipo
+   * ajeno y se lo lleve. Antes el corte lo daba el código, que se quemaba al
+   * instalar; ahora lo da la propiedad, que es lo que de verdad describe quién
+   * puede disponer del equipo.
    */
   async claim(
     dto: ClaimDeviceDto,
     actor: AuthenticatedUser,
     scope: AccessScope,
   ): Promise<DeviceView> {
-    const device = await this.devices.findOne({
-      where: { serial: dto.serial },
-    });
-    if (!device || device.status !== DeviceStatus.INVENTORY) {
-      throw new NotFoundException(
-        'No hay un equipo en inventario con ese serial',
-      );
-    }
-    if (!device.claimCode || device.claimCode !== dto.claimCode) {
-      throw new ForbiddenException('El código de reclamo no corresponde');
-    }
+    const device = await this.reclamable(dto.serial, dto.claimCode);
 
     const barrio = await this.neighborhoods.findOne({
       where: { id: dto.neighborhoodId },
@@ -321,23 +701,15 @@ export class DevicesService {
     }
     this.assertNeighborhoodInScope(scope, dto.neighborhoodId);
 
-    const esCps = actor.memberships.some(
-      (m) => m.accountType === AccountType.COMPANY,
-    );
-    if (!esCps) {
-      // Solo del stock de la organización dueña del barrio destino.
-      if (device.organizationId !== barrio.organizationId) {
-        throw new ForbiddenException(
-          'Ese equipo no está en el stock de tu organización. Pedile a CPS que lo entregue.',
-        );
-      }
-    }
+    this.assertPuedeDisponer(device, barrio.organizationId, actor);
 
     await this.devices.update(device.id, {
       status: DeviceStatus.OPERATIONAL,
       neighborhoodId: dto.neighborhoodId,
       organizationId: null, // instalado: ya no es stock de nadie
-      claimCode: null, // el código es de un solo uso
+      // El código NO se quema (2026-08-05): el equipo puede volver al stock si
+      // se remueve, y sin código no habría forma de volver a reclamarlo. Lo que
+      // impide que un tercero se lo lleve no es el código sino la propiedad.
       name: dto.name ?? device.name,
       latitude: dto.latitude ?? device.latitude,
       longitude: dto.longitude ?? device.longitude,
@@ -374,6 +746,160 @@ export class DevicesService {
   }
 
   /**
+   * ADOPTAR: sumar un equipo al stock propio con serial + código.
+   *
+   * Es el otro uso del código, además de instalar: la muni recibe una caja,
+   * carga el código y el equipo pasa a su inventario sin instalarse todavía.
+   *
+   * Solo funciona sobre equipos SIN DUEÑO. Un equipo que ya es de alguien no se
+   * adopta: o se lo entrega CPS, o no se mueve.
+   *
+   * Convive con la entrega de lotes y no la reemplaza: la entrega es para el
+   * despacho de 50 equipos que todavía no llegaron, esto es para la caja que
+   * alguien tiene en la mano.
+   */
+  async adopt(
+    dto: AdoptDeviceDto,
+    actor: AuthenticatedUser,
+  ): Promise<DeviceView> {
+    const device = await this.reclamable(dto.serial, dto.claimCode);
+
+    if (device.organizationId !== null) {
+      throw new ConflictException(
+        'Ese equipo ya está en el stock de una organización. Si tiene que ' +
+          'cambiar de manos, la entrega la hace CPS.',
+      );
+    }
+
+    const organizationId = this.resolverOrganizacionDestino(actor, dto);
+
+    await this.devices.update(device.id, {
+      organizationId,
+      updatedBy: actor.id,
+    });
+
+    await this.audit.record({
+      actorUserId: actor.id,
+      action: 'device.adopt',
+      entityType: 'device',
+      entityId: device.id,
+      accountId: organizationId,
+      oldValue: { organizationId: null },
+      newValue: { organizationId, serial: device.serial },
+    });
+
+    // No pasa por `findOne`: ese exige alcance global para ver un equipo de
+    // inventario, y quien acaba de adoptarlo puede no ser de CPS. El derecho
+    // sobre este equipo ya se validó arriba.
+    return this.vista(
+      await this.devices.findOneOrFail({
+        where: { id: device.id },
+        relations: { boardModel: true },
+      }),
+    );
+  }
+
+  /**
+   * A qué stock va el equipo adoptado.
+   *
+   * Una persona de una organización lo suma a la suya y no hay nada que elegir.
+   * CPS sí tiene que decirlo: su propio stock ES el de fábrica, así que adoptar
+   * "para CPS" no significaría nada — lo hace en nombre de un cliente.
+   */
+  private resolverOrganizacionDestino(
+    actor: AuthenticatedUser,
+    dto: AdoptDeviceDto,
+  ): number {
+    const propias = actor.memberships
+      .filter((m) => m.accountType === AccountType.ORGANIZATION)
+      .map((m) => m.accountId);
+
+    if (dto.organizationId !== undefined) {
+      const esCps = actor.memberships.some(
+        (m) => m.accountType === AccountType.COMPANY,
+      );
+      if (!esCps && !propias.includes(dto.organizationId)) {
+        throw new ForbiddenException(
+          'No podés sumar equipos al stock de otra organización',
+        );
+      }
+      return dto.organizationId;
+    }
+
+    if (propias.length === 1) return propias[0];
+    if (propias.length === 0) {
+      throw new BadRequestException(
+        'Sos de CPS: decí a qué organización va el equipo. El stock de CPS es ' +
+          'la fábrica, y ahí ya está.',
+      );
+    }
+    throw new BadRequestException(
+      'Pertenecés a más de una organización: decí a cuál va el equipo.',
+    );
+  }
+
+  /**
+   * Un equipo que se puede reclamar con ese código, o el error que explique por
+   * qué no. Compartido por instalar y adoptar: las dos puertas usan el código y
+   * las dos tienen que rechazar lo mismo.
+   */
+  private async reclamable(serial: string, claimCode: string): Promise<Device> {
+    const device = await this.devices.findOne({ where: { serial } });
+
+    if (!device) {
+      throw new NotFoundException(
+        `No hay ningún equipo con el serial ${serial}`,
+      );
+    }
+    if (device.removedAt !== null) {
+      throw new ConflictException(
+        'Ese equipo está removido. Hay que reactivarlo antes de usarlo.',
+      );
+    }
+    if (device.status !== DeviceStatus.INVENTORY) {
+      throw new ConflictException(
+        'Ese equipo ya está instalado. Para moverlo hay que removerlo primero.',
+      );
+    }
+    if (!device.claimCode || device.claimCode !== claimCode) {
+      throw new ForbiddenException('El código de reclamo no corresponde');
+    }
+
+    return device;
+  }
+
+  /**
+   * ¿Puede este usuario disponer del equipo para ESE destino?
+   *
+   * `destinoOrganizationId` es de quién es el barrio donde se va a instalar.
+   *
+   * - Sin dueño: cualquiera. Es la primera reclamación y es lo que permite que
+   *   una muni ponga en servicio la caja que le llegó sin esperar a que CPS
+   *   haga la entrega en el sistema.
+   * - Con dueño: solo esa organización, o CPS. Y CPS solo hacia un barrio de
+   *   ESA organización — pasar un equipo del cliente A a la infraestructura del
+   *   cliente B sería una entrega encubierta, sin registro comercial.
+   */
+  private assertPuedeDisponer(
+    device: Device,
+    destinoOrganizationId: number | null,
+    actor: AuthenticatedUser,
+  ): void {
+    const motivo = motivoParaNoDisponer({
+      stockDelEquipo: device.organizationId,
+      duenoDelBarrio: destinoOrganizationId,
+      esCps: actor.memberships.some(
+        (m) => m.accountType === AccountType.COMPANY,
+      ),
+      organizacionesPropias: actor.memberships
+        .filter((m) => m.accountType === AccountType.ORGANIZATION)
+        .map((m) => m.accountId),
+    });
+
+    if (motivo) throw new ForbiddenException(motivo);
+  }
+
+  /**
    * El `serial` NO se puede cambiar: es la identidad física del equipo.
    *
    * Lo puede llamar CPS o la organización dueña del barrio (el `scope` ya la
@@ -402,10 +928,6 @@ export class DevicesService {
       if (dto.organizationId !== undefined) {
         throw new ForbiddenException('La entrega de equipos la hace CPS');
       }
-      // `tested` es un hecho de la estación de flasheo.
-      if (dto.tested !== undefined) {
-        throw new ForbiddenException('El testeo de fábrica lo marca CPS');
-      }
     }
 
     await this.devices.update(id, {
@@ -415,7 +937,6 @@ export class DevicesService {
         dto.organizationId !== undefined
           ? dto.organizationId
           : device.organizationId,
-      tested: dto.tested ?? device.tested,
       latitude: dto.latitude ?? device.latitude,
       longitude: dto.longitude ?? device.longitude,
       installedAt: dto.installedAt
@@ -556,11 +1077,35 @@ export class DevicesService {
       cambios.firstConnectionBy = dto.connected ? actorId : null;
     }
 
+    if (dto.tested !== undefined) {
+      cambios.testedAt = dto.tested ? now : null;
+      cambios.testedBy = dto.tested ? actorId : null;
+    }
+
+    if (dto.ready !== undefined) {
+      cambios.readyAt = dto.ready ? now : null;
+      cambios.readyBy = dto.ready ? actorId : null;
+    }
+
     await this.devices.update(id, cambios);
 
-    // Se audita solo el override de la conexión: etiquetar es rutina de
-    // fábrica, pero afirmar a mano que un equipo conectó es sustituir una
-    // medición por un criterio humano, y eso tiene que dejar rastro.
+    // LISTO se audita porque es el visto bueno para que el equipo salga de
+    // fábrica: si después aparece uno fallado en la calle, hay que poder saber
+    // quién lo aprobó. Etiquetar y testear son rutina y no lo necesitan.
+    if (dto.ready !== undefined) {
+      await this.audit.record({
+        actorUserId: actorId,
+        action: dto.ready ? 'device.ready' : 'device.ready.clear',
+        entityType: 'device',
+        entityId: id,
+        oldValue: { readyAt: device.readyAt },
+        newValue: { readyAt: cambios.readyAt },
+      });
+    }
+
+    // Se audita el override de la conexión: afirmar a mano que un equipo
+    // conectó es sustituir una medición por un criterio humano, y eso tiene
+    // que dejar rastro.
     if (dto.connected !== undefined) {
       await this.audit.record({
         actorUserId: actorId,
@@ -916,4 +1461,65 @@ function generateClaimCode(): string {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   const bytes = randomBytes(6);
   return [...bytes].map((b) => alphabet[b % alphabet.length]).join('');
+}
+
+/**
+ * Postgres usa DOS códigos para esto y hay que mirar los dos.
+ *
+ * `23503` es `foreign_key_violation`, el genérico. Pero un `ON DELETE RESTRICT`
+ * —que es justo lo que tiene `event.device_id`— levanta `23001`,
+ * `restrict_violation`, que es otro código. Mirando solo el primero, borrar un
+ * equipo con eventos se escapaba como un 500 con el nombre de una constraint
+ * adentro en vez del mensaje que explica qué pasó. Verificado contra la base.
+ *
+ * Se mira el código y no el mensaje porque el mensaje viene en el idioma del
+ * servidor y cambia entre versiones; el código es parte del contrato de SQL.
+ */
+function esViolacionDeClaveForanea(e: unknown): boolean {
+  const code = (e as { code?: string })?.code;
+  return code === '23503' || code === '23001';
+}
+
+/** Quién puede disponer de un equipo, y por qué no. Ver `assertPuedeDisponer`. */
+export interface DisposicionDeEquipo {
+  /** De qué stock es el equipo. `null` = fábrica CPS, sin dueño. */
+  stockDelEquipo: number | null;
+  /** De quién es el barrio donde se va a instalar. */
+  duenoDelBarrio: number | null;
+  esCps: boolean;
+  organizacionesPropias: number[];
+}
+
+/**
+ * La regla de propiedad, sin Nest ni base de datos.
+ *
+ * Devuelve el motivo del rechazo, o `null` si puede. Es una función aparte y
+ * pura porque es LA regla del flujo de instalación —quién puede llevarse qué
+ * equipo a dónde— y una regla así tiene que poder probarse sola, sin levantar
+ * media aplicación para averiguar qué pasa con el stock de un tercero.
+ */
+export function motivoParaNoDisponer(d: DisposicionDeEquipo): string | null {
+  // SIN DUEÑO: cualquiera con el código. Es la primera reclamación, y es lo que
+  // permite que una muni ponga en servicio la caja que le llegó sin esperar a
+  // que CPS haga la entrega en el sistema.
+  if (d.stockDelEquipo === null) return null;
+
+  if (d.esCps) {
+    // CPS puede usar el stock de un cliente, pero solo PARA ese cliente: pasar
+    // un equipo del cliente A a la infraestructura del cliente B sería una
+    // entrega encubierta, sin registro comercial.
+    if (d.duenoDelBarrio !== d.stockDelEquipo) {
+      return (
+        'Ese equipo es del stock de otro cliente. Para usarlo en este barrio ' +
+        'hay que entregarlo primero.'
+      );
+    }
+    return null;
+  }
+
+  if (!d.organizacionesPropias.includes(d.stockDelEquipo)) {
+    return 'Ese equipo está en el stock de otra organización.';
+  }
+
+  return null;
 }

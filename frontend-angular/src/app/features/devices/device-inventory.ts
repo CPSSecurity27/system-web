@@ -1,91 +1,101 @@
-import { Component, computed, inject, signal } from '@angular/core';
-import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
+import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
+import { FormBuilder, FormsModule, ReactiveFormsModule, Validators } from '@angular/forms';
 import { RouterLink } from '@angular/router';
-import { forkJoin } from 'rxjs';
 
 import { AccountsService } from '../../core/api/accounts.service';
 import { DevicesService } from '../../core/api/devices.service';
-import { NeighborhoodsService } from '../../core/api/neighborhoods.service';
 import { AuthService } from '../../core/auth/auth.service';
 import { apiErrorMessage } from '../../core/http/api-error';
 import { Account, Device } from '../../core/models/api.models';
-import { Neighborhood } from '../../core/models/neighborhood';
-import { Map } from '../../shared/map/map';
+
+/** Cada cuánto se refresca el stock solo. */
+const REFRESCO_MS = 20_000;
 
 /**
- * Stock e instalación (nuevo en v2). Custodia en 3 niveles:
- * fábrica CPS → stock de la organización → instalada en un barrio.
+ * INVENTARIO: control de stock, y nada más.
  *
- * CPS ve TODO el stock y entrega lotes; la organización ve el SUYO y lo
- * instala en SUS barrios reclamando (serial + claim code de un solo uso).
+ * Responde una sola pregunta —qué equipos hay y de quién son— y por eso acá NO
+ * se instala nada. Hasta el 2026-08-05 esta pantalla tenía además el formulario
+ * de instalación completo, con mapa para clickear dónde va el poste, altura de
+ * montaje y punto de energía: trabajo de campo mezclado con control de stock.
+ * Eso se mudó a `/alarmas/instalar`.
+ *
+ * Quedan las dos formas en que un equipo ENTRA a un stock:
+ *
+ *   ENTREGA (solo CPS)   despacho de un lote: CPS le pasa N equipos a un
+ *                        cliente, típicamente antes de que lleguen físicamente.
+ *   ADOPCIÓN (por código) la caja que alguien ya tiene en la mano: se carga el
+ *                        serial y el código y el equipo pasa a su stock.
+ *
+ * Conviven porque son dos situaciones reales distintas, no dos caminos para lo
+ * mismo.
  */
 @Component({
   selector: 'app-device-inventory',
-  imports: [ReactiveFormsModule, RouterLink, Map],
+  imports: [FormsModule, ReactiveFormsModule, RouterLink],
   templateUrl: './device-inventory.html',
 })
 export class DeviceInventory {
   private readonly devices = inject(DevicesService);
   private readonly accounts = inject(AccountsService);
-  private readonly neighborhoods = inject(NeighborhoodsService);
   private readonly fb = inject(FormBuilder);
   protected readonly auth = inject(AuthService);
 
-  /** Ubicación del poste elegida clickeando el mapa (opcional). */
-  protected readonly latitude = signal<number | null>(null);
-  protected readonly longitude = signal<number | null>(null);
-
   protected readonly stock = signal<Device[]>([]);
-  protected readonly barrios = signal<Neighborhood[]>([]);
   protected readonly accountList = signal<Account[]>([]);
   protected readonly loading = signal(true);
   protected readonly saving = signal(false);
   protected readonly error = signal<string | null>(null);
   protected readonly message = signal<string | null>(null);
 
+  protected readonly search = signal('');
+
   protected readonly organizations = computed(() =>
     this.accountList().filter((a) => a.type === 'ORGANIZATION'),
   );
 
-  /** Entrega del lote (solo CPS): qué equipo, a qué organización. */
-  /** Los equipos van por `selectedIds` (un `<select multiple>`), no por acá. */
+  /** Entrega del lote (solo CPS). Los equipos van por `selectedIds`. */
   protected readonly deliverForm = this.fb.group({
     organizationId: [null as number | null, Validators.required],
   });
 
-  /** Instalación por claim: serial + código + barrio destino. */
-  protected readonly claimForm = this.fb.nonNullable.group({
+  /**
+   * Adopción por código. `organizationId` solo lo completa CPS: una persona de
+   * una organización lo suma a la suya y no hay nada que elegir.
+   */
+  protected readonly adoptForm = this.fb.nonNullable.group({
     serial: ['', Validators.required],
     claimCode: ['', Validators.required],
-    neighborhoodId: [null as number | null, Validators.required],
-    name: [''],
-    // Datos de instalación: OPCIONALES pero recomendados. El mejor momento
-    // para cargarlos es este, con el técnico parado abajo del poste.
-    poleNumber: [''],
-    heightM: [null as number | null],
-    reference: [''],
-    powerPoint: [''],
-    installNotes: [''],
+    organizationId: [null as number | null],
   });
 
   constructor() {
     this.load();
+
+    // Se refresca sola. Sin esto, una pestaña abierta desde antes de fabricar o
+    // aprobar un equipo no se entera nunca de que el stock cambió, y desde
+    // afuera se ve idéntico a que el equipo no existe.
+    const tic = setInterval(() => this.traer(), REFRESCO_MS);
+    inject(DestroyRef).onDestroy(() => clearInterval(tic));
   }
 
   private load(): void {
     this.loading.set(true);
+    this.traer();
+  }
 
-    forkJoin({
-      stock: this.devices.inventory(),
-      barrios: this.neighborhoods.list(),
-    }).subscribe({
-      next: ({ stock, barrios }) => {
+  /** Refresca sin spinner. Lo llama el temporizador. */
+  private traer(): void {
+    this.devices.inventory().subscribe({
+      next: (stock) => {
         this.stock.set(stock);
-        this.barrios.set(barrios);
         this.loading.set(false);
       },
       error: (err) => {
-        this.error.set(apiErrorMessage(err));
+        // En el refresco automático no se pisa un error que estés leyendo.
+        if (this.loading()) {
+          this.error.set(apiErrorMessage(err));
+        }
         this.loading.set(false);
       },
     });
@@ -102,6 +112,27 @@ export class DeviceInventory {
     if (id === null) return 'Fábrica CPS';
     return this.accountList().find((a) => a.id === id)?.name ?? `Organización #${id}`;
   }
+
+  protected readonly filtered = computed(() => {
+    const term = this.search().trim().toLowerCase();
+    if (!term) return this.stock();
+
+    return this.stock().filter((d) =>
+      [d.serial, d.mac, d.boardNumber, d.name]
+        .filter((v): v is string => !!v)
+        .some((v) => v.toLowerCase().includes(term)),
+    );
+  });
+
+  /** Cuántos son de fábrica y cuántos ya tienen dueño. */
+  protected readonly resumen = computed(() => {
+    const all = this.stock();
+    return {
+      total: all.length,
+      sinDueno: all.filter((d) => d.organizationId === null).length,
+      listos: all.filter((d) => d.milestones.readyAt !== null).length,
+    };
+  });
 
   /** Los equipos tildados para la entrega. El `<select multiple>` no va por form. */
   protected readonly selectedIds = signal<number[]>([]);
@@ -146,65 +177,42 @@ export class DeviceInventory {
     });
   }
 
-  protected setPosition(position: { latitude: number; longitude: number }): void {
-    this.latitude.set(position.latitude);
-    this.longitude.set(position.longitude);
-  }
-
-  protected clearPosition(): void {
-    this.latitude.set(null);
-    this.longitude.set(null);
-  }
-
-  protected claim(): void {
-    if (this.claimForm.invalid || this.saving()) {
-      this.claimForm.markAllAsTouched();
+  /**
+   * ADOPTAR: sumar al stock propio con serial + código.
+   *
+   * Solo funciona sobre equipos sin dueño. Si el equipo ya es de alguien, el
+   * backend lo rechaza con un mensaje que lo explica — la puerta se cierra
+   * apenas el equipo tiene propietario, y eso es lo que impide que alguien
+   * fotografíe una etiqueta ajena y se lleve el equipo.
+   */
+  protected adopt(): void {
+    if (this.adoptForm.invalid || this.saving()) {
+      this.adoptForm.markAllAsTouched();
       return;
     }
 
-    const value = this.claimForm.getRawValue();
+    const { serial, claimCode, organizationId } = this.adoptForm.getRawValue();
 
     this.saving.set(true);
     this.error.set(null);
     this.message.set(null);
 
     this.devices
-      .claim({
-        serial: value.serial.trim(),
-        claimCode: value.claimCode.trim(),
-        neighborhoodId: value.neighborhoodId as number,
-        name: value.name.trim() ? value.name.trim() : undefined,
-        latitude: this.latitude() ?? undefined,
-        longitude: this.longitude() ?? undefined,
-        // Solo se mandan los que se completaron: el vacío no es un dato.
-        poleNumber: value.poleNumber.trim() || undefined,
-        heightM: value.heightM ?? undefined,
-        reference: value.reference.trim() || undefined,
-        powerPoint: value.powerPoint.trim() || undefined,
-        installNotes: value.installNotes.trim() || undefined,
+      .adopt({
+        serial: serial.trim().toUpperCase(),
+        claimCode: claimCode.trim().toUpperCase(),
+        organizationId: organizationId ?? undefined,
       })
       .subscribe({
         next: (device) => {
           this.saving.set(false);
-          this.claimForm.reset({
-            serial: '',
-            claimCode: '',
-            neighborhoodId: null,
-            name: '',
-            poleNumber: '',
-            heightM: null,
-            reference: '',
-            powerPoint: '',
-            installNotes: '',
-          });
-          this.clearPosition();
+          this.adoptForm.reset({ serial: '', claimCode: '', organizationId: null });
           this.message.set(
-            `Equipo ${device.serial} instalado en el barrio. El código quedó quemado.`,
+            `${device.serial} entró al stock. Para ponerlo en servicio, instalalo desde Alarmas.`,
           );
           this.load();
         },
         error: (err) => {
-          // 403: código equivocado o stock ajeno. El mensaje del backend manda.
           this.error.set(apiErrorMessage(err));
           this.saving.set(false);
         },

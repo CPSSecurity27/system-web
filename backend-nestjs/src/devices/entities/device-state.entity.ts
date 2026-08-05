@@ -71,6 +71,42 @@ export class DeviceState {
   vfuente!: string | null;
 
   /**
+   * La RED del equipo. En columnas por lo mismo que los voltajes: "¿cuáles
+   * tienen la señal por debajo de -80?" es una pregunta de flota, y eso no se
+   * responde leyendo un JSONB fila por fila.
+   *
+   * `rssi` va en dBm y es negativo: -60 es buena señal, -80 es mala.
+   * `recon` y `pingFail` son los contadores que explican una caída — un equipo
+   * que se reconecta 40 veces por hora no está "online", está agonizando.
+   */
+  @Column({ type: 'text', nullable: true })
+  ssid!: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  ip!: string | null;
+
+  @Column({ type: 'smallint', nullable: true })
+  rssi!: number | null;
+
+  @Column({ type: 'int', nullable: true })
+  recon!: number | null;
+
+  @Column({ name: 'ping_fail', type: 'int', nullable: true })
+  pingFail!: number | null;
+
+  /**
+   * El resto del snapshot de telemetría: `rtc`, `modulos`, `ota`, contadores
+   * `rf`, `sueno` y `colas`.
+   *
+   * JSONB y no una columna por métrica: son datos que se miran de a un equipo
+   * en su ficha, y crecen cada vez que el firmware agrega un contador. Una
+   * columna por métrica sería una migración por versión de firmware, y la web
+   * quedaría siempre un paso atrás de lo que el panel ya está mandando.
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  tele!: Record<string, unknown> | null;
+
+  /**
    * Cuándo habló por última vez. Lo pone el SERVIDOR (now() en
    * gtd.upsert_panel_state), no el reloj del panel: con tsq>=2 ese reloj puede
    * estar días atrás. Lo escribe CUALQUIER mensaje, no solo el latido.

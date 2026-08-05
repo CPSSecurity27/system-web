@@ -114,6 +114,19 @@ export const routes: Routes = [
       { path: 'alarmas/stock', pathMatch: 'full', redirectTo: '/inventario/stock' },
       { path: 'alarmas/nueva', redirectTo: '/inventario/fabrica' },
       {
+        // INSTALAR vive acá y no en Inventario (2026-08-05): es trabajo de
+        // campo —dónde va el poste, a qué altura, de qué luminaria cuelga— y no
+        // control de stock. Antes estaban mezclados y el inventario terminaba
+        // teniendo un mapa para clickear la posición de un poste.
+        //
+        // managerGuard, no cpsGuard: una municipalidad instala sus propias
+        // alarmas. Quién puede llevarse qué equipo lo decide el backend.
+        path: 'alarmas/instalar',
+        canActivate: [managerGuard],
+        loadComponent: () =>
+          import('./features/devices/device-install').then((m) => m.DeviceInstall),
+      },
+      {
         path: 'alarmas/:id',
         loadComponent: () => import('./features/devices/device-detail').then((m) => m.DeviceDetail),
       },
@@ -159,6 +172,15 @@ export const routes: Routes = [
             canActivate: [cpsGuard],
             loadComponent: () =>
               import('./features/devices/device-factory').then((m) => m.DeviceFactory),
+          },
+          {
+            // La papelera. Pantalla aparte y no una pestaña de fábrica: son dos
+            // trabajos distintos. En fábrica se cargan equipos de a decenas;
+            // acá se revisan de a uno y las dos acciones cuestan deshacerlas.
+            path: 'removidos',
+            canActivate: [cpsGuard],
+            loadComponent: () =>
+              import('./features/devices/device-removed').then((m) => m.DeviceRemoved),
           },
           {
             // Provisorio: el único acto de fábrica que hoy existe para

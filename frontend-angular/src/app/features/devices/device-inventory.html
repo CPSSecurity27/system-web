@@ -1,16 +1,17 @@
 <!--
-  Esta pantalla NO es fábrica: acá el equipo ya existe y lo que se decide es su
-  DESTINO (a qué organización va, en qué barrio se instala). El alta vive en
-  Inventario, que es otra cosa y de otro dueño.
+  INVENTARIO: control de stock y nada más. Qué equipos hay y de quién son.
+  Instalar vive en /alarmas/instalar — es trabajo de campo, no control de stock.
 -->
-<div class="d-flex align-items-center mb-3">
-  <a routerLink="/alarmas" class="btn btn-sm btn-outline-secondary me-2" title="Volver">
-    <i class="icon-arrow-left"></i>
-  </a>
-  <div>
-    <h2 class="h5 fw-bold mb-0"><i class="icon-truck text-brand me-2"></i>Entrega e instalación</h2>
-    <p class="text-muted small mb-0">Stock de la organización → instalada en un barrio</p>
+<div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+  <div class="d-flex align-items-center">
+    <div>
+      <h2 class="h5 fw-bold mb-0"><i class="icon-boxes text-brand me-2"></i>Inventario</h2>
+      <p class="text-muted small mb-0">Los equipos que todavía no están en servicio</p>
+    </div>
   </div>
+  <a routerLink="/alarmas/instalar" class="btn btn-sm btn-brand">
+    <i class="icon-wrench me-1"></i> Instalar una alarma
+  </a>
 </div>
 
 @if (message()) {
@@ -34,49 +35,84 @@
     <div class="col-12 col-lg-7">
       <div class="card border">
         <div
-          class="card-header bg-white border-bottom d-flex align-items-center justify-content-between"
+          class="card-header bg-white border-bottom d-flex align-items-center justify-content-between flex-wrap gap-2"
         >
-          <span class="fw-semibold small"><i class="icon-boxes me-1"></i> Equipos en stock</span>
-          <span class="badge text-bg-light border">{{ stock().length }}</span>
+          <span class="fw-semibold small">
+            <i class="icon-boxes me-1"></i> Equipos en stock
+            <span class="badge text-bg-light border ms-1">{{ resumen().total }}</span>
+            @if (resumen().listos > 0) {
+              <span
+                class="badge bg-success-soft text-success border ms-1"
+                title="Aprobados para salir de fábrica"
+              >
+                {{ resumen().listos }} listos
+              </span>
+            }
+          </span>
+          <input
+            type="search"
+            class="form-control form-control-sm"
+            style="max-width: 200px"
+            placeholder="Serial, MAC o placa…"
+            [ngModel]="search()"
+            (ngModelChange)="search.set($event)"
+            [ngModelOptions]="{ standalone: true }"
+            aria-label="Buscar en el stock"
+          />
         </div>
         <div class="table-responsive">
           <table class="table table-hover align-middle mb-0">
             <thead>
               <tr class="small text-muted">
                 <th scope="col">Serial</th>
-                <th scope="col">Código de reclamo</th>
+                <th scope="col">Placa</th>
                 @if (auth.isCps()) {
                   <th scope="col">Stock de</th>
                 }
-                <th scope="col">Probado</th>
+                <th scope="col">Etapa</th>
               </tr>
             </thead>
             <tbody>
-              @for (device of stock(); track device.id) {
+              @for (device of filtered(); track device.id) {
                 <tr>
                   <td class="small font-monospace fw-medium">{{ device.serial }}</td>
-                  <td class="small font-monospace">
-                    <!-- El claim code es de UN SOLO USO: se quema al instalar. -->
-                    {{ device.claimCode ?? '—' }}
-                  </td>
+                  <td class="small font-monospace">{{ device.boardNumber ?? '—' }}</td>
                   @if (auth.isCps()) {
                     <td class="small text-muted">{{ orgName(device.organizationId) }}</td>
                   }
                   <td>
-                    @if (device.tested) {
-                      <i class="icon-circle-check-big text-success" title="Probado"></i>
-                    } @else {
-                      <i class="icon-circle-minus text-muted" title="Sin probar"></i>
+                    <!--
+                      La etapa, no un tilde de "probado": desde el 2026-08-05 el
+                      testeo es un hito con fecha, posterior a la conexión.
+                    -->
+                    @switch (device.stage) {
+                      @case ('MANUFACTURED') {
+                        <span class="badge bg-light text-muted border">Fabricado</span>
+                      }
+                      @case ('CONNECTED') {
+                        <span class="badge bg-brand-soft text-brand border">Conectado</span>
+                      }
+                      @case ('TESTED') {
+                        <span class="badge bg-warning-soft text-warning border">Testeado</span>
+                      }
+                      @case ('READY') {
+                        <span class="badge bg-success-soft text-success border">Listo</span>
+                      }
                     }
                   </td>
                 </tr>
               } @empty {
                 <tr>
-                  <td colspan="4" class="text-muted small text-center py-4">
-                    No hay equipos en stock.
-                    @if (auth.isCps()) {
-                      Se ingresan al sistema desde
-                      <a routerLink="/inventario/alarmas">Inventario</a>.
+                  <td [attr.colspan]="auth.isCps() ? 4 : 3" class="text-muted small text-center py-4">
+                    @if (resumen().total === 0) {
+                      No hay equipos en stock.
+                      @if (auth.isCps()) {
+                        Se fabrican desde <a routerLink="/inventario/fabrica">Fábrica</a>.
+                      } @else {
+                        Si tenés una caja en la mano, cargá su código acá al lado.
+                      }
+                    } @else {
+                      Ningún equipo coincide con la búsqueda.
                     }
                   </td>
                 </tr>
@@ -85,244 +121,148 @@
           </table>
         </div>
       </div>
-
-      <!-- Entrega del lote: SOLO CPS mueve stock de fábrica a una organización. -->
-      @if (auth.isCps()) {
-        <div class="card border mt-3">
-          <div class="card-header bg-white border-bottom">
-            <span class="fw-semibold small">
-              <i class="icon-truck me-1"></i> Entregar equipo a una organización
-            </span>
-          </div>
-          <div class="card-body">
-            <form [formGroup]="deliverForm" (ngSubmit)="deliver()" novalidate>
-              <div class="row g-3 align-items-end">
-                <div class="col-12 col-sm-5">
-                  <!--
-                    Multi-selección: la entrega es por LOTE, en una sola llamada.
-                    Antes era un equipo por vez, y entregar 50 alarmas eran 50
-                    llamadas con 50 chances de quedar a medio camino.
-                  -->
-                  <label for="dDevice" class="form-label small fw-medium">
-                    Equipos <span class="text-muted fw-normal">({{ selectedIds().length }})</span>
-                  </label>
-                  <select
-                    id="dDevice"
-                    class="form-select form-select-sm"
-                    multiple
-                    size="6"
-                    (change)="onSelectionChange($event)"
-                  >
-                    @for (device of stock(); track device.id) {
-                      <option [value]="device.id">
-                        {{ device.serial }} ({{ orgName(device.organizationId) }})
-                      </option>
-                    }
-                  </select>
-                  <div class="form-text">Ctrl o Shift para elegir varios.</div>
-                </div>
-                <div class="col-12 col-sm-5">
-                  <label for="dOrg" class="form-label small fw-medium">Al stock de</label>
-                  <select
-                    id="dOrg"
-                    class="form-select form-select-sm"
-                    formControlName="organizationId"
-                  >
-                    <option [ngValue]="null">Elegí la organización…</option>
-                    @for (org of organizations(); track org.id) {
-                      <option [ngValue]="org.id">{{ org.name }}</option>
-                    }
-                  </select>
-                </div>
-                <div class="col-12 col-sm-2">
-                  <button
-                    type="submit"
-                    class="btn btn-sm btn-brand w-100"
-                    [disabled]="saving() || deliverForm.invalid || selectedIds().length === 0"
-                  >
-                    Entregar
-                  </button>
-                </div>
-              </div>
-            </form>
-          </div>
-        </div>
-      }
     </div>
 
     <div class="col-12 col-lg-5">
-      <!-- El CLAIM: la instalación real. Serial + código, contra un barrio propio. -->
+      <!--
+        ADOPTAR: la caja que alguien ya tiene en la mano. Solo funciona sobre
+        equipos SIN DUEÑO — apenas el equipo es de alguien, esta puerta se cierra.
+      -->
       <div class="card border">
         <div class="card-header bg-white border-bottom">
           <span class="fw-semibold small">
-            <i class="icon-wrench me-1"></i> Instalar equipo (reclamo)
+            <i class="icon-package-plus me-1"></i> Agregar un equipo con su código
           </span>
         </div>
         <div class="card-body">
-          <form [formGroup]="claimForm" (ngSubmit)="claim()" novalidate>
-            <div class="row g-2 mb-2">
-              <div class="col-6">
-                <label for="cSerial" class="form-label small fw-medium">Serial</label>
-                <input
-                  id="cSerial"
-                  type="text"
-                  class="form-control font-monospace"
-                  formControlName="serial"
-                  autocomplete="off"
-                />
-              </div>
-              <div class="col-6">
-                <label for="cCode" class="form-label small fw-medium">Código de reclamo</label>
-                <input
-                  id="cCode"
-                  type="text"
-                  class="form-control font-monospace"
-                  formControlName="claimCode"
-                  autocomplete="off"
-                />
-              </div>
-            </div>
-
+          <form [formGroup]="adoptForm" (ngSubmit)="adopt()" novalidate>
             <div class="mb-2">
-              <label for="cBarrio" class="form-label small fw-medium">Barrio destino</label>
-              <select id="cBarrio" class="form-select" formControlName="neighborhoodId">
-                <option [ngValue]="null">Elegí un barrio…</option>
-                @for (barrio of barrios(); track barrio.id) {
-                  <option [ngValue]="barrio.id">{{ barrio.name }}</option>
-                }
-              </select>
-            </div>
-
-            <div class="mb-3">
-              <label for="cName" class="form-label small fw-medium">
-                Nombre del poste <span class="text-muted fw-normal">(opcional)</span>
-              </label>
+              <label for="aSerial" class="form-label small fw-medium">Serial</label>
               <input
-                id="cName"
+                id="aSerial"
                 type="text"
-                class="form-control"
-                formControlName="name"
-                placeholder="Esquina Norte"
+                class="form-control font-monospace text-uppercase"
+                formControlName="serial"
+                placeholder="AV-A842E38FCA6C"
+                autocomplete="off"
+                spellcheck="false"
               />
             </div>
 
             <div class="mb-3">
-              <span class="form-label small fw-medium d-block">
-                Ubicación del poste <span class="text-muted fw-normal">(opcional)</span>
-              </span>
-              <!-- Nadie tipea coordenadas: se clickea el mapa y listo. -->
-              <app-map [clickable]="true" (positionChange)="setPosition($event)" />
-              @if (latitude() !== null) {
-                <p class="small mb-0 mt-2">
-                  <i class="icon-circle-check text-success me-1"></i>
-                  <span class="font-monospace">{{ latitude() }}, {{ longitude() }}</span>
-                  <button
-                    type="button"
-                    class="btn btn-link btn-sm p-0 ms-2 align-baseline"
-                    (click)="clearPosition()"
-                  >
-                    Quitar
-                  </button>
-                </p>
-              }
+              <label for="aCode" class="form-label small fw-medium">Código de reclamo</label>
+              <input
+                id="aCode"
+                type="text"
+                class="form-control font-monospace text-uppercase"
+                formControlName="claimCode"
+                placeholder="K7M2QX"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <div class="form-text">Los dos están impresos en la etiqueta del equipo.</div>
             </div>
 
             <!--
-              DATOS DE INSTALACIÓN. Opcionales pero RECOMENDADOS: es lo que el
-              próximo técnico va a querer saber antes de subirse a la escalera.
-              Se pueden completar después desde el detalle de la alarma.
+              CPS adopta en nombre de un cliente: su propio stock ES la fábrica,
+              así que "adoptar para CPS" no significaría nada.
             -->
-            <div class="border-top pt-3 mb-3">
-              <p class="fw-semibold small mb-1">
-                <i class="icon-clipboard-list me-1"></i> Datos de instalación
-                <span class="badge bg-warning-soft text-warning border ms-1">recomendados</span>
-              </p>
-              <p class="text-muted small">
-                Lo que hace falta saber para volver a intervenir el equipo. Se pueden completar
-                después.
-              </p>
-
-              <div class="row g-2 mb-2">
-                <div class="col-7">
-                  <label for="cPole" class="form-label small fw-medium">Poste o columna</label>
-                  <input
-                    id="cPole"
-                    type="text"
-                    class="form-control form-control-sm"
-                    formControlName="poleNumber"
-                    placeholder="Ej: 142-B"
-                  />
-                </div>
-                <div class="col-5">
-                  <label for="cHeight" class="form-label small fw-medium">Altura (m)</label>
-                  <input
-                    id="cHeight"
-                    type="number"
-                    step="0.1"
-                    min="0.1"
-                    max="30"
-                    class="form-control form-control-sm"
-                    formControlName="heightM"
-                    placeholder="6.5"
-                  />
-                </div>
+            @if (auth.isCps()) {
+              <div class="mb-3">
+                <label for="aOrg" class="form-label small fw-medium">Al stock de</label>
+                <select id="aOrg" class="form-select" formControlName="organizationId">
+                  <option [ngValue]="null">Elegí la organización…</option>
+                  @for (org of organizations(); track org.id) {
+                    <option [ngValue]="org.id">{{ org.name }}</option>
+                  }
+                </select>
               </div>
-
-              <div class="mb-2">
-                <label for="cRef" class="form-label small fw-medium">Referencia</label>
-                <input
-                  id="cRef"
-                  type="text"
-                  class="form-control form-control-sm"
-                  formControlName="reference"
-                  placeholder="Esquina de San Martín y Belgrano"
-                />
-              </div>
-
-              <div class="mb-2">
-                <label for="cPower" class="form-label small fw-medium"> Alimentación </label>
-                <input
-                  id="cPower"
-                  type="text"
-                  class="form-control form-control-sm"
-                  formControlName="powerPoint"
-                  placeholder="Luminaria 12 / tablero de la plaza"
-                />
-              </div>
-
-              <div class="mb-0">
-                <label for="cNotes" class="form-label small fw-medium">Observaciones</label>
-                <textarea
-                  id="cNotes"
-                  rows="2"
-                  class="form-control form-control-sm"
-                  formControlName="installNotes"
-                  placeholder="Lo que no entre en los campos de arriba"
-                ></textarea>
-              </div>
-            </div>
+            }
 
             <button
               type="submit"
               class="btn btn-brand w-100"
-              [disabled]="saving() || claimForm.invalid"
+              [disabled]="saving() || adoptForm.invalid"
             >
               @if (saving()) {
                 <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
-                Instalando…
+                Agregando…
               } @else {
-                Reclamar e instalar
+                <i class="icon-plus me-1"></i> Agregar al stock
               }
             </button>
           </form>
 
           <p class="text-muted small mb-0 mt-3 border-top pt-3">
             <i class="icon-shield-check me-1"></i>
-            El código es de <strong>un solo uso</strong> y solo funciona sobre tu propio stock (o el
-            de fábrica, si sos CPS). Con código equivocado o stock ajeno, se rechaza.
+            Solo funciona con equipos que <strong>no son de nadie todavía</strong>. Si el equipo ya
+            está en el stock de una organización, tiene que entregarlo CPS.
           </p>
         </div>
       </div>
+
+      <!-- ENTREGA DE LOTE: solo CPS, y es el camino para el despacho grande. -->
+      @if (auth.isCps()) {
+        <div class="card border mt-3">
+          <div class="card-header bg-white border-bottom">
+            <span class="fw-semibold small">
+              <i class="icon-truck me-1"></i> Entregar un lote
+            </span>
+          </div>
+          <div class="card-body">
+            <form [formGroup]="deliverForm" (ngSubmit)="deliver()" novalidate>
+              <div class="mb-2">
+                <!--
+                  Multi-selección: la entrega es por LOTE, en una sola llamada.
+                  Antes era un equipo por vez, y entregar 50 alarmas eran 50
+                  llamadas con 50 chances de quedar a medio camino.
+                -->
+                <label for="dDevice" class="form-label small fw-medium">
+                  Equipos <span class="text-muted fw-normal">({{ selectedIds().length }})</span>
+                </label>
+                <select
+                  id="dDevice"
+                  class="form-select form-select-sm"
+                  multiple
+                  size="6"
+                  (change)="onSelectionChange($event)"
+                >
+                  @for (device of stock(); track device.id) {
+                    <option [value]="device.id">
+                      {{ device.serial }} ({{ orgName(device.organizationId) }})
+                    </option>
+                  }
+                </select>
+                <div class="form-text">Ctrl o Shift para elegir varios.</div>
+              </div>
+
+              <div class="mb-3">
+                <label for="dOrg" class="form-label small fw-medium">Al stock de</label>
+                <select id="dOrg" class="form-select form-select-sm" formControlName="organizationId">
+                  <option [ngValue]="null">Elegí la organización…</option>
+                  @for (org of organizations(); track org.id) {
+                    <option [ngValue]="org.id">{{ org.name }}</option>
+                  }
+                </select>
+              </div>
+
+              <button
+                type="submit"
+                class="btn btn-sm btn-outline-brand w-100"
+                [disabled]="saving() || deliverForm.invalid || selectedIds().length === 0"
+              >
+                Entregar
+              </button>
+            </form>
+
+            <p class="text-muted small mb-0 mt-3 border-top pt-3">
+              <i class="icon-info me-1"></i>
+              Para el despacho grande, cuando los equipos todavía no llegaron al cliente. La caja
+              que alguien ya tiene en la mano entra por su código.
+            </p>
+          </div>
+        </div>
+      }
     </div>
   </div>
 }

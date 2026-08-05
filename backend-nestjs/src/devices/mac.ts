@@ -85,6 +85,37 @@ export function mqttTopics(serial: string): string[] {
   return ['status', 'tele', 'up', 'cmd', 'cfg'].map((t) => `av/${serial}/${t}`);
 }
 
+// --- Portal local del equipo ------------------------------------------------
+// El equipo levanta un AP y un portal web en 192.168.4.1. Todo esto se COMPONE
+// de la MAC: no hay nada que guardar. Las passwords son otra cosa —las deriva el
+// provisioner con los salts de la flota— y viajan cifradas.
+
+/** El AP del equipo. Lo define el firmware (`wifi_manager_get_ap_ssid`). */
+export function apSsid(macNormalizada: string): string {
+  return 'AlarmaVecinal-' + macNormalizada;
+}
+
+/**
+ * QR de conexión al AP, para la cámara nativa del celular.
+ *
+ * El AP es ABIERTO: va `T:nopass` y NO va campo `P:`. Con `T:WPA` varios
+ * teléfonos fallan la conexión. Los `;;` finales son parte del formato.
+ */
+export function apQr(macNormalizada: string): string {
+  return `WIFI:S:${apSsid(macNormalizada)};T:nopass;;`;
+}
+
+/**
+ * QR para la app del técnico: serial y código de reclamo, en texto plano.
+ *
+ * `CPS1|` es una marca de versión, no decoración. Estas etiquetas se pegan a un
+ * poste y no vuelven: cuando el formato cambie, la app tiene que poder
+ * distinguir una etiqueta vieja de una nueva sin adivinar.
+ */
+export function appQr(serial: string, claimCode: string | null): string {
+  return `CPS1|${serial}|${claimCode ?? ''}`;
+}
+
 // --- Número de placa --------------------------------------------------------
 
 /** Lo que trae impreso la placa: prefijo del modelo + 4 dígitos. */

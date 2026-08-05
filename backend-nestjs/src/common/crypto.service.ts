@@ -1,27 +1,15 @@
-import {
-  createCipheriv,
-  createDecipheriv,
-  randomBytes,
-  timingSafeEqual,
-} from 'node:crypto';
+import { timingSafeEqual } from 'node:crypto';
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-
-const ALGORITHM = 'aes-256-gcm';
-const IV_LENGTH = 12; // recomendado para GCM
-const AUTH_TAG_LENGTH = 16;
-const KEY_LENGTH = 32; // AES-256
+import { loadKey, open, seal } from './gcm';
 
 /**
  * Cifrado de los códigos RF de los controles remotos.
  *
- * AES-256-GCM y no AES-CBC: GCM es cifrado AUTENTICADO. No solo oculta el
- * contenido, sino que detecta si alguien lo modificó — si un byte del ciphertext
- * cambia, el descifrado FALLA en vez de devolver basura silenciosamente. Para
- * códigos que abren una alarma, eso importa.
- *
- * Formato guardado: iv (12) || authTag (16) || ciphertext.
- * El IV es RANDOM por cada cifrado: reusar un IV en GCM rompe el esquema entero.
+ * El algoritmo y el formato viven en `gcm.ts`, compartidos con las credenciales
+ * del portal de los equipos. Lo propio de este servicio es la CLAVE: los códigos
+ * RF y las passwords de los equipos son secretos de distinta naturaleza y no
+ * tienen por qué caer juntos.
  *
  * La clave vive en REMOTE_CODES_KEY (env), no en la base: si te roban un dump de
  * Postgres, los códigos no sirven para nada.
@@ -33,47 +21,18 @@ export class CryptoService implements OnModuleInit {
   constructor(private readonly config: ConfigService) {}
 
   onModuleInit(): void {
-    const raw = this.config.getOrThrow<string>('REMOTE_CODES_KEY');
-    const key = Buffer.from(raw, 'base64');
-
-    // Se falla AL ARRANCAR y no al primer código: una clave corta es un agujero
-    // silencioso, y con esto es imposible que el sistema levante mal configurado.
-    if (key.length !== KEY_LENGTH) {
-      throw new Error(
-        `REMOTE_CODES_KEY debe ser de ${KEY_LENGTH} bytes en base64 (son ${key.length}). ` +
-          `Generá una con: node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`,
-      );
-    }
-
-    this.key = key;
+    this.key = loadKey(
+      this.config.getOrThrow<string>('REMOTE_CODES_KEY'),
+      'REMOTE_CODES_KEY',
+    );
   }
 
   encrypt(plain: string): Buffer {
-    const iv = randomBytes(IV_LENGTH);
-    const cipher = createCipheriv(ALGORITHM, this.key, iv);
-
-    const ciphertext = Buffer.concat([
-      cipher.update(plain, 'utf8'),
-      cipher.final(),
-    ]);
-
-    return Buffer.concat([iv, cipher.getAuthTag(), ciphertext]);
+    return seal(this.key, plain);
   }
 
   decrypt(payload: Buffer): string {
-    const iv = payload.subarray(0, IV_LENGTH);
-    const authTag = payload.subarray(IV_LENGTH, IV_LENGTH + AUTH_TAG_LENGTH);
-    const ciphertext = payload.subarray(IV_LENGTH + AUTH_TAG_LENGTH);
-
-    const decipher = createDecipheriv(ALGORITHM, this.key, iv);
-    decipher.setAuthTag(authTag);
-
-    // Si el ciphertext o el authTag fueron alterados, final() TIRA. Es la
-    // garantía de integridad de GCM: no devuelve datos corruptos como si nada.
-    return Buffer.concat([
-      decipher.update(ciphertext),
-      decipher.final(),
-    ]).toString('utf8');
+    return open(this.key, payload);
   }
 
   /** Comparación en tiempo constante, para no filtrar información por timing. */

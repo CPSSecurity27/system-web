@@ -43,7 +43,8 @@
               "node_modules/bootstrap/dist/js/bootstrap.bundle.min.js"
             ],
             "allowedCommonJsDependencies": [
-              "leaflet"
+              "leaflet",
+              "qrcode"
             ],
             "stylePreprocessorOptions": {
               "includePaths": [

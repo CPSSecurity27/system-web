@@ -139,6 +139,38 @@ export class EnvironmentVariables {
   @IsString()
   @IsNotEmpty({ message: 'REMOTE_CODES_KEY es obligatoria' })
   REMOTE_CODES_KEY!: string;
+
+  /**
+   * Clave AES-256 (32 bytes en base64) con la que el PROVISIONER cifra las
+   * credenciales del portal local de los equipos. Acá solo se DESCIFRA: la web
+   * no las genera nunca.
+   *
+   * Tiene que ser idéntica a `GTD_CRED_KEY` del provisioner. Si no coinciden, la
+   * ficha del equipo muestra las credenciales vacías y no se puede imprimir la
+   * etiqueta — pero el equipo funciona igual, así que el síntoma es sutil.
+   *
+   * Los SALTS de derivación NO van acá. Con un salt se calculan las credenciales
+   * de toda la flota, incluidos equipos que todavía no existen; con esta clave
+   * solo se leen las de los que ya están en esta base.
+   *
+   *   node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+   */
+  @IsString()
+  @IsNotEmpty({ message: 'CPS_CRED_KEY es obligatoria' })
+  CPS_CRED_KEY!: string;
+
+  /**
+   * Cuánto espera el alta de fábrica a que el provisioner confirme, en ms.
+   *
+   * El alta es ATÓMICA: si vence sin confirmación, el equipo recién creado se
+   * BORRA. Generoso a propósito — el camino incluye un `systemctl reload
+   * mosquitto` sobre una Raspberry.
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(5000)
+  @Type(() => Number)
+  PROVISIONING_TIMEOUT_MS?: number;
 }
 
 export function validateEnv(config: Record<string, unknown>) {

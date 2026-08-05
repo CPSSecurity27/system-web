@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseIntPipe,
@@ -10,8 +11,8 @@ import {
   Query,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
-import { IsInt, IsOptional, Min } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
+import { IsBoolean, IsInt, IsOptional, Min } from 'class-validator';
 import { AccountType, UserRole } from '../common/enums';
 import { ScopeService } from '../common/scope.service';
 import type { AuthenticatedUser } from '../auth/auth.service';
@@ -34,6 +35,7 @@ import {
 } from './dto/device-config.dto';
 import { DeviceView } from './dto/device-view';
 import {
+  AdoptDeviceDto,
   ClaimDeviceDto,
   CreateDeviceDto,
   CreateMaintenanceDto,
@@ -52,6 +54,17 @@ class FindDevicesQuery {
   @IsInt()
   @Min(1)
   neighborhoodId?: number;
+}
+
+class FindInventoryQuery {
+  /**
+   * Traer también los equipos sin el visto bueno de fábrica. Lo usa la pantalla
+   * de FÁBRICA; el servicio lo ignora si el usuario no es de CPS.
+   */
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  incluirSinAprobar?: boolean;
 }
 
 /**
@@ -105,7 +118,35 @@ export class DevicesController {
     );
   }
 
-  /** GET /api/devices/inventory — CPS: todo el stock; organización: SU stock. */
+  /**
+   * GET /api/devices/removed — la papelera. Solo CPS.
+   *
+   * Va ANTES de :id, como board-models, o "removed" entraría por ahí y reventaría
+   * el ParseIntPipe.
+   */
+  @Get('removed')
+  @RequireMembership({
+    accountType: AccountType.COMPANY,
+    roles: [UserRole.OWNER, UserRole.ADMIN, UserRole.TECHNICIAN],
+  })
+  async findRemoved(
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<DeviceView[]> {
+    return this.devices.findRemoved(await this.scopes.forUser(user));
+  }
+
+  /**
+   * GET /api/devices/inventory — el STOCK: lo que está listo para entregar o
+   * instalar. CPS ve todo; una organización, el suyo.
+   *
+   * Solo trae equipos con el visto bueno de fábrica: un equipo entra al stock
+   * cuando alguien lo aprueba, no cuando se fabrica.
+   *
+   * `?incluirSinAprobar=true` trae también los que no lo tienen. Lo usa la
+   * pantalla de FÁBRICA, que es donde se los termina de poner a punto — sin eso,
+   * un equipo recién fabricado desaparecería de la única pantalla desde la que
+   * se lo puede aprobar. El servicio lo ignora si el usuario no es de CPS.
+   */
   @Get('inventory')
   @RequireMembership(
     {
@@ -117,8 +158,11 @@ export class DevicesController {
       roles: [UserRole.OWNER, UserRole.ADMIN, UserRole.TECHNICIAN],
     },
   )
-  findInventory(@CurrentUser() user: AuthenticatedUser): Promise<DeviceView[]> {
-    return this.devices.findInventory(user);
+  findInventory(
+    @Query() query: FindInventoryQuery,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<DeviceView[]> {
+    return this.devices.findInventory(user, query.incluirSinAprobar === true);
   }
 
   // --- Catálogo de modelos de placa ------------------------------------------
@@ -276,6 +320,97 @@ export class DevicesController {
   }
 
   /**
+   * GET /api/devices/:id/portal-cps — la password del usuario `cps`.
+   *
+   * Endpoint aparte de la ficha, y con menos roles que ella: `cps` es la
+   * credencial de nivel FÁBRICA del portal del equipo, el firmware manda no
+   * imprimirla nunca, y un técnico no la necesita para trabajar. Solo OWNER y
+   * ADMIN de CPS, y cada lectura deja `audit_log`.
+   *
+   * La de `admin` no pasa por acá: viene en la ficha, porque va impresa en la
+   * etiqueta que queda pegada al equipo.
+   */
+  @Get(':id/portal-cps')
+  @RequireMembership({
+    accountType: AccountType.COMPANY,
+    roles: [UserRole.OWNER, UserRole.ADMIN],
+  })
+  async passwordCps(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<{ usuario: 'cps'; password: string }> {
+    return this.devices.findPortalCps(
+      id,
+      user,
+      await this.scopes.forUser(user),
+    );
+  }
+
+  /**
+   * POST /api/devices/:id/remove — a la papelera. Solo CPS.
+   *
+   * Saca el equipo de todas las listas y REVOCA su credencial del broker: un
+   * equipo fuera de circulación con credencial activa es el olvido invisible que
+   * el spec del provisioner quería evitar.
+   *
+   * Si estaba instalado lo DESVINCULA del barrio. Eso cambia la infraestructura
+   * de ese barrio desde una pantalla de fábrica, y es la razón por la que esto
+   * es solo de CPS y deja `audit_log`.
+   */
+  @Post(':id/remove')
+  @RequireMembership({
+    accountType: AccountType.COMPANY,
+    roles: [UserRole.OWNER, UserRole.ADMIN],
+  })
+  async remover(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<DeviceView> {
+    return this.devices.remove(id, user, await this.scopes.forUser(user));
+  }
+
+  /**
+   * POST /api/devices/:id/restore — de vuelta a circulación. Solo CPS.
+   *
+   * Vuelve al STOCK DE FÁBRICA, no al barrio donde estaba: reinstalarlo es un
+   * claim, con su técnico y sus datos de instalación. Se le genera un claim code
+   * nuevo —el anterior quedó impreso en una etiqueta que puede andar dando
+   * vueltas— y se vuelve a pedir su credencial del broker.
+   */
+  @Post(':id/restore')
+  @RequireMembership({
+    accountType: AccountType.COMPANY,
+    roles: [UserRole.OWNER, UserRole.ADMIN],
+  })
+  async reactivar(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<DeviceView> {
+    return this.devices.restore(id, user, await this.scopes.forUser(user));
+  }
+
+  /**
+   * DELETE /api/devices/:id — borrado DEFINITIVO. Solo desde la papelera.
+   *
+   * Se lleva la bitácora de mantenimiento. Un equipo con EVENTOS no se puede
+   * borrar: son append-only y la base lo rechaza; el servicio traduce ese
+   * rechazo a un mensaje que se entienda.
+   *
+   * Solo OWNER: es la única operación del módulo que destruye algo sin vuelta.
+   */
+  @Delete(':id')
+  @RequireMembership({
+    accountType: AccountType.COMPANY,
+    roles: [UserRole.OWNER],
+  })
+  async borrarDefinitivo(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<{ mensaje: string }> {
+    return this.devices.hardDelete(id, user, await this.scopes.forUser(user));
+  }
+
+  /**
    * POST /api/devices/:id/provision — pedir el alta de la credencial.
    *
    * Sirve para reintentar un alta fallida y para los equipos que ya existen sin
@@ -340,8 +475,38 @@ export class DevicesController {
   }
 
   /**
+   * POST /api/devices/adopt — sumar un equipo al stock propio (serial + código).
+   *
+   * El otro uso del código además de instalar: la muni recibe una caja, carga el
+   * código y el equipo pasa a su inventario sin instalarse todavía. Solo sobre
+   * equipos SIN DUEÑO — uno que ya es de alguien se entrega, no se adopta.
+   *
+   * Convive con la entrega de lotes: aquella es para el despacho de 50 equipos
+   * que todavía no llegaron; esto, para la caja que alguien tiene en la mano.
+   */
+  @Post('adopt')
+  @RequireMembership(
+    {
+      accountType: AccountType.COMPANY,
+      roles: [UserRole.OWNER, UserRole.ADMIN, UserRole.TECHNICIAN],
+    },
+    {
+      accountType: AccountType.ORGANIZATION,
+      roles: [UserRole.OWNER, UserRole.ADMIN, UserRole.TECHNICIAN],
+    },
+  )
+  adopt(
+    @Body() dto: AdoptDeviceDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<DeviceView> {
+    return this.devices.adopt(dto, user);
+  }
+
+  /**
    * POST /api/devices/claim — instalación por reclamo (serial + código).
-   * Técnicos de CPS (cualquier equipo) o de la organización (su stock, sus barrios).
+   *
+   * Lo que gobierna es de QUIÉN ES el equipo, no el código: sin dueño lo reclama
+   * cualquiera, con dueño solo esa organización o CPS hacia un barrio de ella.
    */
   @Post('claim')
   @RequireMembership(

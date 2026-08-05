@@ -1,10 +1,10 @@
 <div class="row g-3">
-  <!-- ====================== ALTA (la estación) ====================== -->
+  <!-- ====================== FABRICAR (la estación) ====================== -->
   <div class="col-12 col-lg-4">
     <div class="card border">
       <div class="card-header bg-white border-bottom">
         <span class="fw-semibold small">
-          <i class="icon-cpu me-1"></i> Ingresar equipo al sistema
+          <i class="icon-cpu me-1"></i> Fabricar equipo
         </span>
       </div>
       <div class="card-body">
@@ -25,29 +25,50 @@
             </div>
           </div>
 
-          <div class="mb-3">
-            <label for="boardNumber" class="form-label small fw-medium">N.º de placa</label>
-            <input
-              id="boardNumber"
-              type="text"
-              class="form-control font-monospace text-uppercase"
-              formControlName="boardNumber"
-              placeholder="ALOY0043"
-              autocomplete="off"
-              spellcheck="false"
-            />
-            <!-- Un solo campo: el modelo va adentro del string impreso. -->
-            <div class="form-text">
-              El número impreso en la placa, completo.
-              @if (prefixes()) {
-                <span class="d-block">Modelos activos: {{ prefixes() }}</span>
-              }
+          <!--
+            Modelo y número separados: el modelo sale del catálogo (no se puede
+            tipear mal un prefijo) y el número se autoincrementa después de cada
+            alta, porque las placas vienen numeradas de corrido.
+          -->
+          <div class="row g-2 mb-3">
+            <div class="col-7">
+              <label for="boardModelCode" class="form-label small fw-medium">
+                Modelo de placa
+              </label>
+              <select
+                id="boardModelCode"
+                class="form-select"
+                formControlName="boardModelCode"
+              >
+                <option value="">Elegí…</option>
+                @for (modelo of modelosActivos(); track modelo.id) {
+                  <option [value]="modelo.code">{{ modelo.code }} — {{ modelo.name }}</option>
+                }
+              </select>
             </div>
-          </div>
-
-          <div class="form-check mb-3">
-            <input id="tested" type="checkbox" class="form-check-input" formControlName="tested" />
-            <label for="tested" class="form-check-label small">Probado en fábrica</label>
+            <div class="col-5">
+              <label for="boardSeq" class="form-label small fw-medium">N.º</label>
+              <input
+                id="boardSeq"
+                type="number"
+                class="form-control font-monospace"
+                formControlName="boardSeq"
+                min="1"
+                max="9999"
+                placeholder="43"
+                autocomplete="off"
+              />
+            </div>
+            <div class="col-12">
+              <div class="form-text">
+                El número impreso en la placa. Se guarda como
+                <span class="font-monospace">
+                  {{ form.value.boardModelCode || 'XXXX' }}{{
+                    form.value.boardSeq ? (form.value.boardSeq + '').padStart(4, '0') : '0000'
+                  }}
+                </span>
+              </div>
+            </div>
           </div>
 
           @if (error()) {
@@ -59,25 +80,38 @@
           <button type="submit" class="btn btn-brand w-100" [disabled]="saving() || form.invalid">
             @if (saving()) {
               <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
-              Ingresando…
+              Registrando en el broker…
             } @else {
-              <i class="icon-plus me-1"></i> Ingresar equipo
+              <i class="icon-plus me-1"></i> Fabricar
             }
           </button>
         </form>
 
-        <p class="text-muted small mb-0 mt-3 border-top pt-3">
-          <i class="icon-info me-1"></i>
-          El <strong>serial</strong> no se carga: se deriva de la MAC (<span class="font-monospace"
-            >AV-&lt;12 hex&gt;</span
-          >) y es el mismo string que usa el equipo para hablar con el broker.
-        </p>
+        @if (saving()) {
+          <!--
+            La espera puede ser de segundos: incluye un reload de Mosquitto sobre
+            la Raspberry. Decirle al operador qué está pasando evita que crea que
+            se colgó y apriete de nuevo.
+          -->
+          <p class="text-muted small mb-0 mt-3">
+            Se está registrando la credencial y derivando las del portal. Si algo falla,
+            <strong>no queda ningún equipo a medias</strong> y podés reintentar tal cual.
+          </p>
+        } @else {
+          <p class="text-muted small mb-0 mt-3 border-top pt-3">
+            <i class="icon-info me-1"></i>
+            El <strong>serial</strong> no se carga: se deriva de la MAC (<span class="font-monospace"
+              >AV-&lt;12 hex&gt;</span
+            >) y es el mismo string que usa el equipo para hablar con el broker.
+          </p>
+        }
       </div>
     </div>
 
     <!--
-      Resultado del alta. El claim code se muestra UNA vez: es lo único que el
-      técnico va a necesitar después para instalar el equipo.
+      Resultado del alta. Acá está TODO lo que el equipo necesita para su
+      etiqueta: si esta tarjeta se cierra sin imprimir, se vuelve a abrir desde
+      la fila de la tabla.
     -->
     @if (created(); as device) {
       <div class="card border border-success mt-3">
@@ -85,7 +119,7 @@
           class="card-header bg-white border-bottom d-flex align-items-center justify-content-between"
         >
           <span class="fw-semibold small text-success">
-            <i class="icon-circle-check-big me-1"></i> Equipo ingresado
+            <i class="icon-circle-check-big me-1"></i> Equipo fabricado
           </span>
           <button
             type="button"
@@ -102,12 +136,53 @@
             <dd class="col-7 font-monospace mb-1">{{ device.boardNumber ?? '—' }}</dd>
           </dl>
 
+          @if (device.portal; as portal) {
+            <div class="border-top pt-2 mb-2">
+              <span class="d-block text-muted" style="font-size: 0.7rem">RED DEL EQUIPO</span>
+              <span class="d-block font-monospace small">{{ portal.ssid }}</span>
+
+              <div class="d-flex gap-3 mt-2">
+                <div>
+                  <span class="d-block text-muted" style="font-size: 0.7rem">USUARIO</span>
+                  <span class="font-monospace fw-semibold">{{ portal.usuario }}</span>
+                </div>
+                <div>
+                  <span class="d-block text-muted" style="font-size: 0.7rem">CONTRASEÑA</span>
+                  <span class="font-monospace fw-bold">{{ portal.password ?? '—' }}</span>
+                </div>
+              </div>
+
+              <!--
+                La de `cps` es la credencial de nivel FÁBRICA: el firmware manda
+                no imprimirla nunca. Se pide explícitamente y queda auditado
+                quién la miró — mostrarla siempre es cómo termina en una captura.
+              -->
+              <div class="mt-2">
+                @if (passCps(); as clave) {
+                  <div class="bg-light rounded p-2 small">
+                    <span class="text-muted" style="font-size: 0.7rem">
+                      USUARIO cps (NO SE IMPRIME)
+                    </span>
+                    <span class="d-block font-monospace fw-bold">{{ clave }}</span>
+                  </div>
+                } @else {
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-outline-secondary w-100"
+                    [disabled]="pidiendoCps()"
+                    (click)="verPassCps(device)"
+                  >
+                    <i class="icon-eye me-1"></i>
+                    Ver la clave de <span class="font-monospace">cps</span> (queda auditado)
+                  </button>
+                }
+              </div>
+            </div>
+          }
+
           <div class="bg-light rounded p-2 text-center mb-2">
             <span class="d-block text-muted" style="font-size: 0.7rem">CÓDIGO DE RECLAMO</span>
             <span class="h4 font-monospace text-brand mb-0">{{ device.claimCode ?? '—' }}</span>
-            <span class="d-block text-muted" style="font-size: 0.7rem">
-              de un solo uso — anotalo
-            </span>
           </div>
 
           <!-- Avisos que NO bloquearon el alta, pero que conviene mirar. -->
@@ -117,41 +192,14 @@
             </div>
           }
 
-          <!--
-            El alta pide la credencial sola: queda encolada y la registra el
-            provisioner. Si ese proceso no está corriendo, la fila espera — por
-            eso se sigue mostrando el comando manual como respaldo.
-          -->
-          @if (device.provisioning; as prov) {
-            @if (!prov.brokerRegistered) {
-              <div class="border-top pt-2">
-                @if (prov.queue?.estado === 'pending') {
-                  <p class="small text-muted mb-1">
-                    <span class="spinner-border spinner-border-sm me-1"></span>
-                    Credencial pedida al broker: en cola.
-                  </p>
-                } @else if (prov.queue?.estado === 'failed') {
-                  <p class="small text-danger mb-1">
-                    <i class="icon-triangle-alert me-1"></i>
-                    No se pudo registrar: {{ prov.queue?.detalle }}
-                  </p>
-                } @else {
-                  <p class="small text-muted mb-1">
-                    <i class="icon-network me-1"></i>
-                    Falta darlo de alta en el broker.
-                  </p>
-                }
-                <details>
-                  <summary class="small text-muted">
-                    Hacerlo a mano en el server
-                  </summary>
-                  <code class="d-block bg-light rounded p-2 small text-break mt-1">
-                    {{ prov.pendingCommand }}
-                  </code>
-                </details>
-              </div>
-            }
-          }
+          <button
+            type="button"
+            class="btn btn-brand w-100"
+            [disabled]="imprimiendo() !== null"
+            (click)="imprimir(device)"
+          >
+            <i class="icon-printer me-1"></i> Imprimir etiqueta
+          </button>
         </div>
       </div>
     }
@@ -164,11 +212,26 @@
         class="card-header bg-white border-bottom d-flex align-items-center justify-content-between flex-wrap gap-2"
       >
         <span class="fw-semibold small">
-          <i class="icon-list me-1"></i> Equipos ingresados
+          <i class="icon-list me-1"></i> Equipos fabricados
           <span class="badge text-bg-light border ms-1">{{ counts().total }}</span>
+          @if (counts().sinCredencial > 0) {
+            <span
+              class="badge bg-emergency-soft text-emergency border ms-1"
+              title="Equipos cuya credencial no está registrada en el broker"
+            >
+              {{ counts().sinCredencial }} sin credencial
+            </span>
+          }
         </span>
 
         <div class="d-flex gap-2">
+          <a
+            routerLink="/inventario/removidos"
+            class="btn btn-sm btn-outline-secondary"
+            title="Equipos fuera de circulación: se pueden reactivar o borrar"
+          >
+            <i class="icon-trash-2 me-1"></i> Removidos
+          </a>
           <input
             type="search"
             class="form-control form-control-sm"
@@ -188,13 +251,28 @@
             aria-label="Filtrar por etapa"
           >
             <option value="">Todas las etapas</option>
-            <option value="CREATED">Creados ({{ counts().created }})</option>
-            <option value="PROVISIONED">Provisionados ({{ counts().provisioned }})</option>
-            <option value="LABELED">Etiquetados ({{ counts().labeled }})</option>
+            <option value="MANUFACTURED">Fabricados ({{ counts().manufactured }})</option>
             <option value="CONNECTED">Conectados ({{ counts().connected }})</option>
+            <option value="TESTED">Testeados ({{ counts().tested }})</option>
+            <option value="READY">Listos ({{ counts().ready }})</option>
           </select>
         </div>
       </div>
+
+      @if (removidoRecien(); as serial) {
+        <div class="px-3 pt-3">
+          <div class="alert bg-warning-soft border-0 py-2 small d-flex mb-0" role="status">
+            <i class="icon-trash-2 me-2 mt-1"></i>
+            <span class="flex-grow-1">
+              <span class="font-monospace">{{ serial }}</span> salió de circulación y se revocó su
+              credencial. Está en
+              <a routerLink="/inventario/removidos" class="alert-link">removidos</a>, donde se puede
+              dar de alta de nuevo.
+            </span>
+            <button type="button" class="btn-close btn-sm ms-2" (click)="descartarRemovido()"></button>
+          </div>
+        </div>
+      }
 
       @if (loading()) {
         <div class="text-center text-muted py-5">
@@ -207,12 +285,10 @@
             <thead>
               <tr class="small text-muted">
                 <th scope="col">Serial</th>
-                <th scope="col">MAC</th>
                 <th scope="col">Placa</th>
                 <th scope="col">Etapa</th>
-                <th scope="col">Ubicación</th>
-                <th scope="col" class="text-center">Probado</th>
-                <th scope="col" class="text-end">Hitos</th>
+                <th scope="col">Credencial</th>
+                <th scope="col" class="text-end">Acciones</th>
               </tr>
             </thead>
             <tbody>
@@ -226,7 +302,6 @@
                       {{ device.serial }}
                     </a>
                   </td>
-                  <td class="small font-monospace text-muted">{{ device.mac ?? '—' }}</td>
                   <td class="small font-monospace">{{ device.boardNumber ?? '—' }}</td>
                   <td>
                     <!--
@@ -235,18 +310,12 @@
                       desincronizada de las fechas.
                     -->
                     @switch (device.stage) {
-                      @case ('CREATED') {
-                        <span class="badge bg-light text-muted border">Creado</span>
-                      }
-                      @case ('PROVISIONED') {
-                        <span class="badge bg-brand-soft text-brand border">Provisionado</span>
-                      }
-                      @case ('LABELED') {
-                        <span class="badge bg-warning-soft text-warning border">Etiquetado</span>
+                      @case ('MANUFACTURED') {
+                        <span class="badge bg-light text-muted border">Fabricado</span>
                       }
                       @case ('CONNECTED') {
-                        <span class="badge bg-success-soft text-success border">
-                          1.ª conexión
+                        <span class="badge bg-brand-soft text-brand border">
+                          Conectado
                           <!--
                             Un hito marcado a mano no vale lo mismo que uno que
                             vio el broker, y la pantalla no lo puede ocultar.
@@ -259,72 +328,148 @@
                           }
                         </span>
                       }
-                    }
-                  </td>
-                  <td class="small text-muted">
-                    @switch (custodyOf(device)) {
-                      @case ('FACTORY') {
-                        En fábrica
+                      @case ('TESTED') {
+                        <span class="badge bg-warning-soft text-warning border">Testeado</span>
                       }
-                      @case ('DELIVERED') {
-                        Entregado
-                      }
-                      @case ('INSTALLED') {
-                        Instalado
+                      @case ('READY') {
+                        <span class="badge bg-success-soft text-success border">Listo</span>
                       }
                     }
                   </td>
-                  <td class="text-center">
-                    @if (device.tested) {
-                      <i class="icon-circle-check-big text-success" title="Probado"></i>
+                  <td class="small">
+                    <!--
+                      Estado de la credencial en el broker, APARTE de la etapa:
+                      son dos preguntas distintas y ninguna tiene por qué mentir
+                      por la otra. Un equipo puede estar etiquetado y revocado.
+                    -->
+                    @if (device.provisioning; as prov) {
+                      @if (prov.brokerRegistered) {
+                        <span class="text-success">
+                          <i class="icon-circle-check-big me-1"></i>Registrada
+                        </span>
+                      } @else if (prov.queue?.estado === 'pending') {
+                        <span class="text-muted">
+                          <span class="spinner-border spinner-border-sm me-1"></span>En cola
+                        </span>
+                      } @else if (prov.queue?.estado === 'failed') {
+                        <span class="text-emergency" [title]="prov.queue?.detalle ?? ''">
+                          <i class="icon-triangle-alert me-1"></i>Falló
+                        </span>
+                      } @else {
+                        <span class="text-muted">
+                          <i class="icon-circle-minus me-1"></i>Sin registrar
+                        </span>
+                      }
                     } @else {
-                      <i class="icon-circle-minus text-muted" title="Sin probar"></i>
+                      <span class="text-muted">—</span>
                     }
                   </td>
                   <td class="text-end text-nowrap">
                     <!--
-                      Los dos hitos que se marcan a mano. Los otros dos no están
-                      acá porque no se tipean: "creado" es el alta y
-                      "provisionado" lo sella el registro en el broker.
+                      Imprimir sella el hito de etiquetado si estaba vacío;
+                      reimprimir no lo mueve. El botón de la etiqueta reemplazó
+                      al checkbox: el hito pasó a ser consecuencia del acto real
+                      en vez de algo que alguien tiene que acordarse de tildar.
                     -->
                     <button
                       type="button"
-                      class="btn btn-sm py-0 px-1"
+                      class="btn btn-sm py-0 px-2"
                       [class.btn-outline-secondary]="!device.milestones.labeledAt"
                       [class.btn-warning]="device.milestones.labeledAt"
-                      [disabled]="marking() !== null"
-                      (click)="mark(device, { labeled: !device.milestones.labeledAt })"
+                      [disabled]="imprimiendo() !== null || marking() !== null"
+                      (click)="imprimir(device)"
                       [title]="
                         device.milestones.labeledAt
-                          ? 'Etiquetado — click para desmarcar'
-                          : 'Marcar como etiquetado'
+                          ? 'Ya etiquetado — reimprimir no cambia la fecha'
+                          : 'Imprimir la etiqueta y sellar el hito'
                       "
                     >
-                      <i class="icon-tag"></i>
+                      @if (imprimiendo() === device.id) {
+                        <span class="spinner-border spinner-border-sm"></span>
+                      } @else {
+                        <i class="icon-printer"></i>
+                      }
+                    </button>
+
+                    <!-- Todas las credenciales, incluida la de fábrica. Auditado. -->
+                    <button
+                      type="button"
+                      class="btn btn-sm btn-outline-secondary py-0 px-2 ms-1"
+                      [disabled]="abriendoCreds() !== null"
+                      (click)="verCredenciales(device)"
+                      title="Ver todas las credenciales (queda auditado)"
+                    >
+                      @if (abriendoCreds() === device.id) {
+                        <span class="spinner-border spinner-border-sm"></span>
+                      } @else {
+                        <i class="icon-key"></i>
+                      }
+                    </button>
+
+                    <!--
+                      Los dos hitos que SÍ marca una persona. La primera conexión
+                      no está acá: la observa el broker y la tabla se refresca
+                      sola. Un botón para marcarla convertía una medición en una
+                      opinión.
+                    -->
+                    <button
+                      type="button"
+                      class="btn btn-sm py-0 px-2 ms-1"
+                      [class.btn-outline-secondary]="!device.milestones.testedAt"
+                      [class.btn-warning]="device.milestones.testedAt"
+                      [disabled]="marking() !== null"
+                      (click)="mark(device, { tested: !device.milestones.testedAt })"
+                      [title]="
+                        device.milestones.testedAt
+                          ? 'Testeado — click para desmarcar'
+                          : 'Marcar la prueba funcional (sirena, RF, sensores)'
+                      "
+                    >
+                      <i class="icon-circle-check-big"></i>
                     </button>
 
                     <button
                       type="button"
-                      class="btn btn-sm py-0 px-1 ms-1"
-                      [class.btn-outline-secondary]="!device.milestones.firstConnectionAt"
-                      [class.btn-success]="device.milestones.firstConnectionAt"
+                      class="btn btn-sm py-0 px-2 ms-1"
+                      [class.btn-outline-secondary]="!device.milestones.readyAt"
+                      [class.btn-success]="device.milestones.readyAt"
                       [disabled]="marking() !== null"
-                      (click)="mark(device, { connected: !device.milestones.firstConnectionAt })"
+                      (click)="mark(device, { ready: !device.milestones.readyAt })"
                       [title]="
-                        device.milestones.firstConnectionAt
-                          ? 'Primera conexión registrada — click para borrarla'
-                          : 'Marcar la primera conexión a mano (queda auditado)'
+                        device.milestones.readyAt
+                          ? 'Listo para salir de fábrica — click para revertir'
+                          : 'Dar el visto bueno para que salga de fábrica (queda auditado)'
                       "
                     >
-                      <i class="icon-network"></i>
+                      <i class="icon-package-check"></i>
+                    </button>
+
+                    <!--
+                      Remover: a la papelera y se revoca la credencial. Separado
+                      del resto por el borde, porque no es una marca más — saca
+                      el equipo de circulación y, si estaba instalado, lo
+                      desvincula de su barrio.
+                    -->
+                    <button
+                      type="button"
+                      class="btn btn-sm btn-outline-danger py-0 px-2 ms-2"
+                      [disabled]="removiendo() !== null"
+                      (click)="remover(device)"
+                      title="Remover: sale de circulación y se revoca su credencial"
+                    >
+                      @if (removiendo() === device.id) {
+                        <span class="spinner-border spinner-border-sm"></span>
+                      } @else {
+                        <i class="icon-trash-2"></i>
+                      }
                     </button>
                   </td>
                 </tr>
               } @empty {
                 <tr>
-                  <td colspan="7" class="text-muted small text-center py-4">
+                  <td colspan="5" class="text-muted small text-center py-4">
                     @if (counts().total === 0) {
-                      Todavía no se ingresó ningún equipo.
+                      Todavía no se fabricó ningún equipo.
                     } @else {
                       Ningún equipo coincide con el filtro.
                     }
@@ -337,4 +482,101 @@
       }
     </div>
   </div>
+</div>
+
+<!--
+  Panel de credenciales completas. Se abre desde una fila y muestra TODO,
+  incluida la de `cps` — que en la etiqueta no va nunca y en la ficha tampoco.
+  Cada apertura queda en audit_log del lado del backend.
+-->
+@if (credenciales(); as cred) {
+  <div
+    class="position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center"
+    style="background: rgba(0, 0, 0, 0.45); z-index: 1050"
+    (click)="cerrarCredenciales()"
+  >
+    <div
+      class="card border shadow-lg"
+      style="max-width: 480px; width: 92%"
+      (click)="$event.stopPropagation()"
+    >
+      <div
+        class="card-header bg-white border-bottom d-flex align-items-center justify-content-between"
+      >
+        <span class="fw-semibold small">
+          <i class="icon-key me-1"></i> Credenciales del equipo
+        </span>
+        <button type="button" class="btn-close btn-sm" (click)="cerrarCredenciales()"></button>
+      </div>
+
+      <div class="card-body">
+        <dl class="row small mb-3">
+          <dt class="col-4 fw-medium text-muted">Serial</dt>
+          <dd class="col-8 font-monospace mb-1">{{ cred.device.serial }}</dd>
+          <dt class="col-4 fw-medium text-muted">Placa</dt>
+          <dd class="col-8 font-monospace mb-1">{{ cred.device.boardNumber ?? '—' }}</dd>
+          <dt class="col-4 fw-medium text-muted">Reclamo</dt>
+          <dd class="col-8 font-monospace mb-0">{{ cred.device.claimCode ?? '—' }}</dd>
+        </dl>
+
+        @if (cred.device.portal; as portal) {
+          <div class="border-top pt-3">
+            <span class="d-block text-muted" style="font-size: 0.7rem">RED DEL EQUIPO</span>
+            <span class="d-block font-monospace small mb-3">{{ portal.ssid }}</span>
+
+            <span class="d-block text-muted" style="font-size: 0.7rem">
+              PORTAL {{ portal.url }}
+            </span>
+
+            <table class="table table-sm mb-0 mt-1">
+              <tbody>
+                <tr>
+                  <td class="font-monospace fw-semibold ps-0">admin</td>
+                  <td class="font-monospace fw-bold text-end pe-0">
+                    {{ portal.password ?? '—' }}
+                  </td>
+                  <td class="text-muted small text-end" style="width: 40%">
+                    va en la etiqueta
+                  </td>
+                </tr>
+                <tr>
+                  <td class="font-monospace fw-semibold ps-0">cps</td>
+                  <td class="font-monospace fw-bold text-end pe-0">
+                    @if (cred.sinPermiso) {
+                      <span class="text-muted fw-normal small">sin permiso</span>
+                    } @else if (cred.cps) {
+                      {{ cred.cps }}
+                    } @else {
+                      <span class="spinner-border spinner-border-sm"></span>
+                    }
+                  </td>
+                  <td class="text-emergency small text-end">nunca se imprime</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p class="text-muted small mb-0 mt-3 border-top pt-2">
+              <i class="icon-info me-1"></i>
+              La clave de <span class="font-monospace">cps</span> es de nivel fábrica: da acceso
+              total al portal del equipo. Esta lectura quedó registrada con tu usuario.
+            </p>
+          </div>
+        } @else {
+          <p class="text-muted small mb-0">Este equipo no tiene portal local.</p>
+        }
+      </div>
+    </div>
+  </div>
+}
+
+<!--
+  La etiqueta. Invisible en pantalla y lo ÚNICO visible al imprimir (ver las
+  reglas @media print en styles.scss). Va acá y no en una ventana nueva porque
+  un popup lo bloquea el navegador y porque así la vista previa muestra
+  exactamente lo que va a salir del rollo.
+-->
+<div class="solo-impresion">
+  @if (paraImprimir(); as device) {
+    <app-device-label [device]="device" />
+  }
 </div>

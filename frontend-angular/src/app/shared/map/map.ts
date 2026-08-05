@@ -329,6 +329,10 @@ export class Map implements AfterViewInit, OnDestroy {
     this.layer = L.layerGroup().addTo(this.map);
     this.draw(this.markers());
 
+    // Después del primer dibujo: si el contenedor está oculto ahora, esto es lo
+    // que hace que el mapa se acomode solo cuando aparezca.
+    this.vigilarTamano();
+
     if (this.clickable()) {
       this.map.on('click', (e: L.LeafletMouseEvent) => {
         const latitude = Number(e.latlng.lat.toFixed(6));
@@ -356,7 +360,35 @@ export class Map implements AfterViewInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.observador?.disconnect();
     this.map?.remove();
+  }
+
+  /**
+   * Vigila el tamaño del contenedor para avisarle a Leaflet cuando cambia.
+   *
+   * Un mapa que se inicializa DENTRO de algo oculto mide 0 px y se queda con esa
+   * medida: al mostrarlo aparece gris con una sola esquina de tiles. Le pasó al
+   * panel de la alarma cuando el mapa se mudó a una pestaña que no es la de
+   * entrada — y le va a pasar a cualquier pantalla que lo ponga adentro de un
+   * `d-none`, un acordeón o un modal.
+   *
+   * Se resuelve acá y no en cada pantalla: la que usa el mapa no tiene por qué
+   * saber que Leaflet cachea su tamaño.
+   */
+  private observador?: ResizeObserver;
+
+  private vigilarTamano(): void {
+    const host = this.host().nativeElement;
+
+    this.observador = new ResizeObserver(() => {
+      // Con el contenedor oculto el tamaño es 0: no hay nada que recalcular, y
+      // pedirlo igual haría que Leaflet guarde el 0 como bueno.
+      if (host.offsetWidth === 0 || host.offsetHeight === 0) return;
+      this.map?.invalidateSize();
+    });
+
+    this.observador.observe(host);
   }
 
   private draw(markers: MapMarker[]): void {

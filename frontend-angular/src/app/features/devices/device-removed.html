@@ -1,0 +1,145 @@
+<div class="card border">
+  <div
+    class="card-header bg-white border-bottom d-flex align-items-center justify-content-between flex-wrap gap-2"
+  >
+    <span class="fw-semibold small">
+      <i class="icon-trash-2 me-1"></i> Dispositivos removidos
+      <span class="badge text-bg-light border ms-1">{{ items().length }}</span>
+    </span>
+
+    <div class="d-flex gap-2">
+      <input
+        type="search"
+        class="form-control form-control-sm"
+        style="max-width: 220px"
+        placeholder="MAC, serial o placa…"
+        [ngModel]="search()"
+        (ngModelChange)="search.set($event)"
+        aria-label="Buscar equipo removido"
+      />
+      <a routerLink="/inventario/fabrica" class="btn btn-sm btn-outline-secondary">
+        <i class="icon-arrow-left me-1"></i> Volver a fábrica
+      </a>
+    </div>
+  </div>
+
+  <div class="card-body pb-0">
+    <p class="text-muted small mb-3">
+      <i class="icon-info me-1"></i>
+      Estos equipos no aparecen en fábrica, ni en el inventario, ni en ningún barrio, y
+      <strong>su credencial del broker está revocada</strong>. Reactivar los devuelve al stock de
+      fábrica —no al barrio donde estaban— con un código de reclamo nuevo.
+    </p>
+
+    @if (aviso(); as texto) {
+      <div class="alert bg-success-soft text-success border-0 py-2 small d-flex" role="status">
+        <i class="icon-circle-check-big me-2 mt-1"></i>
+        <span class="flex-grow-1">{{ texto }}</span>
+        <button type="button" class="btn-close btn-sm ms-2" (click)="descartarAviso()"></button>
+      </div>
+    }
+
+    @if (error(); as texto) {
+      <div class="alert bg-emergency-soft text-emergency border-0 py-2 small" role="alert">
+        <i class="icon-triangle-alert me-1"></i> {{ texto }}
+      </div>
+    }
+  </div>
+
+  @if (loading()) {
+    <div class="text-center text-muted py-5">
+      <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+      Cargando…
+    </div>
+  } @else {
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead>
+          <tr class="small text-muted">
+            <th scope="col">Serial</th>
+            <th scope="col">Placa</th>
+            <th scope="col">Removido</th>
+            <th scope="col" class="text-end">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (device of filtered(); track device.id) {
+            <tr>
+              <td class="small font-monospace fw-medium">{{ device.serial }}</td>
+              <td class="small font-monospace">{{ device.boardNumber ?? '—' }}</td>
+              <td class="small text-muted">
+                {{ device.removedAt ? (device.removedAt | date: 'dd/MM/yyyy HH:mm') : '—' }}
+              </td>
+              <td class="text-end text-nowrap">
+                @if (confirmando() === device.id) {
+                  <!--
+                    La confirmación va en la fila y no en un confirm() del
+                    navegador: el diálogo nativo no puede decir qué serial se
+                    borra ni qué se lleva puesto.
+                  -->
+                  <span class="small text-emergency me-2">
+                    ¿Borrar <span class="font-monospace">{{ device.serial }}</span> y su bitácora?
+                    No se puede deshacer.
+                  </span>
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-emergency py-0 px-2"
+                    [disabled]="trabajando() !== null"
+                    (click)="borrar(device)"
+                  >
+                    @if (trabajando() === device.id) {
+                      <span class="spinner-border spinner-border-sm"></span>
+                    } @else {
+                      Sí, borrar
+                    }
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-outline-secondary py-0 px-2 ms-1"
+                    [disabled]="trabajando() !== null"
+                    (click)="cancelar()"
+                  >
+                    Cancelar
+                  </button>
+                } @else {
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-outline-brand py-0 px-2"
+                    [disabled]="trabajando() !== null"
+                    (click)="reactivar(device)"
+                    title="Devolverlo al stock de fábrica y volver a pedir su credencial"
+                  >
+                    @if (trabajando() === device.id) {
+                      <span class="spinner-border spinner-border-sm"></span>
+                    } @else {
+                      <i class="icon-rotate-ccw me-1"></i> Dar de alta
+                    }
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-outline-danger py-0 px-2 ms-1"
+                    [disabled]="trabajando() !== null"
+                    (click)="pedirConfirmacion(device)"
+                    title="Borrado definitivo: se lleva la bitácora de mantenimiento"
+                  >
+                    <i class="icon-trash-2"></i>
+                  </button>
+                }
+              </td>
+            </tr>
+          } @empty {
+            <tr>
+              <td colspan="4" class="text-muted small text-center py-4">
+                @if (items().length === 0) {
+                  No hay equipos removidos.
+                } @else {
+                  Ningún equipo coincide con la búsqueda.
+                }
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+</div>

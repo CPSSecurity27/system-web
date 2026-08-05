@@ -78,10 +78,6 @@ export class CreateDeviceDto {
   manufacturedAt?: string;
 
   @IsOptional()
-  @IsBoolean()
-  tested?: boolean;
-
-  @IsOptional()
   @IsString()
   imei?: string;
 
@@ -162,13 +158,17 @@ export class ClaimDeviceDto extends InstallationDataDto {
   @IsNotEmpty()
   name?: string;
 
-  @IsOptional()
-  @IsLatitude({ message: 'Latitud inválida' })
-  latitude?: number;
+  /**
+   * OBLIGATORIAS (2026-08-05). El tablero de monitoreo es un mapa: una alarma
+   * sin punto es una alarma que nadie va a mirar cuando suene. La base lo impone
+   * igual con `chk_device_gps`; esto existe para que el error llegue como un
+   * mensaje que se entienda y no como el nombre de una constraint.
+   */
+  @IsLatitude({ message: 'Marcá en el mapa dónde queda el poste' })
+  latitude!: number;
 
-  @IsOptional()
-  @IsLongitude({ message: 'Longitud inválida' })
-  longitude?: number;
+  @IsLongitude({ message: 'Marcá en el mapa dónde queda el poste' })
+  longitude!: number;
 }
 
 /**
@@ -197,10 +197,6 @@ export class UpdateDeviceDto extends InstallationDataDto {
   organizationId?: number | null;
 
   @IsOptional()
-  @IsBoolean()
-  tested?: boolean;
-
-  @IsOptional()
   @IsLatitude({ message: 'Latitud inválida' })
   latitude?: number;
 
@@ -211,6 +207,36 @@ export class UpdateDeviceDto extends InstallationDataDto {
   @IsOptional()
   @IsDateString({}, { message: 'Fecha de instalación inválida' })
   installedAt?: string;
+}
+
+/**
+ * ADOPTAR: sumar un equipo al stock propio con serial + código.
+ *
+ * El otro uso del código además de instalar. Solo funciona sobre equipos SIN
+ * DUEÑO: un equipo que ya es de alguien no se adopta, se entrega.
+ *
+ * No hereda los datos de instalación a propósito: adoptar no es instalar. El
+ * equipo entra al stock y se queda ahí hasta que alguien decida dónde va.
+ */
+export class AdoptDeviceDto {
+  @IsString()
+  @IsNotEmpty({ message: 'Falta el serial del equipo' })
+  serial!: string;
+
+  @IsString()
+  @IsNotEmpty({ message: 'Falta el código de reclamo' })
+  claimCode!: string;
+
+  /**
+   * A qué stock va. Se puede omitir si pertenecés a una sola organización.
+   *
+   * CPS SÍ tiene que mandarlo: su propio stock es la fábrica, así que adoptar
+   * "para CPS" no significaría nada — lo hace en nombre de un cliente.
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  organizationId?: number;
 }
 
 /**
@@ -249,6 +275,7 @@ export class DeliverDevicesDto {
  * `provisionedAt` lo escribe el provisioning cuando registra la credencial.
  */
 export class UpdateDeviceMilestonesDto {
+  /** Lo sella imprimir la etiqueta. Ya no es una etapa, pero sigue siendo hito. */
   @IsOptional()
   @IsBoolean()
   labeled?: boolean;
@@ -257,10 +284,27 @@ export class UpdateDeviceMilestonesDto {
    * Override MANUAL de la primera conexión. Lo normal es que lo informe el
    * servicio de alarmas (regla 5); esto existe porque el GtD todavía no
    * escribe, y queda registrado como manual y auditado.
+   *
+   * Ya NO tiene botón en la pantalla de fábrica (2026-08-05): la conexión se
+   * muestra sola cuando el broker la ve, que es lo que un hito observado tiene
+   * que hacer. El endpoint queda como la muleta que siempre fue.
    */
   @IsOptional()
   @IsBoolean()
   connected?: boolean;
+
+  /** Prueba funcional del equipo ya conectado: sirena, RF, sensores. */
+  @IsOptional()
+  @IsBoolean()
+  tested?: boolean;
+
+  /**
+   * Visto bueno para que salga de fábrica. No se deriva de los otros: que los
+   * hitos anteriores estén cumplidos no es lo mismo que alguien se haga cargo.
+   */
+  @IsOptional()
+  @IsBoolean()
+  ready?: boolean;
 }
 
 export class CreateMaintenanceDto {

@@ -27,12 +27,21 @@ export class DeviceDetail {
   protected readonly id = Number(this.route.snapshot.paramMap.get('id'));
 
   /**
-   * Pestañas dentro de la ficha. Van por signal y no por ruta hija: la pantalla
-   * carga UNA alarma y las dos vistas comparten esa carga. Si algún día hace
-   * falta dejar el estado abierto en una pantalla de monitoreo con URL propia,
-   * pasarlo a rutas hijas es un paso corto.
+   * Pestañas, por PREGUNTA y no por origen del dato:
+   *
+   *   alarma       ¿cómo está funcionando? Lo que es + lo que reporta.
+   *   instalacion  ¿dónde está y qué se le hizo? Poste, mapa, fechas, bitácora.
+   *   config       ¿qué tiene cargado y qué le mandamos?
+   *
+   * "Ficha" y "Estado en vivo" estaban separadas porque una la escribe CPS y la
+   * otra solo el servicio de alarmas. Es cierto, pero es un detalle de
+   * implementación: el que abre una alarma quiere saber cómo anda, y tenía que
+   * mirar dos pestañas para armar esa respuesta.
+   *
+   * Van por signal y no por ruta hija: la pantalla carga UNA alarma y las vistas
+   * comparten esa carga.
    */
-  protected readonly tab = signal<'ficha' | 'estado' | 'config'>('ficha');
+  protected readonly tab = signal<'alarma' | 'instalacion' | 'config'>('alarma');
 
   protected readonly device = signal<Device | null>(null);
   protected readonly maintenances = signal<Maintenance[]>([]);
@@ -196,55 +205,89 @@ export class DeviceDetail {
   });
 
   /**
-   * Dado de baja pero con credencial viva. Nada revoca solo (decisión de
-   * negocio), así que el olvido sería invisible: acá se hace visible.
+   * En qué situación está el equipo, para el cartel de arriba del estado.
+   *
+   * Son cuatro casos distintos y antes tres de ellos se veían igual —una
+   * pantalla vacía—: no es lo mismo un equipo que nunca conectó (fábrica
+   * todavía no lo despachó), uno que conectó pero el servicio de alarmas no
+   * está escribiendo, uno caído, y uno que figura online con el dato viejo.
    */
-  protected readonly credencialHuerfana = computed(() => {
-    const d = this.device();
-    return d?.status === 'RETIRED' && d?.provisioning?.brokerRegistered === true;
+  protected readonly situacion = computed<
+    'nunca' | 'sin-datos' | 'online' | 'dudoso' | 'durmiendo' | 'offline'
+  >(() => {
+    if (this.nuncaConecto()) return 'nunca';
+    const vivo = this.state();
+    if (!vivo) return 'sin-datos';
+    if (this.datoDudoso()) return 'dudoso';
+    if (vivo.online) return 'online';
+    return this.durmiendoHasta() ? 'durmiendo' : 'offline';
   });
 
-  protected readonly provisionando = signal(false);
+  /**
+   * Calidad de la señal WiFi. En dBm y negativo: cuanto más cerca de 0, mejor.
+   * Los cortes son los de la práctica — por debajo de -80 un ESP32 se reconecta
+   * solo todo el tiempo, que es lo que hay que ver antes de que el equipo se
+   * caiga del todo.
+   */
+  protected readonly calidadSenal = computed<'buena' | 'regular' | 'mala' | null>(() => {
+    const rssi = this.state()?.rssi;
+    if (rssi === null || rssi === undefined) return null;
+    if (rssi >= -67) return 'buena';
+    if (rssi >= -80) return 'regular';
+    return 'mala';
+  });
 
-  protected pedirProvision(): void {
-    this.provisionando.set(true);
-    this.devices.pedirProvision(this.id).subscribe({
-      next: () => this.refrescarEquipo(),
-      error: (e: unknown) => {
-        this.error.set(apiErrorMessage(e));
-        this.provisionando.set(false);
-      },
-    });
+  /**
+   * El resto del snapshot, aplanado en secciones para dibujarlo genérico.
+   *
+   * Genérico y no un campo por métrica a propósito: el firmware suma contadores
+   * cada tanto, y una pantalla que los enumera a mano queda siempre un paso
+   * atrás de lo que el panel ya está mandando. Si mañana aparece una sección
+   * nueva, sale sola.
+   */
+  protected readonly seccionesTele = computed(() => {
+    const tele = this.state()?.tele;
+    if (!tele) return [];
+
+    return Object.entries(tele)
+      .filter(([, valor]) => valor !== null && typeof valor === 'object')
+      .map(([seccion, valor]) => ({
+        seccion,
+        datos: Object.entries(valor as Record<string, unknown>).map(([clave, v]) => ({
+          clave,
+          valor: this.textoDe(v),
+        })),
+      }));
+  });
+
+  /**
+   * El panel no tiene el reloj sincronizado. `tsq` va de 0 a 4 y MENOR ES
+   * MEJOR: 0 es NTP fresco, 4 es sin sincronizar. Desde 2 el timestamp que
+   * declara el equipo puede estar días atrás, y eso cambia cómo se lee todo lo
+   * que reporta.
+   */
+  protected readonly relojDudoso = computed(() => {
+    const tsq = this.state()?.tsq;
+    return tsq !== null && tsq !== undefined && tsq >= 2;
+  });
+
+  /** Un valor del snapshot, legible. Los booleanos como sí/no, no como true. */
+  private textoDe(valor: unknown): string {
+    if (valor === null || valor === undefined) return '—';
+    if (typeof valor === 'boolean') return valor ? 'sí' : 'no';
+    if (typeof valor === 'object') return JSON.stringify(valor);
+    return String(valor);
   }
 
-  protected revocarCredencial(): void {
-    if (
-      !confirm(
-        'El equipo va a dejar de poder conectarse al broker. ¿Seguro?',
-      )
-    ) {
-      return;
-    }
-    this.provisionando.set(true);
-    this.devices.revocarCredencial(this.id).subscribe({
-      next: () => this.refrescarEquipo(),
-      error: (e: unknown) => {
-        this.error.set(apiErrorMessage(e));
-        this.provisionando.set(false);
-      },
-    });
-  }
-
-  /** Vuelve a pedir el equipo para ver el estado nuevo de la cola. */
-  private refrescarEquipo(): void {
-    this.devices.get(this.id).subscribe({
-      next: (device) => {
-        this.device.set(device);
-        this.provisionando.set(false);
-      },
-      error: () => this.provisionando.set(false),
-    });
-  }
+  /*
+   * La CREDENCIAL DEL BROKER ya no se toca desde acá (2026-08-05).
+   *
+   * Es asunto de FÁBRICA: el alta la pide sola y de forma atómica —un equipo no
+   * llega a existir sin ella—, remover el equipo la revoca, y reactivarlo la
+   * vuelve a pedir. Un botón "revocar" en la ficha de una alarma instalada era
+   * una forma de dejarla muda sin sacarla de servicio, que no es una operación
+   * que alguien quiera hacer desde la pantalla de monitoreo.
+   */
 
   constructor() {
     forkJoin({
@@ -279,10 +322,10 @@ export class DeviceDetail {
     });
 
     /**
-     * El estado se recarga solo, pero SOLO con la pestaña abierta: dejar la
-     * ficha en pantalla no tiene por qué generar tráfico cada 20 segundos.
-     * Cambiar de pestaña corta el timer (switchMap) y volver lo reinicia con una
-     * lectura inmediata.
+     * El estado se recarga solo, pero SOLO con la pestaña `alarma` abierta:
+     * quedarse en Instalación o Configuración no tiene por qué generar tráfico
+     * cada 20 segundos. Cambiar de pestaña corta el timer (switchMap) y volver
+     * lo reinicia con una lectura inmediata.
      *
      * Un error no rompe la vista ni corta el ciclo: se conserva la última
      * lectura buena y se vuelve a intentar en el próximo tick. Un pico de la API
@@ -291,7 +334,7 @@ export class DeviceDetail {
     toObservable(this.tab)
       .pipe(
         switchMap((tab) =>
-          tab === 'estado'
+          tab === 'alarma'
             ? timer(0, DeviceDetail.PERIODO_MS).pipe(
                 switchMap(() => this.devices.state(this.id).pipe(catchError(() => EMPTY))),
               )

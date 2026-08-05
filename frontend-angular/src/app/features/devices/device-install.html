@@ -1,0 +1,318 @@
+<div class="d-flex align-items-center mb-3">
+  <a routerLink="/alarmas" class="btn btn-sm btn-outline-secondary me-2" title="Volver">
+    <i class="icon-arrow-left"></i>
+  </a>
+  <div>
+    <h2 class="h5 fw-bold mb-0"><i class="icon-wrench text-brand me-2"></i>Instalar una alarma</h2>
+    <p class="text-muted small mb-0">Poner un equipo en servicio en un barrio</p>
+  </div>
+</div>
+
+@if (error()) {
+  <div class="alert bg-emergency-soft text-emergency border-0 py-2 small" role="alert">
+    <i class="icon-triangle-alert me-1"></i>{{ error() }}
+  </div>
+}
+
+@if (loading()) {
+  <div class="text-center text-muted py-5">
+    <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+    Cargando…
+  </div>
+} @else {
+  <form [formGroup]="form" (ngSubmit)="instalar()" novalidate>
+    <div class="row g-3">
+      <!-- ============ 1. QUÉ EQUIPO ============ -->
+      <div class="col-12 col-lg-5">
+        <div class="card border">
+          <div class="card-header bg-white border-bottom">
+            <span class="fw-semibold small"><i class="icon-cpu me-1"></i> 1 · Qué equipo</span>
+          </div>
+          <div class="card-body">
+            <!--
+              Los dos caminos llegan al mismo lugar. Lo que cambia es de dónde
+              salen el serial y el código: de una lista, o de la etiqueta.
+            -->
+            <div class="btn-group w-100 mb-3" role="group">
+              <button
+                type="button"
+                class="btn btn-sm"
+                [class.btn-brand]="origen() === 'STOCK'"
+                [class.btn-outline-secondary]="origen() !== 'STOCK'"
+                (click)="cambiarOrigen('STOCK')"
+              >
+                Desde mi stock
+              </button>
+              <button
+                type="button"
+                class="btn btn-sm"
+                [class.btn-brand]="origen() === 'CODIGO'"
+                [class.btn-outline-secondary]="origen() !== 'CODIGO'"
+                (click)="cambiarOrigen('CODIGO')"
+              >
+                Con el código
+              </button>
+            </div>
+
+            @if (origen() === 'STOCK') {
+              @if (disponibles().length === 0) {
+                <!--
+                  Explica DÓNDE está el equipo que no ves. El stock solo trae los
+                  aprobados, así que una lista vacía casi siempre significa "lo
+                  fabricaste pero todavía no le diste el visto bueno" — y eso se
+                  resuelve en otra pantalla.
+                -->
+                <p class="text-muted small mb-2">No tenés equipos en stock.</p>
+                <p class="text-muted small mb-0">
+                  Un equipo entra al stock cuando lo marcás como
+                  <strong>Listo</strong> en
+                  <a routerLink="/inventario/fabrica">Fábrica</a>. Si lo acabás de fabricar,
+                  probablemente le falte ese paso. También podés sumar uno con su código desde
+                  <a routerLink="/inventario/stock">Inventario</a>, o instalarlo directo con el
+                  código acá al lado.
+                </p>
+              } @else {
+                <div class="list-group list-group-flush" style="max-height: 320px; overflow-y: auto">
+                  @for (device of disponibles(); track device.id) {
+                    <button
+                      type="button"
+                      class="list-group-item list-group-item-action d-flex align-items-center justify-content-between py-2"
+                      [class.active]="elegido()?.id === device.id"
+                      (click)="elegir(device)"
+                    >
+                      <span>
+                        <span class="font-monospace small fw-medium d-block">
+                          {{ device.serial }}
+                        </span>
+                        <span class="font-monospace text-muted" style="font-size: 0.75rem">
+                          {{ device.boardNumber ?? '—' }}
+                        </span>
+                      </span>
+                      @if (elegido()?.id === device.id) {
+                        <i class="icon-circle-check-big"></i>
+                      }
+                    </button>
+                  }
+                </div>
+              }
+            } @else {
+              <div class="mb-2">
+                <label for="iSerial" class="form-label small fw-medium">Serial</label>
+                <input
+                  id="iSerial"
+                  type="text"
+                  class="form-control font-monospace text-uppercase"
+                  formControlName="serial"
+                  placeholder="AV-A842E38FCA6C"
+                  autocomplete="off"
+                  spellcheck="false"
+                />
+              </div>
+              <div class="mb-0">
+                <label for="iCode" class="form-label small fw-medium">Código de reclamo</label>
+                <input
+                  id="iCode"
+                  type="text"
+                  class="form-control font-monospace text-uppercase"
+                  formControlName="claimCode"
+                  placeholder="K7M2QX"
+                  autocomplete="off"
+                  spellcheck="false"
+                />
+                <div class="form-text">
+                  Los dos están impresos en la etiqueta pegada al equipo.
+                </div>
+              </div>
+
+              <p class="text-muted small mb-0 mt-3 border-top pt-3">
+                <i class="icon-shield-check me-1"></i>
+                Sirve tanto para un equipo tuyo como para uno que
+                <strong>todavía no es de nadie</strong>. Si el equipo está en el stock de otra
+                organización, se rechaza.
+              </p>
+            }
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ 2. DÓNDE VA ============ -->
+      <div class="col-12 col-lg-7">
+        <div class="card border">
+          <div class="card-header bg-white border-bottom">
+            <span class="fw-semibold small"><i class="icon-map-pin me-1"></i> 2 · Dónde va</span>
+          </div>
+          <div class="card-body">
+            <div class="row g-2 mb-3">
+              <div class="col-12 col-sm-6">
+                <label for="iBarrio" class="form-label small fw-medium">Barrio</label>
+                <select id="iBarrio" class="form-select" formControlName="neighborhoodId">
+                  <option [ngValue]="null">Elegí un barrio…</option>
+                  @for (barrio of barrios(); track barrio.id) {
+                    <option [ngValue]="barrio.id">{{ barrio.name }}</option>
+                  }
+                </select>
+              </div>
+              <div class="col-12 col-sm-6">
+                <!--
+                  OBLIGATORIO: el serial identifica al equipo, pero el que sale
+                  en el tablero y en el evento es el nombre. "AV-A842E38FCA6C"
+                  no le dice nada a quien está monitoreando a las 3 de la mañana.
+                -->
+                <label for="iName" class="form-label small fw-medium">Nombre</label>
+                <input
+                  id="iName"
+                  type="text"
+                  class="form-control"
+                  formControlName="name"
+                  placeholder="Esquina Norte"
+                />
+                <div class="form-text">Cómo se la va a reconocer en el tablero.</div>
+              </div>
+            </div>
+
+            <!--
+              GPS OBLIGATORIO: el tablero de monitoreo es un mapa, y una alarma
+              sin punto es una alarma que nadie va a mirar cuando suene. Lo
+              impone también la base (chk_device_gps).
+            -->
+            <div class="mb-3">
+              <span class="form-label small fw-medium d-block">
+                Ubicación del poste
+                @if (latitude() === null) {
+                  <span class="badge bg-emergency-soft text-emergency border ms-1">
+                    obligatoria
+                  </span>
+                }
+              </span>
+              <!--
+                Nadie tipea coordenadas: se clickea el mapa y listo.
+
+                `focusOn` lleva el mapa al barrio elegido. Sin eso arrancás
+                mirando Córdoba aunque estés instalando en Jujuy, y hay que
+                arrastrar medio país antes de poder marcar el poste. El pin del
+                barrio queda visible para saber dónde estás parado.
+              -->
+              <app-map
+                [clickable]="true"
+                [focusOn]="foco()"
+                [markers]="marcadores()"
+                [popups]="false"
+                (positionChange)="setPosition($event)"
+              />
+              @if (latitude() !== null) {
+                <p class="small mb-0 mt-2">
+                  <i class="icon-circle-check text-success me-1"></i>
+                  <span class="font-monospace">{{ latitude() }}, {{ longitude() }}</span>
+                  <button
+                    type="button"
+                    class="btn btn-link btn-sm p-0 ms-2 align-baseline"
+                    (click)="clearPosition()"
+                  >
+                    Cambiar
+                  </button>
+                </p>
+              } @else {
+                <p class="small text-muted mb-0 mt-2">
+                  <i class="icon-map-pin me-1"></i>
+                  @if (foco()) {
+                    Clickeá el punto exacto del poste. El pin violeta es el centro del barrio.
+                  } @else {
+                    Elegí primero el barrio y el mapa te lleva hasta ahí.
+                  }
+                </p>
+              }
+            </div>
+
+            <!--
+              DATOS DE INSTALACIÓN. Opcionales pero RECOMENDADOS: es lo que el
+              próximo técnico va a querer saber antes de subirse a la escalera.
+              Se pueden completar después desde el detalle de la alarma.
+            -->
+            <div class="border-top pt-3">
+              <p class="fw-semibold small mb-1">
+                <i class="icon-clipboard-list me-1"></i> Datos de instalación
+                <span class="badge bg-warning-soft text-warning border ms-1">recomendados</span>
+              </p>
+              <p class="text-muted small">
+                Lo que hace falta saber para volver a intervenir el equipo.
+              </p>
+
+              <div class="row g-2 mb-2">
+                <div class="col-7">
+                  <label for="iPole" class="form-label small fw-medium">Poste o columna</label>
+                  <input
+                    id="iPole"
+                    type="text"
+                    class="form-control form-control-sm"
+                    formControlName="poleNumber"
+                    placeholder="Ej: 142-B"
+                  />
+                </div>
+                <div class="col-5">
+                  <label for="iHeight" class="form-label small fw-medium">Altura (m)</label>
+                  <input
+                    id="iHeight"
+                    type="number"
+                    step="0.1"
+                    min="0.1"
+                    max="30"
+                    class="form-control form-control-sm"
+                    formControlName="heightM"
+                    placeholder="6.5"
+                  />
+                </div>
+              </div>
+
+              <div class="mb-2">
+                <label for="iRef" class="form-label small fw-medium">Referencia</label>
+                <input
+                  id="iRef"
+                  type="text"
+                  class="form-control form-control-sm"
+                  formControlName="reference"
+                  placeholder="Esquina de San Martín y Belgrano"
+                />
+              </div>
+
+              <div class="mb-2">
+                <label for="iPower" class="form-label small fw-medium">Alimentación</label>
+                <input
+                  id="iPower"
+                  type="text"
+                  class="form-control form-control-sm"
+                  formControlName="powerPoint"
+                  placeholder="Luminaria 12 / tablero de la plaza"
+                />
+              </div>
+
+              <div class="mb-0">
+                <label for="iNotes" class="form-label small fw-medium">Observaciones</label>
+                <textarea
+                  id="iNotes"
+                  rows="2"
+                  class="form-control form-control-sm"
+                  formControlName="installNotes"
+                  placeholder="Lo que no entre en los campos de arriba"
+                ></textarea>
+              </div>
+            </div>
+          </div>
+
+          <div class="card-footer bg-white border-top d-flex align-items-center gap-3">
+            <button type="submit" class="btn btn-brand" [disabled]="saving() || falta() !== null">
+              @if (saving()) {
+                <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+                Instalando…
+              } @else {
+                <i class="icon-wrench me-1"></i> Instalar
+              }
+            </button>
+            @if (falta(); as motivo) {
+              <span class="text-muted small">{{ motivo }}</span>
+            }
+          </div>
+        </div>
+      </div>
+    </div>
+  </form>
+}

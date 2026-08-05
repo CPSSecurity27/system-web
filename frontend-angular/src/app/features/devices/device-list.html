@@ -9,12 +9,15 @@
 
   <div class="d-flex gap-2">
     <!--
-      Entrega e instalación: CPS y organizaciones. El alta de equipos NO está
-      acá — es fábrica, vive en Inventario y solo la ve CPS.
+      Instalar vive acá porque es trabajo de campo. El control de stock está en
+      Inventario, y el alta de equipos en Fábrica, que solo ve CPS.
     -->
     @if (auth.isManager()) {
-      <a routerLink="/alarmas/stock" class="btn btn-outline-brand btn-sm">
-        <i class="icon-truck me-1"></i> Entrega e instalación
+      <a routerLink="/inventario/stock" class="btn btn-outline-secondary btn-sm">
+        <i class="icon-boxes me-1"></i> Inventario
+      </a>
+      <a routerLink="/alarmas/instalar" class="btn btn-brand btn-sm">
+        <i class="icon-wrench me-1"></i> Instalar una alarma
       </a>
     }
   </div>

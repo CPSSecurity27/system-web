@@ -1,0 +1,63 @@
+@if (portal(); as p) {
+  <div class="etq">
+    <!-- Identidad: lo que se busca en una pila de cajas. -->
+    <div class="etq-head">
+      <div class="etq-head-row">
+        <span class="etq-marca">CPS SECURITY</span>
+        <span class="etq-mono etq-placa">{{ device().boardNumber ?? '—' }}</span>
+      </div>
+      <div class="etq-mono etq-serial">{{ device().serial }}</div>
+    </div>
+
+    <div class="etq-cuerpo">
+      <!-- ── Mitad izquierda: entrar al equipo ────────────────────── -->
+      <div class="etq-mitad">
+        <div class="etq-mitad-head">
+          <div class="etq-tit">Conexión WiFi Local</div>
+          <div class="etq-mono etq-ssid">{{ p.ssid }}</div>
+        </div>
+
+        <div class="etq-fila">
+          <div class="etq-qr">
+            <div class="etq-qr-img" [innerHTML]="qrWifi()"></div>
+            <div class="etq-qr-lab">WiFi</div>
+          </div>
+
+          <div class="etq-datos">
+            <div class="etq-cap">Credenciales Portal</div>
+            <div class="etq-mono etq-ip">{{ p.url.replace('http://', '') }}</div>
+            <div class="etq-kv">
+              <span class="etq-cap">Usuario</span>
+              <span class="etq-mono etq-usuario">{{ p.usuario }}</span>
+            </div>
+            <div class="etq-kv etq-kv-linea">
+              <span class="etq-cap">Clave</span>
+              <span class="etq-mono etq-clave">{{ p.password ?? '——————' }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="etq-div"></div>
+
+      <!-- ── Mitad derecha: darlo de alta ─────────────────────────── -->
+      <div class="etq-mitad">
+        <div class="etq-mitad-head">
+          <div class="etq-tit">Alta del equipo</div>
+        </div>
+
+        <div class="etq-fila">
+          <div class="etq-datos">
+            <div class="etq-cap">Código de reclamo</div>
+            <div class="etq-mono etq-reclamo">{{ device().claimCode ?? '—' }}</div>
+          </div>
+
+          <div class="etq-qr">
+            <div class="etq-qr-img" [innerHTML]="qrApp()"></div>
+            <div class="etq-qr-lab">App</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+}

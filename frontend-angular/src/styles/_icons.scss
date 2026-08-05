@@ -1,6 +1,6 @@
 // GENERADO POR scripts/generar-iconos.py — NO EDITAR A MANO.
 //
-// Subset de Lucide con los 77 íconos que el panel usa hoy.
+// Subset de Lucide con los 82 íconos que el panel usa hoy.
 // Para agregar uno: usalo en el código y volvé a correr el script.
 
 @font-face {
@@ -71,16 +71,19 @@
 .icon-map::before { content: "\e110"; }
 .icon-map-pin::before { content: "\e111"; }
 .icon-map-pinned::before { content: "\e53d"; }
-.icon-network::before { content: "\e125"; }
 .icon-package::before { content: "\e129"; }
+.icon-package-check::before { content: "\e266"; }
+.icon-package-plus::before { content: "\e268"; }
 .icon-pause::before { content: "\e12e"; }
 .icon-phone::before { content: "\e133"; }
 .icon-play::before { content: "\e13c"; }
 .icon-plus::before { content: "\e13d"; }
 .icon-pointer::before { content: "\e1e8"; }
 .icon-power::before { content: "\e140"; }
+.icon-printer::before { content: "\e141"; }
 .icon-radio-tower::before { content: "\e404"; }
 .icon-refresh-cw::before { content: "\e145"; }
+.icon-rotate-ccw::before { content: "\e148"; }
 .icon-search::before { content: "\e151"; }
 .icon-shapes::before { content: "\e4b3"; }
 .icon-shield::before { content: "\e158"; }
@@ -89,11 +92,13 @@
 .icon-sliders-horizontal::before { content: "\e29a"; }
 .icon-tag::before { content: "\e17f"; }
 .icon-tags::before { content: "\e35c"; }
+.icon-trash-2::before { content: "\e18e"; }
 .icon-triangle-alert::before { content: "\e193"; }
 .icon-truck::before { content: "\e194"; }
 .icon-user-check::before { content: "\e1a0"; }
 .icon-user-minus::before { content: "\e1a1"; }
 .icon-user-plus::before { content: "\e1a2"; }
 .icon-users::before { content: "\e1a4"; }
+.icon-wifi::before { content: "\e1ae"; }
 .icon-wrench::before { content: "\e1b1"; }
 .icon-x::before { content: "\e1b2"; }

@@ -8,8 +8,11 @@ import { DataSource, EntityManager } from 'typeorm';
 import { AccessScope, ScopeService } from '../common/scope.service';
 import { DevicesService } from './devices.service';
 
-export type ProvisioningOp = 'provision' | 'revoke';
+export type ProvisioningOp = 'provision' | 'revoke' | 'manufacture';
 export type ProvisioningEstado = 'pending' | 'done' | 'failed';
+
+/** Cada cuánto se mira la fila mientras se espera al provisioner. */
+const SONDEO_MS = 250;
 
 export interface ProvisioningQueueView {
   op: ProvisioningOp;
@@ -95,6 +98,81 @@ export class ProvisioningService {
           ? 'Se pidió el alta de la credencial en el broker.'
           : 'Se pidió la baja de la credencial en el broker.',
     };
+  }
+
+  /**
+   * Espera a que el provisioner cierre una fila. Devuelve el estado final, o
+   * `null` si venció el plazo.
+   *
+   * SONDEA en vez de escuchar un canal: un `LISTEN` ahorraría estos
+   * milisegundos a cambio de una conexión dedicada viva para siempre, y las
+   * altas de fábrica son de a una y a ritmo humano. Además sondear no puede
+   * perderse un evento — el bug que ya costó el barrido de pendientes.
+   *
+   * Que venza NO significa que el provisioner no vaya a hacer el trabajo:
+   * significa que la web dejó de esperarlo. Quien llame tiene que decidir qué
+   * hacer con eso (en el alta atómica: borrar el equipo).
+   */
+  async esperar(
+    queueId: number,
+    timeoutMs: number,
+  ): Promise<{ estado: ProvisioningEstado; detalle: string | null } | null> {
+    const limite = Date.now() + timeoutMs;
+
+    for (;;) {
+      const filas: { estado: ProvisioningEstado; detalle: string | null }[] =
+        await this.dataSource.query(
+          `SELECT estado, detalle FROM gtd.provisioning_queue WHERE id = $1`,
+          [queueId],
+        );
+
+      const fila = filas[0];
+      // Sin fila no hay nada que esperar: alguien borró el equipo y la cola se
+      // fue por CASCADE. Se trata como vencido, no como éxito.
+      if (!fila) return null;
+      if (fila.estado !== 'pending') return fila;
+
+      if (Date.now() >= limite) return null;
+      await new Promise((r) =>
+        setTimeout(r, Math.min(SONDEO_MS, limite - Date.now())),
+      );
+    }
+  }
+
+  /**
+   * La última operación de CADA equipo de la lista, en una sola consulta.
+   *
+   * Un listado no puede hacer N consultas, pero tampoco puede mentir: sin esto,
+   * un equipo con la credencial en cola se ve idéntico a uno al que nunca se le
+   * pidió nada, y la tabla de fábrica —que existe para responder "¿qué me falta
+   * terminar?"— no sirve para eso.
+   */
+  async estadosDe(
+    deviceIds: number[],
+  ): Promise<Map<number, ProvisioningQueueView>> {
+    if (deviceIds.length === 0) return new Map();
+
+    const filas: (ColaRow & { device_id: number })[] =
+      await this.dataSource.query(
+        `SELECT DISTINCT ON (device_id)
+                device_id, op, estado, detalle, created_at
+           FROM gtd.provisioning_queue
+          WHERE device_id = ANY($1)
+          ORDER BY device_id, created_at DESC`,
+        [deviceIds],
+      );
+
+    return new Map(
+      filas.map((f) => [
+        f.device_id,
+        {
+          op: f.op,
+          estado: f.estado,
+          detalle: f.detalle,
+          createdAt: f.created_at.toISOString(),
+        },
+      ]),
+    );
   }
 
   /** La última operación del equipo, para mostrarla en la ficha. */

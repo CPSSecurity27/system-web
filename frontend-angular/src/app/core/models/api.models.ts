@@ -231,7 +231,7 @@ export interface DeviceProvisioning {
   pendingCommand: string | null;
   /** La última operación pedida. null si nunca se pidió ninguna. */
   queue: {
-    op: 'provision' | 'revoke';
+    op: 'provision' | 'revoke' | 'manufacture';
     estado: 'pending' | 'done' | 'failed';
     detalle: string | null;
     createdAt: string;
@@ -241,23 +241,37 @@ export interface DeviceProvisioning {
 /**
  * Etapa de puesta en marcha. La DERIVA el backend del último hito alcanzado:
  * no es una columna, así que no puede contradecir a las fechas.
+ *
+ * `MANUFACTURED` es el piso: si el equipo existe, se fabricó. Desde que el alta
+ * es atómica (2026-08-04), nacer y quedar registrado en el broker son el mismo
+ * instante, así que ya no hay un peldaño "creado pero sin credencial".
+ *
+ * `CONNECTED` significa "se conectó alguna vez", NO "está online ahora": lo
+ * segundo es estado vivo y sale de `device_state`.
+ *
+ * Etiquetar NO es una etapa (2026-08-05): imprimir es una tarea de fábrica, no
+ * un avance del equipo. Sigue siendo un hito con fecha en `milestones`.
  */
-export type DeviceStage = 'CREATED' | 'PROVISIONED' | 'LABELED' | 'CONNECTED';
+export type DeviceStage = 'MANUFACTURED' | 'CONNECTED' | 'TESTED' | 'READY';
 
 /** OBSERVED = lo vio el broker; MANUAL = lo marcó CPS a mano (auditado). */
 export type DeviceMilestoneSource = 'OBSERVED' | 'MANUAL';
 
 /**
- * Los cuatro hitos con su fecha. Se muestran por separado y no solo como la
- * etapa: que un equipo esté "etiquetado" dice menos que ver que se etiquetó
- * pero todavía no se provisionó.
+ * Los hitos con su fecha. Se muestran por separado y no solo como la etapa: que
+ * un equipo esté "etiquetado" dice menos que ver hasta dónde llegó realmente.
  */
 export interface DeviceMilestones {
   createdAt: string;
   provisionedAt: string | null;
+  /** Lo sella imprimir la etiqueta. Ya no es etapa, pero sigue siendo hito. */
   labeledAt: string | null;
   firstConnectionAt: string | null;
   firstConnectionSource: DeviceMilestoneSource | null;
+  /** Prueba funcional del equipo ya conectado: sirena, RF, sensores. */
+  testedAt: string | null;
+  /** Visto bueno para que salga de fábrica. Lo da una persona. */
+  readyAt: string | null;
 }
 
 export interface Device {
@@ -279,7 +293,6 @@ export interface Device {
   /** Stock de una organización (entrega del lote). null = fábrica CPS. */
   organizationId: number | null;
   neighborhoodId: number | null;
-  tested: boolean;
   latitude: number | null;
   longitude: number | null;
   installedAt: string | null;
@@ -294,8 +307,39 @@ export interface Device {
   milestones: DeviceMilestones;
   /** null en los tipos que no hablan MQTT. */
   provisioning: DeviceProvisioning | null;
+  /** Acceso al portal local del equipo. null en los tipos que no levantan AP. */
+  portal: DevicePortal | null;
+  /**
+   * En la papelera: no aparece en ningún listado normal. Se puede reactivar o
+   * borrar definitivamente. Eje aparte de `status`, no un estado más.
+   */
+  removedAt: string | null;
   /** Cosas raras que no impidieron el alta. Vacío salvo al fabricar. */
   warnings: string[];
+}
+
+/**
+ * Lo que necesita el técnico para entrar al equipo, y lo que va en la etiqueta.
+ *
+ * El SSID y los dos QR los COMPONE el backend a partir de la MAC y del claim
+ * code. La password de `admin` viene descifrada, pero SOLO en la ficha
+ * (`GET /devices/:id`): en los listados llega en null a propósito, así que para
+ * imprimir hay que pedir el equipo primero.
+ *
+ * La password de `cps` NO está acá y no va a estar: se pide aparte
+ * (`GET /devices/:id/portal-cps`), exige OWNER o ADMIN de CPS y deja audit_log.
+ * El firmware es explícito en que jamás se imprime.
+ */
+export interface DevicePortal {
+  ssid: string;
+  /** `WIFI:S:…;T:nopass;;` — AP abierto, lo lee la cámara nativa del celular. */
+  qrWifi: string;
+  /** `CPS1|<serial>|<claim>` — texto plano, lo lee la app del técnico. */
+  qrApp: string;
+  url: string;
+  usuario: 'admin';
+  password: string | null;
+  derivedAt: string | null;
 }
 
 /**
@@ -324,6 +368,22 @@ export interface DeviceState {
   cfgV: string;
   rfGen: string;
   fw: string | null;
+  /**
+   * La RED del equipo. `rssi` en dBm, negativo: -60 es buena señal, -80 mala.
+   * `recon` y `pingFail` son los contadores que explican una caída — un equipo
+   * que se reconecta 40 veces por hora no está "online", está agonizando.
+   */
+  ssid: string | null;
+  ip: string | null;
+  rssi: number | null;
+  recon: number | null;
+  pingFail: number | null;
+  /**
+   * El resto del snapshot: `rtc`, `modulos`, `ota`, contadores `rf`, `sueno` y
+   * `colas`. Viene tal cual lo manda el firmware, así que la ficha lo muestra
+   * genérico: si mañana el panel agrega una sección, aparece sola.
+   */
+  tele: Record<string, unknown> | null;
   /** Cuándo habló: lo escribe cualquier mensaje, no solo el latido. */
   lastSeen: string | null;
   lastHeartbeat: string | null;

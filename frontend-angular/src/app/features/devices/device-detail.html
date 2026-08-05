@@ -19,32 +19,47 @@
   </div>
 
   <!--
-    Pestañas de la ficha. El estado en vivo va aparte de lo que el equipo ES:
-    son dos cosas distintas (una la escribe CPS, la otra SOLO el servicio de
-    alarmas) y mezclarlas en una tarjeta las hacía parecer el mismo dato.
+    Tres pestañas, por PREGUNTA y no por origen del dato:
+
+      ALARMA        ¿cómo está funcionando ahora? Lo que es + lo que reporta.
+      INSTALACIÓN   ¿dónde está y qué se le hizo? Poste, mapa, fechas, bitácora.
+      CONFIGURACIÓN ¿qué tiene cargado y qué le mandamos?
+
+    Antes "Ficha" y "Estado en vivo" iban separadas porque una la escribe CPS y
+    la otra solo el servicio de alarmas. Eso es cierto pero es un detalle de
+    implementación: el que abre una alarma quiere saber cómo anda, y tenía que
+    mirar dos pestañas para armar esa respuesta.
   -->
   <ul class="nav nav-tabs mb-3">
     <li class="nav-item">
       <button
         type="button"
         class="nav-link"
-        [class.active]="tab() === 'ficha'"
-        (click)="tab.set('ficha')"
+        [class.active]="tab() === 'alarma'"
+        (click)="tab.set('alarma')"
+        title="Lo que el equipo es y lo que está reportando ahora"
       >
-        <i class="icon-radio-tower me-1"></i> Ficha
+        <i class="icon-radio-tower me-1"></i> Alarma
+        @if (state()?.online) {
+          <span class="badge rounded-pill bg-success-soft text-success border ms-1">·</span>
+        }
       </button>
     </li>
     <li class="nav-item">
       <button
         type="button"
         class="nav-link"
-        [class.active]="tab() === 'estado'"
-        (click)="tab.set('estado')"
-        title="Lo que el equipo está reportando ahora"
+        [class.active]="tab() === 'instalacion'"
+        (click)="tab.set('instalacion')"
+        title="Dónde está montada y qué se le hizo"
       >
-        <i class="icon-heart-pulse me-1"></i> Estado en vivo
-        @if (state()?.online) {
-          <span class="badge rounded-pill bg-success-soft text-success border ms-1">·</span>
+        <i class="icon-clipboard-list me-1"></i> Instalación
+        @if (sinDatosDeInstalacion()) {
+          <span
+            class="badge rounded-pill bg-warning-soft text-warning border ms-1"
+            title="Sin datos de instalación cargados"
+            >!</span
+          >
         }
       </button>
     </li>
@@ -61,55 +76,401 @@
     </li>
   </ul>
 
-  <!--
-    d-none y no [hidden]: `.row` es display:flex y, como estilo de autor, le gana
-    al display:none del user-agent que trae el atributo hidden. La utilidad de
-    Bootstrap lleva !important y sí lo apaga.
-
-    Y se OCULTA en vez de destruirse (@if) para no recrear el mapa en cada
-    cambio de pestaña: Leaflet re-inicializa, vuelve a encuadrar y pierde el pin
-    que el técnico todavía no guardó.
+  <!-- ══ ALARMA ═══════════════════════════════════════════════════════════
+       Lo que el equipo ES (lo escribe CPS) junto a lo que REPORTA (lo escribe
+       únicamente el servicio de alarmas). Acá no hay un solo control que
+       escriba en el estado vivo: la web lo lee y nada más.
   -->
-  <div class="row g-3" [class.d-none]="tab() !== 'ficha'">
-    <div class="col-12 col-xl-5">
-      <div class="card border h-100">
-        <div class="card-body">
-          <dl class="row mb-0 small">
-            <dt class="col-5 text-muted fw-normal">Estado del equipo</dt>
-            <dd class="col-7">
-              <!-- Lo que el equipo ES. El estado VIVO (online/mudo) va aparte:
-                   lo informa el servicio de alarmas, no esta tabla. -->
-              <cps-status kind="device" [value]="alarma.status" />
-            </dd>
+  <div [class.d-none]="tab() !== 'alarma'">
+    <div class="row g-3">
+      <div class="col-12 col-lg-4">
+        <div class="card border h-100">
+          <div class="card-header bg-white border-bottom">
+            <span class="fw-semibold small"><i class="icon-cpu me-1"></i> El equipo</span>
+          </div>
+          <div class="card-body">
+            <dl class="row mb-0 small">
+              <dt class="col-5 text-muted fw-normal">Estado</dt>
+              <dd class="col-7"><cps-status kind="device" [value]="alarma.status" /></dd>
 
-            <dt class="col-5 text-muted fw-normal">Instalada</dt>
-            <dd class="col-7">
-              {{ alarma.installedAt ? (alarma.installedAt | date: 'dd/MM/yyyy') : '—' }}
-            </dd>
+              <dt class="col-5 text-muted fw-normal">N.º de placa</dt>
+              <dd class="col-7 font-monospace">{{ alarma.boardNumber ?? '—' }}</dd>
 
-            <dt class="col-5 text-muted fw-normal">Coordenadas</dt>
-            <dd class="col-7">
-              @if (alarma.latitude !== null && alarma.longitude !== null) {
-                {{ alarma.latitude }}, {{ alarma.longitude }}
-              } @else {
-                <span class="text-muted">Sin cargar</span>
-              }
-            </dd>
-          </dl>
+              <dt class="col-5 text-muted fw-normal">MAC</dt>
+              <dd class="col-7 font-monospace">{{ alarma.mac ?? '—' }}</dd>
 
+              <dt class="col-5 text-muted fw-normal">Instalada</dt>
+              <dd class="col-7">
+                {{ alarma.installedAt ? (alarma.installedAt | date: 'dd/MM/yyyy') : '—' }}
+              </dd>
+            </dl>
+
+            @if (sinDatosDeInstalacion()) {
+              <div class="border-top mt-3 pt-3">
+                <p class="text-muted small mb-2">
+                  <i class="icon-circle-alert me-1"></i>
+                  No tiene cargados los datos de instalación: el próximo técnico que venga no va a
+                  saber en qué poste está.
+                </p>
+                <button
+                  type="button"
+                  class="btn btn-sm btn-outline-secondary"
+                  (click)="tab.set('instalacion')"
+                >
+                  Cargarlos
+                </button>
+              </div>
+            }
+          </div>
+        </div>
+      </div>
+
+      <!--
+        DÓNDE ESTÁ, siempre. Que el equipo nunca haya conectado no cambia que ya
+        está instalado en un poste: mostrar un cartel en lugar del mapa escondía
+        el dato que sí tenemos.
+      -->
+      <div class="col-12 col-lg-8">
+        <div class="card border h-100">
+          <div class="card-header bg-white border-bottom">
+            <span class="fw-semibold small"><i class="icon-map me-1"></i> Dónde está</span>
+          </div>
+          <div class="card-body">
+            @if (markers().length > 0) {
+              <app-map [markers]="markers()" [center]="centroMapa()" [zoom]="16" />
+            } @else {
+              <div class="text-center text-muted py-5 bg-light rounded">
+                <i class="icon-map-pin d-block mb-2" style="font-size: 2rem"></i>
+                Esta alarma no tiene coordenadas cargadas.
+              </div>
+            }
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Lo que el equipo REPORTA ───────────────────────────────────── -->
+    <!--
+      Las tarjetas se muestran SIEMPRE, con "—" donde no hay dato. Antes, sin
+      estado, toda la sección se reemplazaba por un cartel: no se veía qué campos
+      existen ni dónde van a aparecer. El cartel de abajo dice en qué situación
+      está, que es distinto de esconder la pantalla.
+    -->
+    <div class="mt-3">
+      @switch (situacion()) {
+        @case ('nunca') {
+          <div class="alert bg-light border py-2 small mb-3">
+            <i class="icon-radio-tower me-1"></i>
+            <strong>Esta alarma nunca conectó.</strong>
+            Los datos aparecen cuando el equipo se conecta al broker por primera vez.
+          </div>
+        }
+        @case ('sin-datos') {
+          <div class="alert bg-light border py-2 small mb-3">
+            <i class="icon-radio-tower me-1"></i>
+            <strong>Sin datos de estado.</strong>
+            Conectó alguna vez, pero el servicio de alarmas todavía no está escribiendo.
+          </div>
+        }
+        @case ('dudoso') {
           <!--
-            DATOS DE INSTALACIÓN: lo que el técnico necesita antes de subirse a
-            la escalera. Si están vacíos se dice, en vez de esconder la fila:
-            el hueco es justamente la información útil.
+            Un "online" congelado es peor que no tener dato, porque se le cree.
+            Si el equipo figura conectado pero hace 15 minutos que no habla, o se
+            cayó sin avisar o se cayó el gateway y nadie lo marcó offline.
           -->
-          <div class="border-top mt-3 pt-3">
-            <p class="fw-semibold small mb-2">
-              <i class="icon-clipboard-list me-1"></i> Datos de instalación
-            </p>
+          <div class="alert bg-warning-soft border-0 py-2 small mb-3">
+            <i class="icon-triangle-alert me-1"></i>
+            <strong>Este dato puede estar viejo.</strong>
+            Figura conectada pero hace {{ minutosDeSilencio() }} minutos que no reporta.
+          </div>
+        }
+        @case ('offline') {
+          <div class="alert bg-emergency-soft text-emergency border-0 py-2 small mb-3">
+            <i class="icon-triangle-alert me-1"></i>
+            <strong>Offline.</strong>
+            @if (state()?.lastSeen) {
+              Última vez que habló: {{ state()?.lastSeen | date: 'dd/MM/yy HH:mm' }} ({{
+                minutosDeSilencio()
+              }}
+              min).
+            }
+          </div>
+        }
+      }
+
+      <div class="row g-3">
+        <!-- Conexión y alarma: lo que mira el monitoreo -->
+        <div class="col-12 col-xl-6">
+          <div class="card border h-100">
+            <div class="card-header bg-white border-bottom">
+              <span class="fw-semibold small"><i class="icon-heart-pulse me-1"></i> Conexión</span>
+            </div>
+            <div class="card-body">
+              <dl class="row mb-0 small">
+                <dt class="col-5 text-muted fw-normal">Estado</dt>
+                <dd class="col-7">
+                  @switch (situacion()) {
+                    @case ('online') {
+                      <span class="badge bg-success-soft text-success border">Online</span>
+                    }
+                    @case ('dudoso') {
+                      <span class="badge bg-warning-soft text-warning border">Online (dudoso)</span>
+                    }
+                    @case ('durmiendo') {
+                      <!-- Durmiendo NO es caído: avisó que se iba y hasta cuándo. -->
+                      <span class="badge bg-light text-muted border">
+                        Durmiendo hasta las {{ durmiendoHasta() | date: 'HH:mm' }}
+                      </span>
+                    }
+                    @case ('offline') {
+                      <span class="badge bg-emergency-soft text-emergency border">Offline</span>
+                    }
+                    @default {
+                      <span class="badge bg-light text-muted border">Sin datos</span>
+                    }
+                  }
+                </dd>
+
+                <dt class="col-5 text-muted fw-normal">Modo de alarma</dt>
+                <dd class="col-7">
+                  @if (state()?.alarmStatus && state()?.alarmStatus !== 'off') {
+                    <span class="badge bg-emergency-soft text-emergency border">
+                      {{ state()?.alarmStatus }}
+                    </span>
+                  } @else {
+                    <span class="text-muted">{{ state()?.alarmStatus ?? '—' }}</span>
+                  }
+                </dd>
+
+                <dt class="col-5 text-muted fw-normal">Modo de energía</dt>
+                <dd class="col-7 font-monospace">{{ state()?.powerMode ?? '—' }}</dd>
+
+                <dt class="col-5 text-muted fw-normal">Habló</dt>
+                <dd class="col-7">
+                  @if (state()?.lastSeen) {
+                    {{ state()?.lastSeen | date: 'dd/MM/yy HH:mm:ss' }}
+                    <span class="text-muted">({{ minutosDeSilencio() }} min)</span>
+                  } @else {
+                    <span class="text-muted">—</span>
+                  }
+                </dd>
+
+                <dt class="col-5 text-muted fw-normal">Últ. latido</dt>
+                <dd class="col-7">
+                  {{
+                    state()?.lastHeartbeat
+                      ? (state()?.lastHeartbeat | date: 'dd/MM/yy HH:mm:ss')
+                      : '—'
+                  }}
+                </dd>
+              </dl>
+            </div>
+          </div>
+        </div>
+
+        <!--
+          RED. El dato que explica una caída: un equipo con rssi -85 que se
+          reconecta 40 veces por hora no está "online", está agonizando — y eso
+          se ve acá antes de que deje de responder del todo.
+        -->
+        <div class="col-12 col-xl-6">
+          <div class="card border h-100">
+            <div class="card-header bg-white border-bottom">
+              <span class="fw-semibold small"><i class="icon-wifi me-1"></i> Red</span>
+            </div>
+            <div class="card-body">
+              <dl class="row mb-0 small">
+                <dt class="col-5 text-muted fw-normal">Red WiFi</dt>
+                <dd class="col-7 font-monospace">{{ state()?.ssid ?? '—' }}</dd>
+
+                <dt class="col-5 text-muted fw-normal">IP</dt>
+                <dd class="col-7 font-monospace">{{ state()?.ip ?? '—' }}</dd>
+
+                <dt class="col-5 text-muted fw-normal">Señal</dt>
+                <dd class="col-7">
+                  @if (calidadSenal() === null) {
+                    <span class="text-muted">—</span>
+                  } @else {
+                    <span class="font-monospace">{{ state()?.rssi }} dBm</span>
+                    @switch (calidadSenal()) {
+                      @case ('buena') {
+                        <span class="badge bg-success-soft text-success border ms-1">Buena</span>
+                      }
+                      @case ('regular') {
+                        <span class="badge bg-warning-soft text-warning border ms-1">Regular</span>
+                      }
+                      @case ('mala') {
+                        <span class="badge bg-emergency-soft text-emergency border ms-1">Mala</span>
+                      }
+                    }
+                  }
+                </dd>
+
+                <dt class="col-5 text-muted fw-normal">Reconexiones</dt>
+                <dd class="col-7 font-monospace">{{ state()?.recon ?? '—' }}</dd>
+
+                <dt class="col-5 text-muted fw-normal">Fallos de ping</dt>
+                <dd class="col-7 font-monospace">{{ state()?.pingFail ?? '—' }}</dd>
+              </dl>
+            </div>
+          </div>
+        </div>
+
+        <!-- Alimentación: el dato de mantenimiento de un poste -->
+        <div class="col-12 col-xl-6">
+          <div class="card border h-100">
+            <div class="card-header bg-white border-bottom">
+              <span class="fw-semibold small"><i class="icon-power me-1"></i> Alimentación</span>
+            </div>
+            <div class="card-body">
+              <dl class="row mb-0 small">
+                <dt class="col-5 text-muted fw-normal">Batería</dt>
+                <dd class="col-7">
+                  @if (!state()?.vbat) {
+                    <span class="text-muted">—</span>
+                  } @else {
+                    <span class="font-monospace">{{ state()?.vbat }} V</span>
+                    @switch (nivelBateria()) {
+                      @case ('critica') {
+                        <span class="badge bg-emergency-soft text-emergency border ms-1"
+                          >Crítica</span
+                        >
+                      }
+                      @case ('baja') {
+                        <span class="badge bg-warning-soft text-warning border ms-1">Baja</span>
+                      }
+                    }
+                  }
+                </dd>
+
+                <dt class="col-5 text-muted fw-normal">Panel solar</dt>
+                <dd class="col-7 font-monospace">
+                  {{ state()?.vpanel ? state()?.vpanel + ' V' : '—' }}
+                </dd>
+
+                <dt class="col-5 text-muted fw-normal">Fuente</dt>
+                <dd class="col-7 font-monospace">
+                  {{ state()?.vfuente ? state()?.vfuente + ' V' : '—' }}
+                </dd>
+              </dl>
+            </div>
+          </div>
+        </div>
+
+        <!-- Lo que el equipo tiene cargado -->
+        <div class="col-12 col-xl-6">
+          <div class="card border h-100">
+            <div class="card-header bg-white border-bottom">
+              <span class="fw-semibold small"><i class="icon-cpu me-1"></i> Qué tiene cargado</span>
+            </div>
+            <div class="card-body">
+              <dl class="row mb-0 small">
+                <dt class="col-5 text-muted fw-normal">Firmware</dt>
+                <dd class="col-7 font-monospace">{{ state()?.fw ?? '—' }}</dd>
+
+                <dt class="col-5 text-muted fw-normal">Configuración</dt>
+                <dd
+                  class="col-7 font-monospace"
+                  title="Versión de config que el equipo dice estar corriendo"
+                >
+                  {{ state() ? 'v' + state()?.cfgV : '—' }}
+                </dd>
+
+                <dt class="col-5 text-muted fw-normal">Base RF</dt>
+                <dd class="col-7 font-monospace" title="Generación de los códigos de control">
+                  {{ state() ? 'gen ' + state()?.rfGen : '—' }}
+                </dd>
+
+                <dt class="col-5 text-muted fw-normal">Reloj del panel</dt>
+                <dd class="col-7">
+                  @if (state()?.tsDevice) {
+                    <span class="font-monospace">
+                      {{ state()?.tsDevice | date: 'dd/MM/yy HH:mm' }}
+                    </span>
+                    <!-- tsq: 0 = NTP, 4 = sin sincronizar. MENOR ES MEJOR. -->
+                    @if (relojDudoso()) {
+                      <span
+                        class="badge bg-warning-soft text-warning border ms-1"
+                        title="El panel no tiene el reloj sincronizado"
+                        >sin sync</span
+                      >
+                    }
+                  } @else {
+                    <span class="text-muted">—</span>
+                  }
+                </dd>
+              </dl>
+            </div>
+          </div>
+        </div>
+
+        <!--
+          EL RESTO DEL SNAPSHOT, genérico. El firmware suma contadores cada
+          tanto y una pantalla que los enumera a mano queda siempre un paso
+          atrás de lo que el panel ya está mandando: acá, si aparece una
+          sección nueva, sale sola.
+        -->
+        @for (seccion of seccionesTele(); track seccion.seccion) {
+          <div class="col-12 col-md-6 col-xl-4">
+            <div class="card border h-100">
+              <div class="card-header bg-white border-bottom">
+                <span class="fw-semibold small text-capitalize">
+                  <i class="icon-list me-1"></i> {{ seccion.seccion }}
+                </span>
+              </div>
+              <div class="card-body">
+                <dl class="row mb-0 small">
+                  @for (dato of seccion.datos; track dato.clave) {
+                    <dt class="col-7 text-muted fw-normal font-monospace">{{ dato.clave }}</dt>
+                    <dd class="col-5 font-monospace text-end mb-1">{{ dato.valor }}</dd>
+                  }
+                </dl>
+              </div>
+            </div>
+          </div>
+        }
+      </div>
+
+      <p class="text-muted small mt-2 mb-0">
+        <i class="icon-refresh-cw me-1"></i>
+        Se actualiza solo cada 20 segundos.
+        @if (ultimaLectura(); as leido) {
+          Última lectura: {{ leido | date: 'HH:mm:ss' }}.
+        }
+      </p>
+    </div>
+  </div>
+
+  <!-- ══ INSTALACIÓN ══════════════════════════════════════════════════════
+       Dónde está montada y qué se le hizo. Todo junto porque es lo que se mira
+       de una sola vez antes de salir a intervenir un equipo.
+
+       d-none y no @if: `.row` es display:flex y, como estilo de autor, le gana
+       al display:none del user-agent que trae `hidden`. La utilidad de Bootstrap
+       lleva !important y sí lo apaga. Y se OCULTA en vez de destruirse para no
+       recrear el mapa en cada cambio de pestaña: Leaflet re-inicializa, vuelve a
+       encuadrar y pierde el pin que el técnico todavía no guardó.
+  -->
+  <div [class.d-none]="tab() !== 'instalacion'">
+    <div class="row g-3">
+      <div class="col-12 col-xl-5">
+        <div class="card border">
+          <div class="card-header bg-white border-bottom">
+            <span class="fw-semibold small">
+              <i class="icon-clipboard-list me-1"></i> Datos del poste
+            </span>
+          </div>
+          <div class="card-body">
+            <!--
+              Lo que el técnico necesita antes de subirse a la escalera. Si están
+              vacíos se dice, en vez de esconder la fila: el hueco es justamente
+              la información útil.
+            -->
             @if (sinDatosDeInstalacion()) {
               <p class="text-muted small mb-0">
                 <i class="icon-circle-alert me-1"></i>
-                Sin cargar. El próximo técnico que venga no va a saber en qué poste está.
+                Sin cargar. El próximo técnico que venga no va a saber en qué poste está ni de
+                dónde toma corriente.
               </p>
             } @else {
               <dl class="row mb-0 small">
@@ -133,434 +494,173 @@
                 }
               </dl>
             }
-          </div>
 
-          <!--
-            El estado VIVO ya no vive acá: tiene su propia pestaña, porque se
-            refresca solo y creció a diez campos. Queda el enlace para no
-            esconderlo de quien venía buscándolo en esta tarjeta.
-          -->
-          <div class="border-top mt-3 pt-3">
-            <button
-              type="button"
-              class="btn btn-sm btn-outline-secondary"
-              (click)="tab.set('estado')"
-            >
-              <i class="icon-radio-tower me-1"></i> Ver estado en vivo
-            </button>
-          </div>
-
-          <!--
-            CREDENCIAL DEL BROKER. Sin esto el equipo no puede conectarse, por
-            más que esté instalado y con corriente. El alta de fábrica la pide
-            sola; acá se ve cómo salió y se puede reintentar o dar de baja.
-          -->
-          @if (alarma.provisioning; as prov) {
+            <!--
+              La única fecha que importa acá es CUÁNDO SE INSTALÓ. Fabricada,
+              testeada y aprobada son bitácora de FÁBRICA: cuentan cómo se armó
+              el equipo, no cómo está montado. Estuvieron un rato en esta
+              tarjeta y sobraban — el que abre Instalación quiere saber desde
+              cuándo está en el poste.
+            -->
             <div class="border-top mt-3 pt-3">
-              <p class="fw-semibold small mb-2">
-                <i class="icon-key me-1"></i> Credencial del broker
-              </p>
-
-              @if (credencialHuerfana()) {
-                <div class="alert bg-warning-soft border-0 small py-2">
-                  <i class="icon-triangle-alert me-1"></i>
-                  Este equipo está dado de baja pero <strong>conserva su
-                  credencial</strong>. La baja no es automática: hay que
-                  revocarla a mano.
-                </div>
-              }
-
-              @switch (prov.queue?.estado) {
-                @case ('pending') {
-                  <p class="small text-muted mb-2">
-                    <span class="spinner-border spinner-border-sm me-1"></span>
-                    {{ prov.queue?.op === 'revoke' ? 'Baja' : 'Alta' }} en cola…
-                  </p>
-                }
-                @case ('failed') {
-                  <div class="alert bg-emergency-soft text-emergency border-0 small py-2">
-                    No se pudo
-                    {{ prov.queue?.op === 'revoke' ? 'dar de baja' : 'registrar' }}:
-                    {{ prov.queue?.detalle }}
-                  </div>
-                }
-              }
-
-              @if (prov.brokerRegistered) {
-                <p class="small mb-2">
-                  Registrada el {{ prov.provisionedAt | date: 'short' }} · usuario
-                  <code class="font-monospace">{{ prov.mqttUsername }}</code>
-                </p>
-                <button
-                  type="button"
-                  class="btn btn-sm btn-outline-danger"
-                  [disabled]="provisionando()"
-                  (click)="revocarCredencial()"
-                >
-                  Revocar credencial
-                </button>
-              } @else {
-                <p class="small text-muted mb-2">
-                  Sin registrar: el equipo <strong>no puede conectarse</strong>
-                  al broker.
-                </p>
-                <button
-                  type="button"
-                  class="btn btn-sm btn-brand"
-                  [disabled]="provisionando()"
-                  (click)="pedirProvision()"
-                >
-                  Registrar en el broker
-                </button>
-                @if (prov.pendingCommand) {
-                  <details class="mt-2">
-                    <summary class="small text-muted">
-                      Hacerlo a mano en el servidor
-                    </summary>
-                    <code class="d-block bg-light rounded p-2 small text-break mt-1">
-                      {{ prov.pendingCommand }}
-                    </code>
-                  </details>
-                }
-              }
-            </div>
-          }
-        </div>
-      </div>
-    </div>
-
-    <div class="col-12 col-xl-7">
-      <!-- Sin `h-100`: debajo del mapa van los botones de guardar, y con el
-           100% el mapa se comía el alto de la tarjeta y los empujaba fuera. -->
-      <div class="card border">
-        <div class="card-header bg-white border-bottom">
-          <span class="fw-semibold small"><i class="icon-map me-1"></i> Ubicación</span>
-        </div>
-        <div class="card-body">
-          <!--
-            Editable para gestores y técnicos: el que subió a la escalera tiene
-            que poder corregir el punto. Con permiso, el mapa se clickea aunque
-            la alarma todavía no tenga coordenadas — si no, no habría forma de
-            cargárselas desde acá.
-          -->
-          @if (puedeEditarUbicacion()) {
-            <p class="text-muted small mb-2">
-              Hacé click en el mapa para corregir dónde está la alarma.
-              @if (markers().length === 0) {
-                <strong>Todavía no tiene coordenadas cargadas.</strong>
-              }
-            </p>
-
-            <app-map
-              [markers]="markers()"
-              [center]="centroMapa()"
-              [zoom]="16"
-              [clickable]="true"
-              (positionChange)="setUbicacion($event)"
-            />
-
-            <div class="d-flex align-items-center gap-2 mt-2 flex-wrap">
-              @if (nuevaUbicacion(); as nueva) {
-                <span class="small font-monospace">
-                  <i class="icon-map-pin text-brand me-1"></i>
-                  {{ nueva.latitude }}, {{ nueva.longitude }}
-                </span>
-                <button
-                  type="button"
-                  class="btn btn-sm btn-brand"
-                  [disabled]="savingUbicacion()"
-                  (click)="saveUbicacion()"
-                >
-                  @if (savingUbicacion()) {
-                    <span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>
-                    Guardando…
-                  } @else {
-                    Guardar ubicación
-                  }
-                </button>
-                <button
-                  type="button"
-                  class="btn btn-sm btn-outline-secondary"
-                  [disabled]="savingUbicacion()"
-                  (click)="nuevaUbicacion.set(null)"
-                >
-                  Descartar
-                </button>
-              }
-            </div>
-
-            @if (mensaje()) {
-              <p class="small text-success mb-0 mt-2">
-                <i class="icon-circle-check me-1"></i>{{ mensaje() }}
-              </p>
-            }
-            @if (errorUbicacion()) {
-              <p class="small text-emergency mb-0 mt-2">
-                <i class="icon-triangle-alert me-1"></i>{{ errorUbicacion() }}
-              </p>
-            }
-          } @else if (markers().length > 0) {
-            <app-map [markers]="markers()" [center]="centroMapa()" [zoom]="16" />
-          } @else {
-            <div class="text-center text-muted py-5 bg-light rounded">
-              <i class="icon-map-pin d-block mb-2" style="font-size: 2rem"></i>
-              Esta alarma no tiene coordenadas cargadas.
-            </div>
-          }
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Bitácora del técnico -->
-  <div class="card border mt-3" [class.d-none]="tab() !== 'ficha'">
-    <div
-      class="card-header bg-white border-bottom d-flex align-items-center justify-content-between"
-    >
-      <span class="fw-semibold small"><i class="icon-wrench me-1"></i> Mantenimientos</span>
-      <span class="badge text-bg-light border">{{ maintenances().length }}</span>
-    </div>
-
-    <div class="table-responsive">
-      <table class="table table-hover align-middle mb-0">
-        <thead>
-          <tr class="small text-muted">
-            <th scope="col">Tipo</th>
-            <th scope="col">Estado</th>
-            <th scope="col">Descripción</th>
-            <th scope="col">Realizado</th>
-            <th scope="col">Técnico</th>
-          </tr>
-        </thead>
-        <tbody>
-          @for (m of maintenances(); track m.id) {
-            <tr>
-              <td class="small fw-medium">{{ m.type }}</td>
-              <td>
-                @switch (m.status) {
-                  @case ('DONE') {
-                    <span class="badge bg-success-soft text-success border">Hecho</span>
-                  }
-                  @case ('PENDING') {
-                    <span class="badge bg-warning-soft text-warning border">Pendiente</span>
-                  }
-                  @default {
-                    <span class="badge bg-light text-muted border">{{ m.status }}</span>
-                  }
-                }
-              </td>
-              <td class="small text-muted">{{ m.description ?? '—' }}</td>
-              <td class="small text-muted">
-                {{ m.performedAt ? (m.performedAt | date: 'dd/MM/yyyy') : '—' }}
-              </td>
-              <td class="small text-muted">{{ m.user?.name ?? '—' }}</td>
-            </tr>
-          } @empty {
-            <tr>
-              <td colspan="5" class="text-muted small text-center py-4">
-                Sin mantenimientos registrados.
-              </td>
-            </tr>
-          }
-        </tbody>
-      </table>
-    </div>
-  </div>
-
-  <!-- ══ ESTADO EN VIVO ═══════════════════════════════════════════════════
-       Lo escribe ÚNICAMENTE el servicio de alarmas. La web solo lee: acá no
-       hay un solo control que escriba nada.
-  -->
-  @if (tab() === 'estado') {
-    @if (nuncaConecto()) {
-      <!--
-        No es "falta el dato": es que el equipo todavía no habló nunca. Se dice
-        así porque es información útil para fábrica, no un hueco.
-      -->
-      <div class="card border">
-        <div class="card-body text-center text-muted py-5">
-          <i class="icon-radio-tower d-block mb-2" style="font-size: 2rem"></i>
-          <p class="mb-1"><strong class="text-body">Esta alarma nunca conectó.</strong></p>
-          <p class="small mb-0">
-            El estado en vivo aparece cuando el equipo se conecta al broker por primera vez. Hasta
-            entonces no hay nada que mostrar — y eso ya dice algo.
-          </p>
-        </div>
-      </div>
-    } @else if (state(); as vivo) {
-      @if (datoDudoso()) {
-        <!--
-          Un "online" congelado es peor que no tener dato, porque se le cree. Si
-          el equipo figura conectado pero hace 15 minutos que no habla, o se cayó
-          sin avisar o se cayó el gateway y nadie lo marcó offline.
-        -->
-        <div class="alert bg-warning-soft border-0 py-2 small">
-          <i class="icon-triangle-alert me-1"></i>
-          <strong>Este dato puede estar viejo.</strong>
-          El equipo figura conectado pero hace {{ minutosDeSilencio() }} minutos que no reporta.
-        </div>
-      }
-
-      <div class="row g-3">
-        <!-- Conexión y alarma: lo que mira el monitoreo -->
-        <div class="col-12 col-lg-6">
-          <div class="card border h-100">
-            <div class="card-header bg-white border-bottom">
-              <span class="fw-semibold small"><i class="icon-heart-pulse me-1"></i> Conexión</span>
-            </div>
-            <div class="card-body">
               <dl class="row mb-0 small">
-                <dt class="col-5 text-muted fw-normal">Estado</dt>
+                <dt class="col-5 text-muted fw-normal">Instalada</dt>
                 <dd class="col-7">
-                  @if (vivo.online) {
-                    <span class="badge bg-success-soft text-success border">Online</span>
-                  } @else if (durmiendoHasta(); as hasta) {
-                    <!-- Durmiendo NO es caído: avisó que se iba y hasta cuándo. -->
-                    <span class="badge bg-light text-muted border">
-                      Durmiendo hasta las {{ hasta | date: 'HH:mm' }}
-                    </span>
-                  } @else {
-                    <span class="badge bg-light text-muted border">Offline</span>
-                  }
-                </dd>
-
-                <dt class="col-5 text-muted fw-normal">Modo de alarma</dt>
-                <dd class="col-7">
-                  @if (vivo.alarmStatus && vivo.alarmStatus !== 'off') {
-                    <span class="badge bg-emergency-soft text-emergency border">
-                      {{ vivo.alarmStatus }}
-                    </span>
-                  } @else {
-                    <span class="text-muted">{{ vivo.alarmStatus ?? '—' }}</span>
-                  }
-                </dd>
-
-                <dt class="col-5 text-muted fw-normal">Modo de energía</dt>
-                <dd class="col-7 font-monospace">{{ vivo.powerMode ?? '—' }}</dd>
-
-                <dt class="col-5 text-muted fw-normal">Habló</dt>
-                <dd class="col-7">
-                  @if (vivo.lastSeen) {
-                    {{ vivo.lastSeen | date: 'dd/MM/yy HH:mm:ss' }}
-                    <span class="text-muted">({{ minutosDeSilencio() }} min)</span>
-                  } @else {
-                    —
-                  }
+                  {{ alarma.installedAt ? (alarma.installedAt | date: 'dd/MM/yyyy') : '—' }}
                 </dd>
               </dl>
             </div>
           </div>
         </div>
+      </div>
 
-        <!-- Alimentación: el dato de mantenimiento de un poste -->
-        <div class="col-12 col-lg-6">
-          <div class="card border h-100">
-            <div class="card-header bg-white border-bottom">
-              <span class="fw-semibold small"><i class="icon-power me-1"></i> Alimentación</span>
-            </div>
-            <div class="card-body">
-              <dl class="row mb-0 small">
-                <dt class="col-5 text-muted fw-normal">Batería</dt>
-                <dd class="col-7">
-                  @if (vivo.vbat === null) {
-                    <span class="text-muted">—</span>
-                  } @else {
-                    <span class="font-monospace">{{ vivo.vbat }} V</span>
-                    @switch (nivelBateria()) {
-                      @case ('critica') {
-                        <span class="badge bg-emergency-soft text-emergency border ms-1"
-                          >Crítica</span
-                        >
-                      }
-                      @case ('baja') {
-                        <span class="badge bg-warning-soft text-warning border ms-1">Baja</span>
-                      }
+      <div class="col-12 col-xl-7">
+        <!-- Sin `h-100`: debajo del mapa van los botones de guardar, y con el
+             100% el mapa se comía el alto de la tarjeta y los empujaba fuera. -->
+        <div class="card border">
+          <div class="card-header bg-white border-bottom">
+            <span class="fw-semibold small"><i class="icon-map me-1"></i> Dónde está</span>
+          </div>
+          <div class="card-body">
+            <!--
+              Editable para gestores y técnicos: el que subió a la escalera tiene
+              que poder corregir el punto. Con permiso, el mapa se clickea aunque
+              la alarma todavía no tenga coordenadas — si no, no habría forma de
+              cargárselas desde acá.
+            -->
+            @if (puedeEditarUbicacion()) {
+              <p class="text-muted small mb-2">
+                Hacé click en el mapa para corregir dónde está la alarma.
+                @if (markers().length === 0) {
+                  <strong>Todavía no tiene coordenadas cargadas.</strong>
+                }
+              </p>
+
+              <app-map
+                [markers]="markers()"
+                [center]="centroMapa()"
+                [zoom]="16"
+                [clickable]="true"
+                (positionChange)="setUbicacion($event)"
+              />
+
+              <div class="d-flex align-items-center gap-2 mt-2 flex-wrap">
+                @if (nuevaUbicacion(); as nueva) {
+                  <span class="small font-monospace">
+                    <i class="icon-map-pin text-brand me-1"></i>
+                    {{ nueva.latitude }}, {{ nueva.longitude }}
+                  </span>
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-brand"
+                    [disabled]="savingUbicacion()"
+                    (click)="saveUbicacion()"
+                  >
+                    @if (savingUbicacion()) {
+                      <span
+                        class="spinner-border spinner-border-sm me-1"
+                        aria-hidden="true"
+                      ></span>
+                      Guardando…
+                    } @else {
+                      Guardar ubicación
+                    }
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-outline-secondary"
+                    [disabled]="savingUbicacion()"
+                    (click)="nuevaUbicacion.set(null)"
+                  >
+                    Descartar
+                  </button>
+                }
+              </div>
+
+              @if (mensaje()) {
+                <p class="small text-success mb-0 mt-2">
+                  <i class="icon-circle-check me-1"></i>{{ mensaje() }}
+                </p>
+              }
+              @if (errorUbicacion()) {
+                <p class="small text-emergency mb-0 mt-2">
+                  <i class="icon-triangle-alert me-1"></i>{{ errorUbicacion() }}
+                </p>
+              }
+            } @else if (markers().length > 0) {
+              <app-map [markers]="markers()" [center]="centroMapa()" [zoom]="16" />
+            } @else {
+              <div class="text-center text-muted py-5 bg-light rounded">
+                <i class="icon-map-pin d-block mb-2" style="font-size: 2rem"></i>
+                Esta alarma no tiene coordenadas cargadas.
+              </div>
+            }
+
+            @if (alarma.latitude !== null && alarma.longitude !== null) {
+              <p class="small text-muted font-monospace mb-0 mt-2">
+                {{ alarma.latitude }}, {{ alarma.longitude }}
+              </p>
+            }
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bitácora del técnico -->
+    <div class="card border mt-3">
+      <div
+        class="card-header bg-white border-bottom d-flex align-items-center justify-content-between"
+      >
+        <span class="fw-semibold small"><i class="icon-wrench me-1"></i> Mantenimientos</span>
+        <span class="badge text-bg-light border">{{ maintenances().length }}</span>
+      </div>
+
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+          <thead>
+            <tr class="small text-muted">
+              <th scope="col">Tipo</th>
+              <th scope="col">Estado</th>
+              <th scope="col">Descripción</th>
+              <th scope="col">Realizado</th>
+              <th scope="col">Técnico</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (m of maintenances(); track m.id) {
+              <tr>
+                <td class="small fw-medium">{{ m.type }}</td>
+                <td>
+                  @switch (m.status) {
+                    @case ('DONE') {
+                      <span class="badge bg-success-soft text-success border">Hecho</span>
+                    }
+                    @case ('PENDING') {
+                      <span class="badge bg-warning-soft text-warning border">Pendiente</span>
+                    }
+                    @default {
+                      <span class="badge bg-light text-muted border">{{ m.status }}</span>
                     }
                   }
-                </dd>
-
-                <dt class="col-5 text-muted fw-normal">Panel solar</dt>
-                <dd class="col-7 font-monospace">
-                  {{ vivo.vpanel !== null ? vivo.vpanel + ' V' : '—' }}
-                </dd>
-
-                <dt class="col-5 text-muted fw-normal">Fuente</dt>
-                <dd class="col-7 font-monospace">
-                  {{ vivo.vfuente !== null ? vivo.vfuente + ' V' : '—' }}
-                </dd>
-              </dl>
-
-              @if (vivo.vbat === null) {
-                <p class="text-muted small mb-0 mt-2">
-                  Los voltajes llegan con la telemetría, que el equipo manda cada 5 minutos.
-                </p>
-              }
-            </div>
-          </div>
-        </div>
-
-        <!-- Lo que el equipo tiene cargado -->
-        <div class="col-12">
-          <div class="card border">
-            <div class="card-header bg-white border-bottom">
-              <span class="fw-semibold small"><i class="icon-cpu me-1"></i> Qué tiene cargado</span>
-            </div>
-            <div class="card-body">
-              <dl class="row mb-0 small">
-                <dt class="col-6 col-md-3 text-muted fw-normal">Firmware</dt>
-                <dd class="col-6 col-md-3 font-monospace">{{ vivo.fw ?? '—' }}</dd>
-
-                <dt class="col-6 col-md-3 text-muted fw-normal">Configuración</dt>
-                <dd
-                  class="col-6 col-md-3 font-monospace"
-                  title="Versión de config que el equipo dice estar corriendo"
-                >
-                  v{{ vivo.cfgV }}
-                </dd>
-
-                <dt class="col-6 col-md-3 text-muted fw-normal">Base RF</dt>
-                <dd
-                  class="col-6 col-md-3 font-monospace"
-                  title="Generación de los códigos de control cargados"
-                >
-                  gen {{ vivo.rfGen }}
-                </dd>
-
-                <dt class="col-6 col-md-3 text-muted fw-normal">Últ. latido</dt>
-                <dd class="col-6 col-md-3">
-                  {{ vivo.lastHeartbeat ? (vivo.lastHeartbeat | date: 'dd/MM/yy HH:mm:ss') : '—' }}
-                </dd>
-              </dl>
-            </div>
-          </div>
-        </div>
+                </td>
+                <td class="small text-muted">{{ m.description ?? '—' }}</td>
+                <td class="small text-muted">
+                  {{ m.performedAt ? (m.performedAt | date: 'dd/MM/yyyy') : '—' }}
+                </td>
+                <td class="small text-muted">{{ m.user?.name ?? '—' }}</td>
+              </tr>
+            } @empty {
+              <tr>
+                <td colspan="5" class="text-muted small text-center py-4">
+                  Sin mantenimientos registrados.
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
       </div>
-
-      <p class="text-muted small mt-2 mb-0">
-        <i class="icon-refresh-cw me-1"></i>
-        Se actualiza solo cada 20 segundos.
-        @if (ultimaLectura(); as leido) {
-          Última lectura: {{ leido | date: 'HH:mm:ss' }}.
-        }
-      </p>
-    } @else {
-      <!--
-        Conectó alguna vez pero no hay fila de estado: es el caso de hoy, con el
-        servicio de alarmas todavía sin escribir en la base.
-      -->
-      <div class="card border">
-        <div class="card-body text-center text-muted py-5">
-          <i class="icon-radio-tower d-block mb-2" style="font-size: 2rem"></i>
-          <p class="mb-1"><strong class="text-body">Sin datos de estado.</strong></p>
-          <p class="small mb-0">
-            Los reporta el servicio de alarmas, el programa que habla con los equipos por MQTT. El
-            puente con la base ya está hecho de este lado; falta que ese servicio empiece a
-            escribir.
-          </p>
-        </div>
-      </div>
-    }
-  }
+    </div>
+  </div>
 }
 
 <!-- ══ CONFIGURACIÓN ════════════════════════════════════════════════════

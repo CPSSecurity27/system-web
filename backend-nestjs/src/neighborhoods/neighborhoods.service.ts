@@ -26,6 +26,7 @@ import {
   UpdateNeighborhoodQuotasDto,
 } from './dto/neighborhood.dto';
 import { Neighborhood } from './entities/neighborhood.entity';
+import { codigoLibreDeBarrio } from './neighborhood-code';
 
 /**
  * Barrios (v2): el molde único de las dos líneas de negocio.
@@ -169,6 +170,12 @@ export class NeighborhoodsService {
     const neighborhood = await this.neighborhoods.save(
       this.neighborhoods.create({
         name: dto.name,
+        // El código corto que ve el panel (`central.grupo`). Se DERIVA del
+        // nombre: no se le pide a nadie que invente un identificador de 15
+        // caracteres, y el desempate numérico lo resuelve solo.
+        code: await codigoLibreDeBarrio(dto.name, (code) =>
+          this.neighborhoods.existsBy({ code }),
+        ),
         localityId: dto.localityId,
         latitude: dto.latitude,
         longitude: dto.longitude,

@@ -1,0 +1,220 @@
+/*
+ * Etiqueta 90 × 45 mm, blanco y negro.
+ *
+ * Todo en MILÍMETROS: es un objeto físico, no una pantalla. En px habría que
+ * recalcular por cada DPI de impresora, y una etiqueta que sale 3 mm más chica
+ * no entra en el adhesivo.
+ *
+ * Cero grises y cero color a propósito: en una térmica monocromática un fondo
+ * lleno sale veteado si el cabezal está gastado, y los grises se dithean.
+ */
+
+.etq {
+  width: 90mm;
+  height: 45mm;
+  background: #fff;
+  color: #000;
+  font-family: Arial, Helvetica, sans-serif;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.etq * {
+  box-sizing: border-box;
+}
+
+.etq-mono {
+  font-family: 'Courier New', Courier, monospace;
+}
+
+/* ── Encabezado ─────────────────────────────────────────────────── */
+
+.etq-head {
+  padding: 1.4mm 2.6mm 1mm;
+  border-bottom: 0.4mm solid #000;
+}
+
+.etq-head-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.etq-marca {
+  font-size: 1.9mm;
+  font-weight: 800;
+  letter-spacing: 0.35mm;
+}
+
+.etq-placa {
+  font-size: 2.1mm;
+}
+
+.etq-serial {
+  font-size: 4.3mm;
+  font-weight: 700;
+  letter-spacing: -0.05mm;
+  line-height: 1.15;
+}
+
+/* ── Las dos mitades ────────────────────────────────────────────── */
+
+.etq-cuerpo {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.etq-mitad {
+  flex: 1;
+  padding: 1.5mm 2.4mm 1.8mm;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.etq-div {
+  width: 0.25mm;
+  background: #000;
+}
+
+/*
+ * Altura FIJA para el encabezado de cada mitad.
+ *
+ * La izquierda tiene un renglón más que la derecha (el SSID escrito), así que
+ * sin esto las dos filas de abajo arrancan a distinta altura y los dos QR
+ * quedan desalineados — se nota de inmediato y hace ver la etiqueta torcida.
+ */
+.etq-mitad-head {
+  height: 7mm;
+  flex-shrink: 0;
+}
+
+.etq-tit {
+  font-size: 2.1mm;
+  font-weight: 800;
+  letter-spacing: 0.18mm;
+  text-transform: uppercase;
+  text-align: center;
+}
+
+/*
+ * El SSID va completo y en UN renglón: si el QR no lee, es lo único que le
+ * permite al técnico tipear la red a mano.
+ */
+.etq-ssid {
+  font-size: 2mm;
+  text-align: center;
+  white-space: nowrap;
+  margin-top: 0.5mm;
+}
+
+/*
+ * Centrada, no pegada arriba: el QR mide 16 mm fijos y la fila ~24 mm, así que
+ * alinearla al tope dejaba una banda muerta al pie de la etiqueta. Como las dos
+ * mitades tienen el mismo alto de encabezado, centrar mantiene los dos QR a la
+ * misma altura.
+ */
+.etq-fila {
+  display: flex;
+  gap: 1.6mm;
+  flex: 1;
+  align-items: center;
+}
+
+/* ── QR ─────────────────────────────────────────────────────────── */
+
+/*
+ * 16 mm los dos, en bordes opuestos. Del mismo tamaño porque ninguno de los dos
+ * es "el secundario", y separados ~58 mm porque dos QR juntos se pisan: la
+ * cámara agarra el que quiere y el técnico no sabe cuál leyó.
+ */
+.etq-qr {
+  width: 16mm;
+  flex-shrink: 0;
+}
+
+.etq-qr-img {
+  width: 16mm;
+  height: 16mm;
+}
+
+.etq-qr-img :global(svg),
+.etq-qr-img svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.etq-qr-lab {
+  font-size: 1.8mm;
+  font-weight: 800;
+  letter-spacing: 0.2mm;
+  text-transform: uppercase;
+  text-align: center;
+  margin-top: 0.6mm;
+}
+
+/* ── Datos ──────────────────────────────────────────────────────── */
+
+.etq-datos {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  /* Los 16 mm del QR + el gap dejan ~22 mm: sin esto el bloque de datos se
+     estira y "CREDENCIALES PORTAL" se monta sobre el divisor. */
+  overflow: hidden;
+}
+
+/*
+ * 1.5 mm y poco tracking porque el rótulo más largo —CREDENCIALES PORTAL, 19
+ * caracteres— tiene que entrar en los ~22 mm que quedan al lado del QR. Con el
+ * tamaño anterior se desbordaba hasta tocar el divisor.
+ */
+.etq-cap {
+  font-size: 1.5mm;
+  font-weight: 700;
+  letter-spacing: 0.08mm;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.etq-ip {
+  font-size: 2.7mm;
+  font-weight: 700;
+  margin: 0.3mm 0 0.8mm;
+}
+
+.etq-kv {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1.5mm;
+}
+
+.etq-kv-linea {
+  border-top: 0.2mm solid #000;
+  margin-top: 0.5mm;
+  padding-top: 0.5mm;
+}
+
+.etq-usuario {
+  font-size: 2.7mm;
+  font-weight: 700;
+}
+
+/*
+ * La clave y el código de reclamo son los DOS únicos datos que alguien tipea a
+ * mano, y quedan del mismo cuerpo, uno en cada mitad.
+ */
+.etq-clave,
+.etq-reclamo {
+  font-size: 4mm;
+  font-weight: 800;
+  letter-spacing: 0.15mm;
+  line-height: 1.05;
+}

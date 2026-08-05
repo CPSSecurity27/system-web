@@ -585,3 +585,63 @@ body {
     transform: scale(1.35);
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * IMPRESIÓN DE ETIQUETAS
+ *
+ * La etiqueta del equipo se imprime desde la misma pantalla que la muestra, sin
+ * abrir una ventana nueva ni generar un PDF. Para eso, al imprimir se esconde
+ * TODO menos el contenedor de la etiqueta.
+ *
+ * Se usa `visibility` y no `display` para ocultar: con `display:none` sobre los
+ * ancestros, el elemento visible adentro también desaparece. `visibility` se
+ * hereda pero se puede volver a prender en el descendiente, que es justo lo que
+ * hace falta acá.
+ * ------------------------------------------------------------------------- */
+
+.solo-impresion {
+  display: none;
+}
+
+@media print {
+  /* 90 × 45 mm exactos y sin márgenes: cualquier margen del navegador corre la
+     etiqueta y deja de coincidir con el adhesivo. */
+  @page {
+    size: 90mm 45mm;
+    margin: 0;
+  }
+
+  html,
+  body {
+    width: 90mm;
+    height: 45mm;
+    margin: 0;
+    padding: 0;
+    background: #fff;
+  }
+
+  body * {
+    visibility: hidden;
+  }
+
+  .solo-impresion {
+    display: block;
+  }
+
+  .solo-impresion,
+  .solo-impresion * {
+    visibility: visible;
+  }
+
+  .solo-impresion {
+    position: absolute;
+    inset: 0;
+  }
+
+  /* Los fondos y bordes de la etiqueta no son decoración: el filete del
+     encabezado y el divisor de las mitades son la estructura. */
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}

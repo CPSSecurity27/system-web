@@ -516,7 +516,16 @@ CREATE TABLE device (
   -- Provisioning (nace en fábrica CPS)
   claim_code      TEXT,                     -- el técnico lo usa para reclamar
   manufactured_at TIMESTAMPTZ,
-  tested          BOOLEAN NOT NULL DEFAULT false,
+  -- Prueba funcional del equipo YA CONECTADO (sirena, RF, sensores) y visto
+  -- bueno para que salga de fábrica. Fecha y autor, no booleanos: un tilde no
+  -- dice cuándo ni quién, y sin fecha no se ordena contra los otros hitos.
+  --
+  -- LISTO no se deriva de los otros tres: que estén cumplidos no es lo mismo que
+  -- alguien se haga cargo de que el equipo puede despacharse.
+  tested_at       TIMESTAMPTZ,
+  tested_by       INT REFERENCES app_user(id) ON DELETE SET NULL,
+  ready_at        TIMESTAMPTZ,
+  ready_by        INT REFERENCES app_user(id) ON DELETE SET NULL,
   imei            TEXT,
   iccid           TEXT,
   mac             TEXT,                     -- MAC STA: 12 hex MAYÚSCULAS, sin ":"
@@ -524,18 +533,36 @@ CREATE TABLE device (
   board_seq       INT,                      -- 43 para "ALOY0043"; el string se compone
 
   -- Cuándo se cargó la credencial MQTT en el broker. NULL = está en inventario
-  -- pero TODAVÍA NO puede conectarse. Hoy nadie la escribe: la derivación
-  -- HMAC-SHA256(SALT_MQTT, MAC) está bloqueada porque falta el salt de
-  -- producción del lado servidor (punto abierto PA4 del GtD), así que el alta
-  -- solo muestra el comando pendiente. La columna nace igual para no migrar
-  -- filas después y para poder listar los equipos a medio provisionar.
+  -- pero TODAVÍA NO puede conectarse. La escribe gtd.confirm_manufacture (o
+  -- confirm_provisioning) cuando el provisioner confirma que Mosquitto la
+  -- aceptó: el hito solo se mueve con un hecho, no con una intención.
   mqtt_provisioned_at TIMESTAMPTZ,
   mqtt_provisioned_by INT REFERENCES app_user(id) ON DELETE SET NULL,
 
+  -- Credenciales del PORTAL LOCAL del equipo (AP abierto, 192.168.4.1), que no
+  -- son las del broker: djb2_xor(SALT_del_rol, MAC SoftAP) -> 6 hex. Las deriva
+  -- y las CIFRA el provisioner (AES-256-GCM, base64(nonce||ct||tag)); la web
+  -- solo descifra para mostrar. Se guardan —aunque sean recalculables— para que
+  -- reimprimir una etiqueta no dependa de que el provisioner esté vivo.
+  --
+  -- `admin` es del técnico y va IMPRESA en la etiqueta. `cps` es de fábrica y
+  -- JAMÁS se imprime: se muestra detrás de un permiso aparte y cada lectura deja
+  -- audit_log. Los salts NO viven acá ni en la web: solo en el provisioner.
+  portal_admin_enc  TEXT,
+  portal_cps_enc    TEXT,
+  portal_derived_at TIMESTAMPTZ,
+
   -- Hitos de puesta en marcha. La ETAPA del equipo se DERIVA del último hito
-  -- alcanzado (creado -> provisionado -> etiquetado -> 1ª conexión); no hay
-  -- columna de etapa porque sería un segundo lugar donde vive el mismo dato,
-  -- libre de contradecir a las fechas.
+  -- alcanzado; no hay columna de etapa porque sería un segundo lugar donde vive
+  -- el mismo dato, libre de contradecir a las fechas.
+  --
+  --   FABRICADO -> CONECTADO -> TESTEADO -> LISTO
+  --
+  -- Fabricar y provisionar dejaron de ser dos peldaños distintos el 2026-08-04:
+  -- con el alta atómica ocurren en el mismo instante. Y `labeled_at` dejó de ser
+  -- etapa el 2026-08-05 —imprimir es una tarea de fábrica, no un avance del
+  -- equipo— aunque se sigue guardando para poder preguntar a cuáles de una tanda
+  -- les falta la etiqueta.
   labeled_at      TIMESTAMPTZ,              -- etiqueta impresa y pegada
   labeled_by      INT REFERENCES app_user(id) ON DELETE SET NULL,
   -- La primera conexión es un hecho OBSERVADO por el broker (regla 5: el
@@ -549,6 +576,11 @@ CREATE TABLE device (
   -- (NULL = fábrica CPS). Instalado, pertenece a un barrio.
   organization_id INT REFERENCES account(id) ON DELETE RESTRICT,
   neighborhood_id INT REFERENCES neighborhood(id) ON DELETE RESTRICT,
+  -- GPS OBLIGATORIO en un equipo INSTALADO (chk_device_gps), NULL en inventario.
+  -- El tablero de monitoreo es un mapa: una alarma sin punto es una alarma que
+  -- nadie va a mirar cuando suene. Es un CHECK y no NOT NULL porque un equipo en
+  -- una caja no tiene ubicación que declarar, y exigírsela obligaría a
+  -- inventarla — mismo criterio que chk_device_custody con el barrio.
   latitude        DOUBLE PRECISION,
   longitude       DOUBLE PRECISION,
   installed_at    TIMESTAMPTZ,
@@ -565,6 +597,20 @@ CREATE TABLE device (
   reference       TEXT,                     -- la esquina, entre qué calles
   power_point     TEXT,                     -- de qué luminaria o tablero cuelga
   install_notes   TEXT,                     -- lo que no entra en los anteriores
+
+  -- PAPELERA. Sacado de circulación: no aparece en ninguna lista, pero sigue
+  -- existiendo y se puede reactivar o borrar definitivamente.
+  --
+  -- Eje APARTE de `status`, no un estado más: `status` dice en qué punto del
+  -- ciclo de vida está el equipo, esto dice si alguien lo sacó. Tampoco podría
+  -- ser RETIRED, porque chk_device_custody exige barrio para todo lo que no está
+  -- en INVENTORY y un equipo de fábrica no tiene ninguno.
+  --
+  -- Remover REVOCA la credencial del broker y, si estaba instalado, lo
+  -- desvincula del barrio. Reactivar lo devuelve al stock de fábrica con un
+  -- claim code nuevo, no al barrio donde estaba.
+  removed_at      TIMESTAMPTZ,
+  removed_by      INT REFERENCES app_user(id) ON DELETE SET NULL,
 
   created_by      INT REFERENCES app_user(id) ON DELETE SET NULL,
   updated_by      INT REFERENCES app_user(id) ON DELETE SET NULL,
@@ -588,6 +634,33 @@ CREATE TABLE device (
   ),
   CONSTRAINT chk_device_board_seq CHECK (
     board_seq IS NULL OR (board_seq BETWEEN 1 AND 9999)
+  ),
+  -- Instalada <=> con punto en el mapa. En inventario, sin punto.
+  CONSTRAINT chk_device_gps CHECK (
+    status = 'INVENTORY'
+    OR (latitude IS NOT NULL AND longitude IS NOT NULL)
+  ),
+  CONSTRAINT chk_device_removed_by CHECK (
+    (removed_at IS NULL AND removed_by IS NULL)
+    OR (removed_at IS NOT NULL AND removed_by IS NOT NULL)
+  ),
+  -- Un hito va con su autor o no va: "lo probó alguien" sin nombre no sirve
+  -- cuando hay que preguntarle qué probó.
+  CONSTRAINT chk_device_tested_by CHECK (
+    (tested_at IS NULL AND tested_by IS NULL)
+    OR (tested_at IS NOT NULL AND tested_by IS NOT NULL)
+  ),
+  CONSTRAINT chk_device_ready_by CHECK (
+    (ready_at IS NULL AND ready_by IS NULL)
+    OR (ready_at IS NOT NULL AND ready_by IS NOT NULL)
+  ),
+  -- Las tres del portal van juntas o no va ninguna: media derivación guardada
+  -- es una etiqueta que se imprime a medias.
+  CONSTRAINT chk_device_portal_creds CHECK (
+    (portal_derived_at IS NULL
+       AND portal_admin_enc IS NULL AND portal_cps_enc IS NULL)
+    OR (portal_derived_at IS NOT NULL
+       AND portal_admin_enc IS NOT NULL AND portal_cps_enc IS NOT NULL)
   ),
   -- Una altura de 0 o de 300 metros es un error de tipeo, no un dato.
   CONSTRAINT chk_device_height CHECK (
@@ -1054,9 +1127,12 @@ CREATE INDEX ix_uplink_raw_mac ON gtd.uplink_raw(mac, received_at DESC);
 --        guardan: no hace falta tabla. La función existe para que la intención
 --        quede explícita y se pueda cambiar el almacenamiento sin tocar la web.
 --     gtd.enqueue_provisioning(device_id, op, user_id) -> bigint
---        Pide el alta ('provision') o la baja ('revoke') de la credencial del
---        equipo en el broker. Encolar dos veces la misma op devuelve el id que
---        ya estaba: el script es idempotente y repetir el trabajo no suma.
+--        Pide el alta ('provision'), la baja ('revoke') o la FABRICACIÓN
+--        ('manufacture') del equipo. Encolar dos veces la misma op devuelve el
+--        id que ya estaba: el script es idempotente y repetir el trabajo no suma.
+--        'manufacture' es la op del alta ATÓMICA: registra en el broker Y deriva
+--        las credenciales del portal local en un solo viaje, porque la web
+--        espera una confirmación y si no llega borra el equipo.
 --
 --   PROVISIONER (cps_provisioner) — proceso APARTE del GtD, con privilegios
 --   propios. El GtD está encerrado (NoNewPrivileges, ProtectSystem=strict)
@@ -1070,10 +1146,23 @@ CREATE INDEX ix_uplink_raw_mac ON gtd.uplink_raw(mac, received_at DESC);
 --        NULL si era un revoke). Con cualquier otra cosa marca la fila `failed`
 --        con el detalle y NO TOCA `device`: el hito solo se mueve cuando el
 --        broker aceptó de verdad. Devuelve 'noop' si la fila ya estaba cerrada.
+--     gtd.confirm_manufacture(id, res, admin_enc, cps_enc, det) -> text
+--        La confirmación de la op 'manufacture'. Con res='ok' escribe el hito
+--        MQTT Y las dos credenciales del portal CIFRADAS (device.portal_*_enc).
+--        Un 'ok' sin las dos credenciales es un error, no un alta a medias.
+--        Aparte de confirm_provisioning a propósito: escribe columnas que
+--        aquella no debería poder tocar nunca.
 --
 --   gtd.provisioning_queue es HISTÓRICA (una fila por operación, no por equipo)
---   y no guarda ninguna password: la credencial se deriva en el momento con el
---   SALT_MQTT, que vive solo en el entorno del provisioner.
+--   y no guarda ninguna password: la credencial MQTT se deriva en el momento con
+--   el SALT_MQTT, que vive solo en el entorno del provisioner. Las del PORTAL sí
+--   se guardan, pero en `device` y cifradas con AES-256-GCM — nunca pasan en
+--   claro por la cola, así que tampoco quedan en claro en el WAL.
+--
+--   No hay canal de VUELTA: después de encolar un 'manufacture' la web SONDEA la
+--   fila hasta que se cierra. Un LISTEN le ahorraría milisegundos a cambio de una
+--   conexión dedicada viva para siempre, y las altas son de a una y a ritmo
+--   humano. Sondear, además, no puede perderse un evento.
 --
 -- Canales NOTIFY (payload = MAC): gtd_commands, gtd_config -> los escucha el
 -- GtD; app_panel_state -> lo escucha la web.
