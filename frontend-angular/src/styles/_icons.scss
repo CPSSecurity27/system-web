@@ -1,6 +1,6 @@
 // GENERADO POR scripts/generar-iconos.py — NO EDITAR A MANO.
 //
-// Subset de Lucide con los 82 íconos que el panel usa hoy.
+// Subset de Lucide con los 81 íconos que el panel usa hoy.
 // Para agregar uno: usalo en el código y volvé a correr el script.
 
 @font-face {
@@ -47,7 +47,6 @@
 .icon-clipboard-list::before { content: "\e086"; }
 .icon-cpu::before { content: "\e0a9"; }
 .icon-eye::before { content: "\e0ba"; }
-.icon-eye-off::before { content: "\e0bb"; }
 .icon-fence::before { content: "\e582"; }
 .icon-file-text::before { content: "\e0cc"; }
 .icon-flame::before { content: "\e0d2"; }
@@ -64,7 +63,6 @@
 .icon-land-plot::before { content: "\e528"; }
 .icon-landmark::before { content: "\e23a"; }
 .icon-list::before { content: "\e106"; }
-.icon-list-ordered::before { content: "\e1d1"; }
 .icon-lock::before { content: "\e10b"; }
 .icon-log-out::before { content: "\e10e"; }
 .icon-mail-check::before { content: "\e361"; }
@@ -96,6 +94,7 @@
 .icon-triangle-alert::before { content: "\e193"; }
 .icon-truck::before { content: "\e194"; }
 .icon-user-check::before { content: "\e1a0"; }
+.icon-user-cog::before { content: "\e342"; }
 .icon-user-minus::before { content: "\e1a1"; }
 .icon-user-plus::before { content: "\e1a2"; }
 .icon-users::before { content: "\e1a4"; }

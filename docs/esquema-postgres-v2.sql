@@ -528,7 +528,27 @@ CREATE TABLE device (
   ready_by        INT REFERENCES app_user(id) ON DELETE SET NULL,
   imei            TEXT,
   iccid           TEXT,
+  -- Última generación de base RF que le ASIGNAMOS (la que el panel dice tener
+  -- vive en device_state.rf_gen; compararlas detecta la desincronización).
+  -- Sube de a uno POR COMANDO: el equipo persiste la del último que le salió
+  -- bien, así el número reportado dice hasta dónde llegó la tanda. uint32 del
+  -- lado del firmware, de ahí el tope.
+  rf_gen          BIGINT NOT NULL DEFAULT 0,
+  CONSTRAINT chk_device_rf_gen CHECK (rf_gen >= 0 AND rf_gen < 4294967296),
   mac             TEXT,                     -- MAC STA: 12 hex MAYÚSCULAS, sin ":"
+
+  -- TEMPORAL (2026-08-07, migración LegacyAppBridge): el alias por el que la
+  -- app VIEJA de vecinos conoce a esta alarma ('CENTRALVECINAL05'). Es de la
+  -- ALARMA, no del hogar: en Firebase colgaba del cliente
+  -- (ClientesID/<DNI>/Marcador) y copiarlo así violaría la regla 1. El hogar
+  -- llega a su marcador por default_device_id, derivándolo.
+  --
+  -- También define el alcance de la puerta vieja: NULL = la app vieja no llega
+  -- a este equipo. El formato lo impone un CHECK porque el string se usa como
+  -- raíz de un path de la RTDB y como tópico de FCM.
+  --
+  -- Se va con la app vieja.
+  legacy_marker   TEXT,
   board_model_id  INT REFERENCES board_model(id) ON DELETE RESTRICT,
   board_seq       INT,                      -- 43 para "ALOY0043"; el string se compone
 
@@ -687,10 +707,19 @@ CREATE TABLE device (
       AND board_model_id IS NOT NULL
       AND board_seq IS NOT NULL
     )
+  ),
+  -- El marcador viejo viaja como path de Firebase y como tópico de FCM: un
+  -- '.', un '#' o un '/' rompen el primero y cualquier cosa fuera de
+  -- [A-Za-z0-9-_.~%] rompe el segundo. Un typo se descubriría recién el día
+  -- que a un barrio no le llega el aviso.
+  CONSTRAINT chk_device_legacy_marker CHECK (
+    legacy_marker IS NULL OR legacy_marker ~ '^CENTRALVECINAL[0-9]{2}$'
   )
 );
 CREATE UNIQUE INDEX uq_device_claim_code ON device(claim_code)
   WHERE claim_code IS NOT NULL;
+CREATE UNIQUE INDEX uq_device_legacy_marker ON device(legacy_marker)
+  WHERE legacy_marker IS NOT NULL;
 CREATE UNIQUE INDEX uq_device_mac ON device(mac) WHERE mac IS NOT NULL;
 CREATE UNIQUE INDEX uq_device_board ON device(board_model_id, board_seq)
   WHERE board_model_id IS NOT NULL AND board_seq IS NOT NULL;
@@ -730,6 +759,20 @@ CREATE TABLE device_state (
   sleep_until    TIMESTAMPTZ,
   ts_device      TIMESTAMPTZ,               -- el reloj que el panel declara
   tsq            SMALLINT,                  -- calidad de ese reloj, 0..4, MENOR ES MEJOR
+  -- La RED en columnas (DeviceStateNetwork): son preguntas de FLOTA — "¿cuáles
+  -- tienen mala señal?" no se responde leyendo un JSONB fila por fila.
+  ssid           TEXT,
+  ip             TEXT,
+  rssi           SMALLINT,
+  recon          INT,
+  ping_fail      INT,
+  -- Y el RESTO del snapshot en JSONB: rtc, modulos, ota, contadores rf, sueno,
+  -- colas. Crece cada vez que el firmware agrega un contador, y una columna por
+  -- métrica sería una migración por versión de firmware. De acá sale el tamaño
+  -- del chip de la EEPROM (`modulos.eeprom.kb`, en KILOBYTES: el firmware lo
+  -- arma como `size_bytes / 1024`), que decide cuántos controles entran en el
+  -- equipo.
+  tele           JSONB,
   updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
 
   CONSTRAINT chk_device_state_tsq CHECK (tsq IS NULL OR tsq BETWEEN 0 AND 4)
@@ -757,6 +800,59 @@ CREATE TABLE device_maintenance (
 CREATE INDEX idx_maintenance_device ON device_maintenance(device_id, created_at);
 CREATE TRIGGER trg_maintenance_updated BEFORE UPDATE ON device_maintenance
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- El CATÁLOGO DE FIRMWARES (migración FirmwareCatalog). La ficha del `.bin`, no
+-- el `.bin`: el binario vive en el disco (FIRMWARE_ROOT) y lo sirve nginx desde
+-- el APEX `cpssecurity.com.ar` — host exacto, porque es contra eso que compara
+-- `ota_url_is_allowed()` del firmware. Servirlo desde `system.` lo haría
+-- rechazar antes de bajar un byte.
+--
+-- Nada de esto se tipea: version, project_name, size_bytes y sha256 se LEEN del
+-- binario al subirlo (el `esp_app_desc_t` que ESP-IDF embebe en la imagen).
+CREATE TABLE firmware_release (
+  id           SERIAL PRIMARY KEY,
+  -- Nombre de la carpeta Y del archivo: el equipo arma la URL como
+  -- base + version + ".bin". UNIQUE porque es un identificador, NO un orden:
+  -- el firmware no compara versiones, baja lo que se le diga.
+  version      TEXT NOT NULL UNIQUE,
+  channel      TEXT NOT NULL,           -- new | stable, del prefijo. Nunca bloquea.
+  hw_model     TEXT NOT NULL DEFAULT 'esp32-4mb',   -- o OTA_REJ_HW_MISMATCH
+  project_name TEXT NOT NULL,           -- ota_writer_verify_same_project
+  size_bytes   INT  NOT NULL,
+  sha256       TEXT NOT NULL,           -- verificado contra lo escrito en flash
+  notes        TEXT,
+  uploaded_by  INT REFERENCES app_user(id) ON DELETE SET NULL,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+  CONSTRAINT chk_firmware_channel CHECK (channel IN ('new', 'stable')),
+  CONSTRAINT chk_firmware_sha CHECK (sha256 ~ '^[0-9a-f]{64}$'),
+  -- El slot OTA de la partición de 4 MB. Más grande lo rechaza el equipo
+  -- DESPUÉS de bajar el manifiesto; atajarlo acá es no publicar algo inservible.
+  CONSTRAINT chk_firmware_size CHECK (size_bytes > 0 AND size_bytes <= 1835008)
+);
+CREATE INDEX idx_firmware_release_created ON firmware_release(created_at DESC);
+
+-- El PUNTERO: qué versión está publicada en cada base fija del firmware. La
+-- ranura es la PK, así que publicar es un UPSERT y no hay dos peleando por una.
+--
+-- LAS DOS RANURAS NO SON LO MISMO:
+--   new       → lo que baja un `cmd t:ota` con fuente "auto". La última.
+--   emergency → `emergency.bin`, nombre fijo. Lo que el equipo baja SOLO, sin
+--               que nadie se lo pida, cuando decide que está roto
+--               (emergency_mode: bandera NVS + gate de energía B1-EMG).
+--
+-- La de emergencia es el ÚLTIMO BUENO CONOCIDO, no la última. Publicar ahí la
+-- versión de la que el equipo trata de escapar anula el mecanismo entero.
+CREATE TABLE firmware_channel (
+  slot       TEXT PRIMARY KEY,
+  -- RESTRICT y no CASCADE: borrar una versión publicada tiene que fallar y
+  -- decirlo, no dejar la carpeta apuntando a un archivo que ya no existe.
+  release_id INT NOT NULL REFERENCES firmware_release(id) ON DELETE RESTRICT,
+  updated_by INT REFERENCES app_user(id) ON DELETE SET NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+  CONSTRAINT chk_firmware_slot CHECK (slot IN ('new', 'emergency'))
+);
 
 -- ----------------------------------------------------------------------------
 -- 9. Hogar y sus miembros
@@ -832,6 +928,21 @@ CREATE TABLE remote (
   -- Alarma donde están grabados sus códigos RF
   device_id           INT REFERENCES device(id) ON DELETE SET NULL,
 
+  -- ── Lo que quedó cargado en la EEPROM de un panel (RemoteSync) ──────
+  -- No es un flag "sincronizado": es el estado CARGADO. "Pendiente" se deduce
+  -- comparándolo con lo que debería estar (alarma preferida del hogar + DNI del
+  -- portador + hash de sus códigos), así cambiar el portador, editar un código o
+  -- devolver el control lo desincronizan solos.
+  synced_device_id    INT REFERENCES device(id) ON DELETE SET NULL,
+  -- Con qué DNI se cargó. NO es redundante con el portador: al volver al stock
+  -- el control lo pierde, y la base del panel se indexa por DNI — sin esto no
+  -- sabríamos qué borrar.
+  synced_dni          TEXT,
+  -- FNV-1a de los códigos cargados, MISMO algoritmo que rf_client_hash() en
+  -- task_mqtt.c: compara contra la auditoría del panel sin descifrar nada.
+  synced_hash         BIGINT,
+  synced_at           TIMESTAMPTZ,
+
   created_by          INT REFERENCES app_user(id) ON DELETE SET NULL,
   updated_by          INT REFERENCES app_user(id) ON DELETE SET NULL,
   created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -844,11 +955,30 @@ CREATE TABLE remote (
   ),
   CONSTRAINT chk_remote_stock_owner CHECK (
     status = 'INVENTORY' OR organization_id IS NULL
+  ),
+  -- Las cuatro de sincronización viajan juntas: media sincronización guardada
+  -- es peor que ninguna — no se sabría ni qué borrar ni qué comparar.
+  CONSTRAINT chk_remote_sync_completa CHECK (
+    (synced_device_id IS NULL AND synced_dni IS NULL
+     AND synced_hash IS NULL AND synced_at IS NULL)
+    OR
+    (synced_device_id IS NOT NULL AND synced_dni IS NOT NULL
+     AND synced_hash IS NOT NULL AND synced_at IS NOT NULL)
   )
 );
 CREATE INDEX idx_remote_home     ON remote(home_id);
 CREATE INDEX idx_remote_assigned ON remote(assigned_to_user_id);
 CREATE INDEX idx_remote_device   ON remote(device_id);
+-- "Qué dice estar cargado en ESTE equipo" — la pregunta que arma el plan.
+CREATE INDEX idx_remote_synced_device ON remote(synced_device_id)
+  WHERE synced_device_id IS NOT NULL;
+-- UNA PERSONA, UN CONTROL. No es una preferencia de la web: la base del panel
+-- guarda un registro por DNI (ee_client_t, hasta 4 códigos), así que un segundo
+-- control del mismo portador nunca podría cargarse — el panel lo rechaza con
+-- EE_DUP. Parcial sobre los VIVOS: un control removido conserva su portador como
+-- parte del registro histórico y no le ocupa el lugar a nadie.
+CREATE UNIQUE INDEX uq_remote_one_per_carrier ON remote(assigned_to_user_id)
+  WHERE assigned_to_user_id IS NOT NULL AND removed_at IS NULL;
 CREATE TRIGGER trg_remote_updated BEFORE UPDATE ON remote
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
@@ -1012,12 +1142,27 @@ CREATE TABLE gtd.commands (
   estado       TEXT NOT NULL DEFAULT 'pending',
   detalle      TEXT,
   requested_by INT REFERENCES app_user(id) ON DELETE SET NULL,
+  -- Los pasos de una misma sincronización de base RF (RemoteSync). NULL en los
+  -- comandos sueltos. El siguiente se destraba en confirm_command con el ack
+  -- del anterior — ver gtd.enqueue_rf_sync.
+  batch_id     UUID,
+  seq          INT,
+  -- Datos NUESTROS del comando, que NO se publican: el GtD manda `payload` y
+  -- nada más. En un paso de base RF dice qué controles cubre, para que el ack
+  -- pueda marcarlos: {"remotes":[{id,dni,hash}]} en un batch, {"dnis":[…]} en un
+  -- del. Va acá y no adentro del payload —el firmware ignora las claves que no
+  -- conoce— para no apostar a que lo siga haciendo, y porque el payload entrante
+  -- del panel tiene 1024 bytes contados.
+  meta         JSONB,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
   sent_at      TIMESTAMPTZ,
   confirmed_at TIMESTAMPTZ,
 
+  -- 'queued' = encolado pero TODAVÍA NO publicable: está en la tabla y el GtD
+  -- no lo ve, porque fetch_pending_commands y fetch_pending_macs filtran por
+  -- 'pending'. Es lo que hace posible el encadenado.
   CONSTRAINT chk_commands_estado CHECK (
-    estado IN ('pending', 'sent', 'ok', 'error', 'cancelled')
+    estado IN ('queued', 'pending', 'sent', 'ok', 'error', 'cancelled')
   ),
   -- Los 13 del firmware (CmdType). Un typo es un comando que el panel descarta
   -- en silencio, así que se ataja en la base.
@@ -1027,6 +1172,8 @@ CREATE TABLE gtd.commands (
   )
 );
 CREATE INDEX ix_commands_pending ON gtd.commands(mac) WHERE estado = 'pending';
+CREATE INDEX ix_commands_batch ON gtd.commands(batch_id, seq)
+  WHERE batch_id IS NOT NULL;
 
 -- Lo que LE MANDAMOS al panel (retained en av/<id>/cfg). cfg_v es ESTRICTAMENTE
 -- creciente: el firmware ignora en silencio —sin ack, ni ok ni error— una
@@ -1088,6 +1235,59 @@ CREATE TABLE gtd.uplink_raw (
 );
 CREATE INDEX ix_uplink_raw_mac ON gtd.uplink_raw(mac, received_at DESC);
 
+-- ── Puente con la app VIEJA de vecinos (2026-08-07) ──────────────────────────
+-- TEMPORAL. Las dos tablas y device.legacy_marker se van juntas el día que no
+-- quede ningún cliente con la app vieja instalada.
+--
+-- La app vieja publica `{cliente_id, modo_a, gps}` en el tópico MQTT
+-- `cliente/servidor`. Un proceso aparte (el adaptador) lo traduce llamando a
+-- gtd.enqueue_legacy_alarm; hasta ahora eso lo hacía `broker-bridge.service`
+-- contra Firebase.
+
+-- Traducción cps00X (Firebase) <-> slug del firmware. BIYECTIVA: el UNIQUE
+-- sobre trigger_mode es lo que hace que la vuelta (slug -> etiqueta que muestra
+-- la app vieja) esté bien definida. Es tabla y no un CASE adentro de una
+-- función para poder corregir un mapeo con un UPDATE en vez de una migración.
+CREATE TABLE gtd.legacy_mode_map (
+  legacy_code  TEXT PRIMARY KEY,             -- cps001..cps007, cps999
+  trigger_mode TEXT NOT NULL,                -- slug del firmware
+  label        TEXT NOT NULL,                -- lo que muestra la app vieja
+
+  CONSTRAINT chk_legacy_trigger_mode CHECK (trigger_mode IN (
+    'off', 'suspicious', 'alert', 'emergency',
+    'fire', 'medical', 'silent', 'panic'
+  )),
+  CONSTRAINT uq_legacy_trigger_mode UNIQUE (trigger_mode)
+);
+
+-- Lo que mandó la app vieja, atado al `cid` del comando que originó.
+--
+-- Existe por una sola razón: el firmware manda `dni` SOLO cuando origin='rf'.
+-- Una activación de la app legacy vuelve con origin='mqtt' y lo único que la
+-- identifica es el `cid`. gtd.insert_evento lo lee de p_payload->>'cid' y
+-- completa activador y GPS ANTES de insertar — `event` es append-only y no
+-- admite una segunda pasada.
+--
+-- `dni` es lo AFIRMADO por la app (que no autentica a nadie) y `user_id` es a
+-- quién resolvimos: guardar los dos permite ver después que alguien publicó un
+-- DNI que no era suyo.
+CREATE TABLE gtd.legacy_activation (
+  cid          TEXT PRIMARY KEY,
+  dni          TEXT NOT NULL,
+  user_id      INT REFERENCES app_user(id) ON DELETE SET NULL,
+  home_id      INT REFERENCES home(id)     ON DELETE SET NULL,
+  device_id    INT NOT NULL REFERENCES device(id) ON DELETE CASCADE,
+  legacy_code  TEXT NOT NULL,
+  trigger_mode TEXT NOT NULL,
+  gps_lat      DOUBLE PRECISION,
+  gps_lng      DOUBLE PRECISION,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX ix_legacy_activation_created
+  ON gtd.legacy_activation(created_at DESC);
+CREATE INDEX ix_legacy_activation_device
+  ON gtd.legacy_activation(device_id, created_at DESC);
+
 -- Las FUNCIONES (todas SECURITY DEFINER, con search_path fijo). Ver la
 -- migración GtdBridgeFunctions para el cuerpo.
 --
@@ -1095,12 +1295,32 @@ CREATE INDEX ix_uplink_raw_mac ON gtd.uplink_raw(mac, received_at DESC);
 --   2026-08-04, respuestas al doc 06):
 --     gtd.upsert_panel_state(mac, estado, modo_energia, alarma_mode, cfg_v,
 --                            rf_gen, energia, fw, despierta, ts_device, tsq,
---                            seen) -> text
+--                            seen, red, tele) -> text
 --        estado: 'online'|'durmiendo'|'offline' (NULL = no tocar; online se
 --        deriva). last_seen lo pone el servidor; seen=false = watchdog (el
 --        panel NO habló, last_seen no se toca).
+--        `red` y `tele` los sumó DeviceStateNetwork (SSID/IP/RSSI y el snapshot
+--        crudo). Ojo: esa migración reescribió la función y PERDIÓ el bloque
+--        que reconcilia gtd.panel_config con el cfg_v reportado —
+--        RestoreConfigReconcile lo restituyó. Ese bloque es el que marca
+--        'applied' con el tele (la única señal retenida, o sea la que sobrevive
+--        a un GtD caído) y 'stale' cuando el panel vuelve de fábrica con
+--        cfg_v = 0. Si algún día se vuelve a tocar la firma, va con él.
 --     gtd.insert_evento(mac, tipo, payload, eid, ts) -> boolean  (false = dup)
 --     gtd.confirm_command(cid, res, det) -> text
+--        Además de cerrar el comando hace dos cosas propias de la base RF
+--        (RemoteSync): destraba el paso siguiente de la tanda (el primer
+--        'queued' del mismo batch_id pasa a 'pending'; si el paso falló, los
+--        que quedan pasan a 'cancelled'), y le SACA los códigos al payload de
+--        un comando t:rf ya cumplido —viajan en claro porque el panel los
+--        necesita así, pero un comando es efímero y no hay razón para que
+--        queden legibles. Un `del` que vuelve con 'ee_status 1' (EE_NOT_FOUND)
+--        cuenta como ÉXITO: es el caso normal al reintentar, y tratarlo como
+--        fallo abortaría el plan por una baja que ya estaba hecha.
+--        Y ESCRIBE EL DOMINIO: con el ack en la mano marca `remote.synced_*`
+--        (o lo limpia, en un `del`), leyendo de `meta` qué controles cubría el
+--        paso. Pasa acá porque cuando el panel contesta, del lado de la web no
+--        corre nadie — mismo criterio que confirm_provisioning con el hito MQTT.
 --     gtd.upsert_config_espejo(mac, cfg_v, payload) -> text
 --     gtd.fetch_pending_commands(mac) -> setof (cid, tipo, payload)
 --     gtd.fetch_pending_config(mac)   -> (cfg_v, payload)
@@ -1121,11 +1341,30 @@ CREATE INDEX ix_uplink_raw_mac ON gtd.uplink_raw(mac, received_at DESC);
 --     gtd.enqueue_command(device_id, tipo, params, user_id) -> cid
 --     gtd.publish_config(device_id, patch, user_id) -> cfg_v
 --     gtd.cancel_command(cid, user_id) -> boolean
---     gtd.enqueue_rf_batch(device_id, lotes, user_id) -> int
+--     gtd.enqueue_rf_sync(device_id, pasos, user_id) -> uuid (batch_id)
+--        Encola una sincronización de base RF ENTERA, pero solo el primer paso
+--        nace 'pending': el resto queda 'queued' y lo destraba confirm_command
+--        con cada ack. Sin eso, 120 controles serían 24 comandos publicados en
+--        ráfaga — le tapan la cola al panel por un minuto y desbordan su ring de
+--        8 cid, que es todo lo que recuerda para deduplicar. Le pone `gen` a cada
+--        paso (device.rf_gen + i) y rechaza una tanda si el equipo ya tiene otra
+--        en vuelo. Los pasos llegan armados y EN ORDEN (bajas primero) desde el
+--        backend: el descifrado de los códigos pasa en Node, la clave AES no
+--        está en la base y así tiene que seguir.
+--        Reemplaza a enqueue_rf_batch, que encolaba todo 'pending' y sin `gen`.
 --     gtd.last_scan(device_id) -> (redes, received_at)
 --        El último up t:scan. Sale de gtd.uplink_raw, donde los scans YA se
 --        guardan: no hace falta tabla. La función existe para que la intención
 --        quede explícita y se pueda cambiar el almacenamiento sin tocar la web.
+--     gtd.last_ota(device_id) -> (estado, resultado, fw, received_at)
+--        El último up t:ota, o sea cómo le está yendo al equipo con su propia
+--        actualización (ota_state_t / ota_reject_t, como números: los traduce el
+--        backend, porque el enum es del firmware). Mismo patrón que last_scan y
+--        por la MISMA razón, más una: uplink_raw guarda también los cfg_full,
+--        que llevan las passwords WiFi en claro. Abrirle la tabla a cps_web para
+--        leer el progreso de un OTA sería regalar eso de paso.
+--        Antes de esto (2026-08-06) el progreso llegaba y NADIE lo leía: se
+--        apretaba "actualizar" y la pantalla no cambiaba por minutos.
 --     gtd.enqueue_provisioning(device_id, op, user_id) -> bigint
 --        Pide el alta ('provision'), la baja ('revoke') o la FABRICACIÓN
 --        ('manufacture') del equipo. Encolar dos veces la misma op devuelve el
@@ -1152,6 +1391,54 @@ CREATE INDEX ix_uplink_raw_mac ON gtd.uplink_raw(mac, received_at DESC);
 --        Un 'ok' sin las dos credenciales es un error, no un alta a medias.
 --        Aparte de confirm_provisioning a propósito: escribe columnas que
 --        aquella no debería poder tocar nunca.
+--
+--   PUENTE DE LA APP VIEJA (cps_legacy) — proceso APARTE, temporal. Su ÚNICA
+--   capacidad es esta función: no lee la base, no encola comandos arbitrarios y
+--   no toca device_state.
+--
+--     gtd.enqueue_legacy_alarm(dni, code, lat, lng) -> (cid, resultado)
+--        Traduce una activación de la app vieja. El destino NO viene del
+--        mensaje: es SIEMPRE la alarma preferida del hogar de ese DNI, y encima
+--        tiene que tener legacy_marker. Un mensaje anónimo no elige a qué equipo
+--        le pega — el listener 1883 es abierto y la app vieja no autentica a
+--        nadie (su login es "existe este DNI").
+--        Devuelve resultado='ok' con el cid, o el motivo del rechazo:
+--        modo_invalido | dni_invalido | dni_desconocido | usuario_no_activo |
+--        sin_hogar | membresia_no_activa | hogar_no_activo | hogar_sin_alarma |
+--        alarma_no_legacy.
+--        Deja audit_log con action='legacy.alarm.activate' y el vecino como
+--        actor: el prefijo `legacy.` es lo que avisa, al leer la auditoría, que
+--        esa identidad entró por una puerta sin autenticación.
+--
+--     gtd.resolve_on_disarm(device_id, payload) -> int
+--        Cierra la emergencia abierta cuando el EQUIPO reporta que lo
+--        desarmaron. Un mode:off no crea evento (cae en el dead letter como
+--        'desarme'), así que sin esto los eventos quedaban OPEN para siempre y
+--        el tablero mostraba una emergencia con la sirena ya apagada.
+--        No se le concede EXECUTE a NINGÚN rol: la llama insert_evento, que es
+--        SECURITY DEFINER y corre como el dueño.
+--
+--        CIERRA CUALQUIER EVENTO ABIERTO DEL EQUIPO, sin exigir que lo cierre
+--        quien lo abrió: en una alarma de barrio el que la apaga casi nunca es
+--        el que la disparó (decisión del 2026-08-07).
+--
+--        **El origen `auto` NO cierra.** El panel apaga la sirena solo al
+--        vencer `alarma.autooff`, y eso llega como un desarme más. Cerrar ahí
+--        sería decir que la emergencia terminó porque se acabó un temporizador.
+--        Solo cierra lo que hizo una PERSONA: rf | mqtt | portal.
+--
+--        Se cierra al RECIBIR el reporte del panel, no al encolar el comando:
+--        si el equipo está caído, cerrar antes dejaría el tablero diciendo
+--        "resuelto" con la sirena sonando.
+--
+--        Responsable del cierre, con lo que haya: el `dni` del payload (el
+--        control que apretó el botón D), gtd.legacy_activation (la app vieja) o
+--        gtd.commands.requested_by (el panel web). Nunca queda en blanco.
+--
+--        Excepción explícita y acotada a "el servicio de alarmas no resuelve
+--        eventos" (§14): cps_alarms NO gana UPDATE sobre `event`, y no puede
+--        llamar a esta función. Mismo mecanismo por el que confirm_provisioning
+--        escribe `device` sin que el provisioner pueda tocarla.
 --
 --   gtd.provisioning_queue es HISTÓRICA (una fila por operación, no por equipo)
 --   y no guarda ninguna password: la credencial MQTT se deriva en el momento con

@@ -32,6 +32,13 @@ export interface RedWifiView {
   ssid: string;
   prio: number;
   tienePassword: boolean;
+  /**
+   * El panel la puso en su lista negra permanente y NO la va a usar, esté
+   * cargada o no. Sin mostrarlo, una red bien tipeada y con la clave correcta
+   * simplemente no conecta y no hay nada en pantalla que lo explique. Se limpia
+   * con `cmd t:red op:bl_clear`, que todavía no está expuesto.
+   */
+  bloqueada: boolean;
 }
 
 /** Una red vista en el último scan del equipo. */
@@ -66,7 +73,18 @@ export type EstadoConfig =
   /** El panel ackeó, pero el espejo todavía no volvió: no sabemos qué quedó. */
   | 'APLICADA_SIN_VERIFICAR'
   /** No se pudo entregar. `detalle` dice por qué. */
-  | 'FALLIDA';
+  | 'FALLIDA'
+  /**
+   * El equipo volvió a los valores de fábrica (`factory`): reportó `cfg_v = 0` y
+   * `upsert_panel_state` marcó la cola en `stale`.
+   *
+   * Es el único estado en el que **el espejo no es lo que está corriendo**: como
+   * `upsert_config_espejo` no se deja pisar por una versión más vieja, la web
+   * conserva la configuración anterior mientras el panel corre los defaults. Sin
+   * este caso, la comparación `espejo.cfg_v >= cola.cfg_v` daba VERIFICADO y la
+   * pantalla afirmaba estar mostrando lo que el equipo tiene.
+   */
+  | 'DESACTUALIZADA';
 
 export interface DeviceConfigView {
   deviceId: number;
@@ -81,8 +99,31 @@ export interface DeviceConfigView {
   detalle: string | null;
   espejoActualizadoEn: string | null;
   ultimoScan: ScanView | null;
-  /** Si este usuario GESTIONA el barrio del equipo (no solo si lo ve). */
+  /**
+   * Si este usuario puede publicar configuración en este equipo. Son los DOS
+   * ejes: el rol dice QUÉ (el MONITOR mira y no configura) y la membresía dice
+   * DÓNDE (`managesNeighborhood`: con `managed_by = CPS` la organización mira).
+   *
+   * Tiene que responder exactamente lo mismo que el `PUT`. Con solo el segundo
+   * eje, el MONITOR recibía el formulario habilitado y se comía un 403 recién
+   * al apretar Guardar.
+   */
   puedeEditar: boolean;
+  /** Si puede pedir las contraseñas WiFi en claro (solo CPS, auditado). */
+  puedeVerPasswords: boolean;
+}
+
+/**
+ * Un equipo del mismo barrio del que se puede copiar la configuración.
+ *
+ * Solo aparecen los que ya reportaron su `cfg_full`: de uno sin espejo no hay
+ * nada que copiar.
+ */
+export interface FuenteConfigView {
+  deviceId: number;
+  nombre: string;
+  serial: string;
+  espejoActualizadoEn: Date;
 }
 
 /** Una red con su password en claro. Solo sale por `/config/reveal-wifi`. */

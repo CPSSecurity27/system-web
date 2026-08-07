@@ -135,6 +135,16 @@ export interface Home {
   contactPhone: string | null;
   /** Alarma preferida para eventos SINGLE. Del mismo barrio. */
   defaultDeviceId: number | null;
+  /**
+   * La misma alarma, con su nombre, para poder mostrarla sin pedir los equipos
+   * aparte. Viene en el listado y en la ficha.
+   *
+   * Que esto sea `null` no es un detalle cosmético: **los controles de esa casa
+   * no se cargan en ningún panel**, porque el plan de cada equipo sale de las
+   * viviendas que lo eligieron. Pasa siempre que la casa se creó antes de que el
+   * barrio tuviera alarmas.
+   */
+  defaultDevice?: { id: number; name: string | null; serial: string } | null;
   status: EntityStatus;
   /** Obligatorios: salen en el mapa del monitoreo y en el `gps` del evento. */
   latitude: number;
@@ -412,13 +422,20 @@ export type EstadoConfig =
   /** El panel ackeó, pero el espejo no volvió: no sabemos qué quedó. */
   | 'APLICADA_SIN_VERIFICAR'
   /** No se pudo entregar. `detalle` dice por qué. */
-  | 'FALLIDA';
+  | 'FALLIDA'
+  /**
+   * El equipo volvió a los valores de fábrica: es el ÚNICO estado en el que lo
+   * que muestra la pantalla no es lo que está corriendo en el poste.
+   */
+  | 'DESACTUALIZADA';
 
 /** Una red del equipo. La password NUNCA viaja: solo si tiene una guardada. */
 export interface RedWifi {
   ssid: string;
   prio: number;
   tienePassword: boolean;
+  /** El panel la bloqueó y no la va a usar, esté bien cargada o no. */
+  bloqueada: boolean;
 }
 
 /** Una red vista en el último scan. `guardada` = el panel ya la tiene cargada. */
@@ -442,14 +459,132 @@ export interface DeviceConfig {
   detalle: string | null;
   espejoActualizadoEn: string | null;
   ultimoScan: { redes: ScanRed[]; recibidoEn: string } | null;
-  /** Si este usuario GESTIONA el barrio del equipo (no solo si lo ve). */
+  /** Los dos ejes: el rol (el MONITOR mira) y el barrio (`managed_by`). */
   puedeEditar: boolean;
+  /** Si puede pedir las contraseñas WiFi en claro (solo CPS, auditado). */
+  puedeVerPasswords: boolean;
 }
 
 /** Una red con su password en claro. Solo CPS, y queda auditado. */
 export interface RedWifiRevelada {
   ssid: string;
   psw: string;
+}
+
+// ── La base de controles del equipo ──────────────────────────────────
+//
+// NO es configuración, aunque comparta pantalla con ella: no tiene `cfg_v`, no
+// se mergea y no es retained. Es una cola de comandos con su ack.
+
+/** Por qué un control no se puede cargar en el equipo. */
+export type MotivoSalteo =
+  | 'SIN_PORTADOR'
+  | 'DNI_INVALIDO'
+  | 'SIN_CODIGOS'
+  | 'POSICIONES_CON_HUECO'
+  | 'CODIGO_FUERA_DE_RANGO'
+  | 'NO_ENTRA';
+
+export interface ControlDeSync {
+  remoteId: number;
+  serial: string | null;
+  direccion: string;
+  portador: string | null;
+  dni: string | null;
+}
+
+export interface ControlSalteado extends ControlDeSync {
+  motivo: MotivoSalteo;
+  /** El motivo ya explicado por el backend: la pantalla no lo traduce. */
+  explicacion: string;
+}
+
+/** Lo que hay que SACAR del equipo. Puede no tener control vivo detrás. */
+export interface BajaDeSync {
+  dni: string;
+  serial: string | null;
+  motivo: string;
+}
+
+export interface TandaDeSync {
+  batchId: string;
+  total: number;
+  hechos: number;
+  estado: 'en_curso' | 'terminada' | 'con_error';
+  detalle: string | null;
+  empezada: string;
+}
+
+/** Un control del barrio que no le toca a ningún equipo: su casa no eligió. */
+export interface ControlSinAlarma {
+  remoteId: number;
+  serial: string | null;
+  homeId: number;
+  direccion: string;
+}
+
+export interface EstadoRf {
+  /** Controles del barrio cuya vivienda no tiene alarma preferida. */
+  sinAlarma: ControlSinAlarma[];
+  /** Cuántos vecinos entran en el chip y cuántos ocuparía la sincronización. */
+  capacidad: { tope: number; ocupados: number };
+  alDia: number;
+  pendientes: ControlDeSync[];
+  bajas: BajaDeSync[];
+  salteados: ControlSalteado[];
+  tanda: TandaDeSync | null;
+  puedeSincronizar: boolean;
+  impedimento: string | null;
+}
+
+/** Otro equipo del mismo barrio del que se puede copiar la configuración. */
+export interface FuenteConfig {
+  deviceId: number;
+  nombre: string;
+  serial: string;
+  espejoActualizadoEn: string;
+}
+
+/**
+ * Un comando encolado al panel.
+ *
+ * A diferencia de la configuración, un comando no tiene versión ni se mergea:
+ * se manda una vez y el panel contesta con el mismo `cid`.
+ */
+/**
+ * La cola con los permisos ya resueltos por el backend.
+ *
+ * No viene un array pelado a propósito: hay DOS matrices distintas (el disparo
+ * de alarma incluye al MONITOR, los comandos de infraestructura no) y las dos
+ * dependen del barrio. Deducirlas de la sesión sería copiar acá una regla que
+ * ya vive en el servidor.
+ */
+export interface ColaComandos {
+  comandos: Comando[];
+  /** Reiniciar, volver a fábrica, diagnóstico. */
+  puedeOperar: boolean;
+  /** Disparar o apagar la alarma (el MONITOR también). */
+  puedeDisparar: boolean;
+  /**
+   * Actualizar el firmware. Es SOLO CPS, y por eso es una tercera matriz y no
+   * parte de `puedeOperar`: un técnico municipal reinicia y vuelve a fábrica
+   * sus postes, pero no les instala software.
+   */
+  puedeActualizar: boolean;
+}
+
+export interface Comando {
+  cid: string;
+  tipo: string;
+  payload: Record<string, unknown>;
+  /** `pending` | `sent` | `ok` | `error` | `cancelled`. */
+  estado: string;
+  detalle: string | null;
+  creadoEn: string;
+  enviadoEn: string | null;
+  confirmadoEn: string | null;
+  pedidoPor: string | null;
+  cancelable: boolean;
 }
 
 export type MaintenanceType = 'INSTALL' | 'SERVICE' | 'REPAIR' | 'CHECK' | 'REPLACE';
@@ -474,7 +609,15 @@ export type RemoteStatus = 'INVENTORY' | 'ACTIVE' | 'SUSPENDED' | 'LOST' | 'REPL
 
 export interface Remote {
   id: number;
-  name: string;
+  /** `CR-000137`. null solo en los controles anteriores a la fábrica. */
+  serial: string | null;
+  /** Código de un solo uso para sumarlo a un stock. Impreso en la etiqueta. */
+  claimCode?: string | null;
+  modelId: number | null;
+  model?: RemoteModel | null;
+  manufacturedAt: string | null;
+  /** Apodo que le pone la familia. Lo que identifica es el serial. */
+  name: string | null;
   status: RemoteStatus;
   homeId: number | null;
   /** Stock de una organización. null = fábrica CPS (si tampoco hay homeId). */
@@ -482,6 +625,98 @@ export interface Remote {
   assignedToUserId: number | null;
   assignedToUser?: User | null;
   deviceId: number | null;
+  /**
+   * La vivienda con su barrio y su cliente, PARCIAL: solo lo que muestra la
+   * tabla del listado. Viene de `GET /remotes` y no de otras respuestas.
+   *
+   * Existe para que la pantalla no tenga que bajarse todas las viviendas para
+   * traducir `homeId → dirección`: con ~12.000 controles eso no terminaba más.
+   */
+  home?: RemoteHome | null;
+}
+
+/** La vivienda tal como viaja DENTRO de una fila del listado de controles. */
+export interface RemoteHome {
+  id: number;
+  address: string;
+  neighborhoodId: number;
+  /** La alarma preferida del hogar (no la que tiene grabados los códigos). */
+  defaultDeviceId: number | null;
+  neighborhood?: {
+    id: number;
+    name: string;
+    organizationId: number;
+    organization?: { id: number; name: string; subtype: OrgSubtype | null };
+  };
+}
+
+/**
+ * Un modelo del catálogo. Lo que lo define es cuántos botones tiene, porque eso
+ * decide cuántos códigos se cargan al fabricar.
+ *
+ * El panel registra hasta 4 por vecino y la POSICIÓN decide qué hace cada uno
+ * (1 emergencia, 2 sospechoso, 3 alerta, 4 apagar): un modelo con más botones
+ * tendría teclas que no disparan nada.
+ */
+export interface RemoteModel {
+  id: number;
+  code: string;
+  name: string;
+  buttons: number;
+  active: boolean;
+  notes: string | null;
+}
+
+/** Un código con lo que hace su botón. La posición NO es un orden: es el botón. */
+export interface CodigoDeControl {
+  position: number;
+  codigo: number;
+  boton: string;
+  modo: string;
+  label: string;
+}
+
+/** Lo que devuelve la fábrica. Trae los códigos: hay que grabarlos en el control. */
+export interface RemoteFabricado {
+  id: number;
+  serial: string;
+  /** Va impreso en la etiqueta: con esto un cliente lo suma a su stock. */
+  claimCode: string | null;
+  name: string | null;
+  modelo: RemoteModel;
+  manufacturedAt: string;
+  codigos: CodigoDeControl[];
+}
+
+/**
+ * Un control encontrado por serial o por código. NO trae los códigos: quien
+ * busca por código ya lo tiene.
+ */
+export interface ResultadoBusqueda {
+  id: number;
+  serial: string | null;
+  status: RemoteStatus;
+  homeId: number | null;
+  modelo: RemoteModel | null;
+  coincidePor: 'serial' | 'codigo';
+  /** Visto bueno de fábrica. null = todavía no puede salir al stock. */
+  readyAt: string | null;
+  /**
+   * Fuera de circulación. OJO: no impide que el control siga disparando — los
+   * códigos viven en la memoria de cada alarma y todavía no se sincronizan.
+   */
+  removedAt: string | null;
+  position: number | null;
+  boton: string | null;
+}
+
+/** Los datos de la etiqueta. Los códigos van en claro: solo CPS, auditado. */
+export interface EtiquetaControl {
+  id: number;
+  serial: string;
+  claimCode: string | null;
+  modelo: RemoteModel;
+  codigos: CodigoDeControl[];
 }
 
 /**
@@ -560,4 +795,158 @@ export interface EventResponse {
   createdAt: string;
   /** Viene en el detalle del evento. */
   user?: User | null;
+}
+
+// ── Firmware (OTA) ──────────────────────────────────────────────────
+
+/** Las dos bases que el firmware tiene hardcodeadas. */
+export type FirmwareSlot = 'new' | 'emergency';
+
+/**
+ * Un firmware del catálogo.
+ *
+ * Casi todo lo LEE el backend del `.bin` al subirlo: `projectName`, `sizeBytes`
+ * y `sha256` salen del archivo. Lo único que se tipea es la versión y las notas
+ * —el binario del firmware declara su `git describe`, no la versión OTA.
+ */
+export interface FirmwareRelease {
+  id: number;
+  /** `new_0_7_0`. Es el nombre de la carpeta y del `.bin`. */
+  version: string;
+  /** `new` | `stable`, del prefijo. Es registro: el equipo nunca bloquea por esto. */
+  channel: string;
+  hwModel: string;
+  /** Lo que el equipo verifica antes de activar la partición. */
+  projectName: string;
+  sizeBytes: number;
+  sha256: string;
+  notes: string | null;
+  subidoPor: string | null;
+  creadoEn: string;
+  /** La base para pegar en el campo de URL manual de la ficha del equipo. */
+  url: string;
+  /** En qué ranuras está publicada ahora mismo. */
+  publicadoEn: FirmwareSlot[];
+}
+
+/** Qué versión está publicada en una de las dos bases del equipo. */
+export interface FirmwareRanura {
+  slot: FirmwareSlot;
+  version: string;
+  releaseId: number;
+  url: string;
+  actualizadoPor: string | null;
+  actualizadoEn: string;
+}
+
+/**
+ * Un equipo en el gestor de actualizaciones.
+ *
+ * `desconocido` NO es lo mismo que `atrasado`: `fw` llega por el `status`
+ * retained del panel, así que un equipo que nunca conectó no tiene ninguno.
+ */
+export interface EquipoFirmware {
+  deviceId: number;
+  serial: string;
+  nombre: string | null;
+  barrioId: number | null;
+  barrio: string | null;
+  cuenta: string | null;
+  fw: string | null;
+  estado: 'al_dia' | 'atrasado' | 'desconocido';
+  online: boolean;
+  durmiendoHasta: string | null;
+  /**
+   * El modo de energía. **El equipo RECHAZA el OTA si no está en `ACTIVE_*`**:
+   * no lo encola ni lo difiere, contesta error y se termina ahí.
+   */
+  modoEnergia: string | null;
+  /** En qué quedó el PEDIDO (el comando y su ack). */
+  otaEnCurso: {
+    cid: string;
+    estado: string;
+    detalle: string | null;
+    creadoEn: string;
+  } | null;
+  /**
+   * Lo que contó el propio EQUIPO (`up t:ota`), que es otra cosa: entre "acepté
+   * el pedido" y "lo tengo corriendo" hay una descarga de 1,2 MB, un sha256 y un
+   * reinicio. Un comando confirmado con un progreso "falló" es exactamente el
+   * caso que antes no se veía en ningún lado.
+   */
+  progreso: OtaProgreso | null;
+  /**
+   * Hasta dónde se puede AFIRMAR que la última actualización funcionó.
+   *
+   * Lo resuelve el backend, no el navegador, porque la respuesta correcta no es
+   * "¿`fw` coincide con la publicada?" — eso llegó a mostrar un falso
+   * "actualizada". La versión que reporta el equipo es la etiqueta de nuestro
+   * propio manifiesto devuelta, y lo único que su self-test comprueba es que
+   * consiguió internet en 10 minutos.
+   */
+  confirmacion: ConfirmacionOta | null;
+}
+
+export interface ConfirmacionOta {
+  /**
+   * `arranco` — volvió a hablar y reporta la versión nueva. Es lo MÁS que se
+   *   puede afirmar: arrancó y tiene internet. No dice que el firmware ande.
+   * `reiniciando` — instaló y todavía no lo escuchamos.
+   * `no_aplico` — volvió con la versión anterior: revirtió.
+   * `indistinguible` — no hay con qué comparar.
+   * `fallo` — el propio equipo reportó el rechazo.
+   */
+  estado: 'arranco' | 'reiniciando' | 'no_aplico' | 'indistinguible' | 'fallo';
+  /** Qué se puede afirmar y qué no. Se muestra tal cual. */
+  detalle: string;
+}
+
+/** El último `up t:ota`, ya traducido por el backend. */
+export interface OtaProgreso {
+  estado: number;
+  estadoTexto: string;
+  resultado: number;
+  /** Solo cuando hay algo que decir; null si salió bien. */
+  motivo: string | null;
+  fw: string | null;
+  /** El equipo está trabajando AHORA: bajando, verificando. */
+  enCurso: boolean;
+  /**
+   * Instaló y se reinició solo (el reinicio es automático, medio segundo
+   * después de este mensaje).
+   *
+   * **Es el último mensaje que manda el equipo sobre esa actualización**: el
+   * self-test que confirma la imagen no publica nada. Que haya funcionado se
+   * ve porque `fw` pasa a ser la versión nueva.
+   */
+  esperandoReinicio: boolean;
+  /**
+   * Terminó mal. El rollback no llega por acá —el firmware no lo emite—: se ve
+   * como que el equipo sigue reportando la versión vieja.
+   */
+  fallo: boolean;
+  recibidoEn: string;
+}
+
+export interface FlotaFirmware {
+  /** La versión publicada en `new`, que es contra la que se compara. */
+  publicada: string | null;
+  equipos: EquipoFirmware[];
+}
+
+/** Qué pasó con cada equipo. Nunca un "listo" global. */
+export interface ResultadoActualizacion {
+  deviceId: number;
+  serial: string;
+  encolado: boolean;
+  cid: string | null;
+  motivo: string | null;
+}
+
+/** Lo que devuelve el botón "Verificar el servidor". */
+export interface ChequeoFirmware {
+  raiz: string;
+  escribible: boolean;
+  ranuras: { slot: string; version: string; archivos: string[] }[];
+  faltantes: string[];
 }

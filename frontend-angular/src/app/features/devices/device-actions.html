@@ -1,0 +1,195 @@
+@if (error()) { <div class="alert alert-danger small">{{ error() }}</div> }
+@if (aviso()) { <div class="alert alert-success small">{{ aviso() }}</div> }
+
+@if (demora(); as texto) {
+  <div class="alert alert-secondary small">{{ texto }}</div>
+}
+
+@if (!puedeOperar() && !puedeDisparar()) {
+  <div class="alert alert-secondary small">
+    Podés ver qué se le pidió a este equipo, pero no mandarle nada.
+  </div>
+}
+
+<!-- ── Confirmación de lo que no tiene vuelta ────────────────────── -->
+@if (confirmando(); as accion) {
+  <div class="card border-danger mb-3">
+    <div class="card-header text-bg-danger">
+      {{ accion.label }} — leé antes de seguir
+    </div>
+    <div class="card-body">
+      <p class="mb-2">{{ accion.descripcion }}</p>
+      <p class="fw-semibold text-danger-emphasis">{{ accion.consecuencia }}</p>
+
+      @if (accion.tipo === 'ota') {
+        <div class="mb-3">
+          <label class="form-label small" for="ota-url">
+            De dónde baja el firmware
+          </label>
+          <input class="form-control form-control-sm" id="ota-url"
+                 placeholder="Vacío = el origen que el equipo ya tiene configurado"
+                 [ngModel]="otaUrl()" (ngModelChange)="otaUrl.set($event)"
+                 [ngModelOptions]="{ standalone: true }" />
+          <small class="text-muted">
+            Vacío = baja la versión <strong>publicada</strong> en
+            <a routerLink="/actualizaciones/versiones">Actualizaciones</a>, que es
+            lo normal. La URL a mano sirve para mandarle una versión puntual que
+            no es la publicada: se copia de ahí.
+          </small>
+        </div>
+      }
+
+      @if (accion.tipo === 'factory') {
+        <div class="mb-3">
+          <label class="form-label small" for="serial-confirm">
+            Escribí <code>{{ device().serial }}</code> para confirmar
+          </label>
+          <input class="form-control form-control-sm font-monospace"
+                 id="serial-confirm" autocomplete="off"
+                 [ngModel]="serialTipeado()" (ngModelChange)="serialTipeado.set($event)"
+                 [ngModelOptions]="{ standalone: true }" />
+        </div>
+      }
+
+      <div class="d-flex gap-2">
+        <button type="button" class="btn btn-danger btn-sm"
+                [disabled]="!confirmacionValida()" (click)="confirmar()">
+          Sí, {{ accion.label.toLowerCase() }}
+        </button>
+        <button type="button" class="btn btn-outline-secondary btn-sm"
+                (click)="cancelarConfirmacion()">
+          Mejor no
+        </button>
+      </div>
+    </div>
+  </div>
+}
+
+<!-- ── Diagnóstico ───────────────────────────────────────────────── -->
+<section class="card mb-3">
+  <div class="card-header">Diagnóstico</div>
+  <ul class="list-group list-group-flush">
+    @for (a of diagnostico; track a.tipo) {
+      <li class="list-group-item d-flex justify-content-between align-items-center gap-3">
+        <span class="small">
+          <span class="fw-medium">{{ a.label }}</span><br />
+          <span class="text-muted">{{ a.descripcion }}</span>
+        </span>
+        <button type="button" class="btn btn-sm btn-outline-primary flex-shrink-0"
+                [disabled]="!puedeOperar()" (click)="pedir(a)">
+          Pedir
+        </button>
+      </li>
+    }
+  </ul>
+</section>
+
+<!-- ── Alarma ────────────────────────────────────────────────────── -->
+<section class="card mb-3">
+  <div class="card-header">Hacer sonar la alarma</div>
+  <div class="card-body">
+    <p class="small text-muted">
+      Dispara la alarma de ESTE equipo, como si alguien hubiera apretado un
+      control. Queda registrado como un evento más, con origen "app".
+    </p>
+    <div class="d-flex flex-wrap gap-2 mb-3">
+      @for (m of modosDisparo; track m.slug) {
+        <button type="button" class="btn btn-sm btn-outline-danger"
+                [disabled]="!puedeDisparar()" (click)="disparar(m.slug)">
+          {{ m.label }}
+        </button>
+      }
+    </div>
+    <button type="button" class="btn btn-sm btn-secondary"
+            [disabled]="!puedeDisparar()" (click)="disparar('off')">
+      Apagar la alarma
+    </button>
+    <small class="text-muted ms-2">
+      Si el equipo está en modo mantenimiento, va a rechazar el disparo.
+    </small>
+  </div>
+</section>
+
+<!-- ── Mantenimiento ─────────────────────────────────────────────── -->
+<section class="card mb-3 border-warning">
+  <div class="card-header">Mantenimiento</div>
+  <ul class="list-group list-group-flush">
+    @for (a of mantenimiento; track a.tipo) {
+      <li class="list-group-item d-flex justify-content-between align-items-center gap-3">
+        <span class="small">
+          <span class="fw-medium">{{ a.label }}</span><br />
+          <span class="text-muted">{{ a.descripcion }}</span>
+        </span>
+        <!--
+          El OTA tiene su propio permiso: es SOLO CPS desde 2026-08-06, porque
+          instala software en la infraestructura y no configura un barrio.
+          Reiniciar y volver a fábrica siguen siendo del que opera el barrio.
+        -->
+        <button type="button" class="btn btn-sm btn-outline-warning flex-shrink-0"
+                [disabled]="!puedeUsar(a)" (click)="pedir(a)"
+                [title]="a.tipo === 'ota' && !puedeActualizar()
+                  ? 'Actualizar el firmware es de CPS'
+                  : ''">
+          {{ a.label }}
+        </button>
+      </li>
+    }
+  </ul>
+</section>
+
+<!-- ── La cola ───────────────────────────────────────────────────── -->
+<section class="card">
+  <div class="card-header">Últimos pedidos</div>
+  @if (cargando()) {
+    <div class="card-body text-muted small">Cargando…</div>
+  } @else if (cola().length === 0) {
+    <div class="card-body text-muted small">
+      Todavía no se le pidió nada a este equipo.
+    </div>
+  } @else {
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead>
+          <tr>
+            <th>Qué</th>
+            <th>Estado</th>
+            <th>Cuándo</th>
+            <th>Quién</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (c of cola(); track c.cid) {
+            <tr>
+              <td class="small">
+                {{ c.tipo }}
+                @if (c.detalle) {
+                  <br /><span class="text-muted">{{ c.detalle }}</span>
+                }
+              </td>
+              <td>
+                <span class="badge" [class]="etiquetaEstado(c.estado).clase">
+                  {{ etiquetaEstado(c.estado).texto }}
+                </span>
+              </td>
+              <td class="small text-muted">{{ c.creadoEn | date: 'short' }}</td>
+              <td class="small text-muted">{{ c.pedidoPor ?? '—' }}</td>
+              <td class="text-end">
+                @if (c.cancelable && puedeOperar()) {
+                  <button type="button" class="btn btn-sm btn-outline-secondary"
+                          (click)="cancelarComando(c.cid)">
+                    Cancelar
+                  </button>
+                }
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+    <div class="card-footer text-muted small">
+      Un pedido que ya salió hacia el equipo no se puede cancelar: el panel lo va
+      a recibir igual.
+    </div>
+  }
+</section>

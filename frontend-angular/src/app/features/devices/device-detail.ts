@@ -11,11 +11,13 @@ import { apiErrorMessage } from '../../core/http/api-error';
 import { Device, DeviceState, Maintenance } from '../../core/models/api.models';
 import { Status } from '../../shared/ui/status/status';
 import { Map, MapMarker } from '../../shared/map/map';
+import { DeviceActionsTab } from './device-actions';
 import { DeviceConfigTab } from './device-config';
+import { DeviceRfTab } from './device-rf';
 
 @Component({
   selector: 'app-device-detail',
-  imports: [RouterLink, DatePipe, Map, Status, DeviceConfigTab],
+  imports: [RouterLink, DatePipe, Map, Status, DeviceConfigTab, DeviceRfTab, DeviceActionsTab],
   templateUrl: './device-detail.html',
 })
 export class DeviceDetail {
@@ -41,7 +43,7 @@ export class DeviceDetail {
    * Van por signal y no por ruta hija: la pantalla carga UNA alarma y las vistas
    * comparten esa carga.
    */
-  protected readonly tab = signal<'alarma' | 'instalacion' | 'config'>('alarma');
+  protected readonly tab = signal<'alarma' | 'instalacion' | 'config' | 'acciones'>('alarma');
 
   protected readonly device = signal<Device | null>(null);
   protected readonly maintenances = signal<Maintenance[]>([]);
@@ -334,7 +336,9 @@ export class DeviceDetail {
     toObservable(this.tab)
       .pipe(
         switchMap((tab) =>
-          tab === 'alarma'
+          // También en "acciones": ahí el estado decide si un comando sale ya o
+          // queda esperando a que el equipo despierte, y eso hay que decirlo.
+          tab === 'alarma' || tab === 'acciones'
             ? timer(0, DeviceDetail.PERIODO_MS).pipe(
                 switchMap(() => this.devices.state(this.id).pipe(catchError(() => EMPTY))),
               )

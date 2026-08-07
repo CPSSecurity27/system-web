@@ -1,0 +1,247 @@
+<!--
+  Espejo del inventario de alarmas. Acá NO se entrega a una vivienda: eso es
+  trabajo de Operar y tiene su propio recorrido (municipio, barrio, casa,
+  vecino). El botón de la derecha lleva ahí, igual que el de instalar en alarmas.
+-->
+<div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+  <div>
+    <h2 class="h5 fw-bold mb-0">
+      <i class="icon-key-round text-brand me-2"></i>Inventario de controles
+    </h2>
+    <p class="text-muted small mb-0">
+      Los controles que todavía no están en ninguna vivienda
+    </p>
+  </div>
+  <a routerLink="/controles" class="btn btn-sm btn-brand">
+    <i class="icon-house me-1"></i> Asignar un control
+  </a>
+</div>
+
+@if (aviso(); as texto) {
+  <div class="alert bg-success-soft text-success border-0 py-2 small d-flex" role="status">
+    <i class="icon-circle-check-big me-2 mt-1"></i>
+    <span class="flex-grow-1">{{ texto }}</span>
+    <button type="button" class="btn-close btn-sm ms-2" (click)="descartarAviso()"></button>
+  </div>
+}
+
+@if (error(); as texto) {
+  <div class="alert bg-emergency-soft text-emergency border-0 py-2 small" role="alert">
+    <i class="icon-triangle-alert me-1"></i> {{ texto }}
+  </div>
+}
+
+<div class="row g-3">
+  <!-- ====================== ENTRAR AL STOCK ====================== -->
+  <div class="col-12 col-lg-4">
+    @if (auth.isCps()) {
+      <div class="card border">
+        <div class="card-header bg-white border-bottom">
+          <span class="fw-semibold small">
+            <i class="icon-package-plus me-1"></i> Entregar un lote
+          </span>
+        </div>
+        <div class="card-body">
+          <div class="mb-3">
+            <label for="destino" class="form-label small fw-medium">Cliente</label>
+            <select
+              id="destino"
+              class="form-select"
+              [ngModel]="destino()"
+              (ngModelChange)="destino.set($event === null ? null : +$event)"
+              [ngModelOptions]="{ standalone: true }"
+            >
+              <option [ngValue]="null">Elegí…</option>
+              @for (org of organizaciones(); track org.id) {
+                <option [ngValue]="org.id">{{ org.name }}</option>
+              }
+            </select>
+            <div class="form-text">
+              Los controles pasan a SU stock. Entregar no es asignar: a qué
+              vivienda va cada uno se decide después, en Operar.
+            </div>
+          </div>
+
+          <button
+            type="button"
+            class="btn btn-brand w-100"
+            [disabled]="!puedeEntregar()"
+            (click)="entregarLote()"
+          >
+            @if (saving()) {
+              <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+              Entregando…
+            } @else {
+              Entregar {{ elegidos().size }} control(es)
+            }
+          </button>
+          @if (elegidos().size === 0) {
+            <div class="form-text">Marcá los controles del lote en la lista.</div>
+          }
+        </div>
+      </div>
+    }
+
+    <!--
+      El otro camino al stock: la bolsa que ya está en la mano. El código es lo
+      que demuestra que la tenés — el serial está impreso a la vista.
+    -->
+    <div class="card border" [class.mt-3]="auth.isCps()">
+      <div class="card-header bg-white border-bottom">
+        <span class="fw-semibold small">
+          <i class="icon-package me-1"></i> Sumar uno con su código
+        </span>
+      </div>
+      <div class="card-body">
+        <div class="mb-3">
+          <label for="adopt-serial" class="form-label small fw-medium">Serial</label>
+          <input
+            id="adopt-serial"
+            class="form-control font-monospace"
+            placeholder="CR-000137"
+            autocomplete="off"
+            [ngModel]="adoptSerial()"
+            (ngModelChange)="adoptSerial.set($event)"
+            [ngModelOptions]="{ standalone: true }"
+          />
+        </div>
+        <div class="mb-3">
+          <label for="adopt-codigo" class="form-label small fw-medium">
+            Código de reclamo
+          </label>
+          <input
+            id="adopt-codigo"
+            class="form-control font-monospace"
+            placeholder="K7M2PQ"
+            autocomplete="off"
+            [ngModel]="adoptCodigo()"
+            (ngModelChange)="adoptCodigo.set($event)"
+            [ngModelOptions]="{ standalone: true }"
+          />
+          <div class="form-text">Los dos están impresos en la etiqueta del control.</div>
+        </div>
+
+        <button
+          type="button"
+          class="btn btn-outline-brand w-100"
+          [disabled]="!puedeAdoptar()"
+          (click)="adoptar()"
+        >
+          @if (adoptando()) {
+            <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+            Sumando…
+          } @else {
+            Sumar a mi stock
+          }
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ====================== EL STOCK ====================== -->
+  <div class="col-12 col-lg-8">
+    <div class="card border">
+      <div
+        class="card-header bg-white border-bottom d-flex align-items-center justify-content-between flex-wrap gap-2"
+      >
+        <span class="fw-semibold small">
+          <i class="icon-boxes me-1"></i> En stock
+          <span class="badge text-bg-light border ms-1">{{ stock().length }}</span>
+        </span>
+
+        <input
+          type="search"
+          class="form-control form-control-sm"
+          style="max-width: 200px"
+          placeholder="Serial…"
+          [ngModel]="search()"
+          (ngModelChange)="search.set($event)"
+          [ngModelOptions]="{ standalone: true }"
+          aria-label="Buscar control en stock"
+        />
+      </div>
+
+      <div class="card-body pb-0">
+        <p class="text-muted small mb-3">
+          <i class="icon-info me-1"></i>
+          Solo aparecen los que tienen el <strong>visto bueno de fábrica</strong>:
+          uno recién fabricado todavía no tiene los códigos grabados, y entregarlo
+          sería dar un llavero que no dispara nada.
+        </p>
+      </div>
+
+      @if (loading()) {
+        <div class="text-center text-muted py-5">
+          <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+          Cargando stock…
+        </div>
+      } @else {
+        <div class="table-responsive">
+          <table class="table table-hover align-middle mb-0">
+            <thead>
+              <tr class="small text-muted">
+                @if (auth.isCps()) {
+                  <th scope="col" style="width: 2.5rem">
+                    <input
+                      type="checkbox"
+                      class="form-check-input"
+                      (change)="alternarTodos()"
+                      aria-label="Marcar todos los visibles"
+                    />
+                  </th>
+                }
+                <th scope="col">Serial</th>
+                <th scope="col">Modelo</th>
+                <th scope="col">Stock de</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (control of filtrados(); track control.id) {
+                <tr>
+                  @if (auth.isCps()) {
+                    <td>
+                      <input
+                        type="checkbox"
+                        class="form-check-input"
+                        [checked]="elegido(control.id)"
+                        (change)="alternar(control.id)"
+                        [attr.aria-label]="'Incluir ' + control.serial + ' en el lote'"
+                      />
+                    </td>
+                  }
+                  <td class="small font-monospace fw-medium">
+                    {{ control.serial ?? '—' }}
+                    @if (control.name) {
+                      <br /><span class="text-muted">{{ control.name }}</span>
+                    }
+                  </td>
+                  <td class="small">
+                    @if (control.model) {
+                      {{ control.model.buttons }} botones
+                    } @else {
+                      <span class="text-muted">—</span>
+                    }
+                  </td>
+                  <td class="small">
+                    @if (control.organizationId) {
+                      <span class="badge bg-brand-soft text-brand border">Cliente</span>
+                    } @else {
+                      <span class="badge bg-light text-muted border">Fábrica</span>
+                    }
+                  </td>
+                </tr>
+              } @empty {
+                <tr>
+                  <td [attr.colspan]="auth.isCps() ? 4 : 3" class="text-center text-muted small py-5">
+                    No hay controles en stock. Los que se fabrican entran acá cuando
+                    se los marca <strong>Listo</strong>.
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </div>
+  </div>
+</div>

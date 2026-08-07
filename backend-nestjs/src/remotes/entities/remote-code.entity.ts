@@ -43,6 +43,23 @@ export class RemoteCode {
   @Column({ name: 'code_encrypted', type: 'bytea', select: false })
   codeEncrypted!: Buffer;
 
+  /**
+   * HMAC-SHA256 del código, con UNIQUE. Es lo ÚNICO que detecta un duplicado.
+   *
+   * El cifrado usa IV aleatorio, así que el mismo código guardado dos veces da
+   * bytes distintos y no admite índice único. Sin esta columna, cargar dos veces
+   * el mismo código no fallaba — y como el `dni` que vuelve en una alarma es el
+   * que cargamos nosotros, eso es el monitoreo llamando a la casa equivocada.
+   *
+   * Con CLAVE y no un hash pelado: el código son 5 a 12 dígitos, un espacio que
+   * un SHA-256 sin clave revierte por fuerza bruta enseguida.
+   *
+   * NULL en los controles anteriores a la fábrica: no se puede calcular sin el
+   * claro, y el claro solo lo sabe descifrar NestJS.
+   */
+  @Column({ name: 'code_hmac', type: 'bytea', nullable: true, select: false })
+  codeHmac!: Buffer | null;
+
   /** 1..4. El CHECK de la base lo garantiza. */
   @Column({ type: 'smallint' })
   position!: number;

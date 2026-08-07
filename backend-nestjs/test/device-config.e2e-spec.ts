@@ -21,6 +21,34 @@ import { CLAVE, api, crearApp, login } from './helpers';
 const PSW_FIXTURE = 'psw-de-prueba-no-real';
 const SSID_FIXTURE = 'MuniWiFi';
 
+/** Los 7 modos con su default de fábrica, como los reporta el `cfg_full`. */
+const AUTOOFF_FIXTURE = {
+  suspicious: 120,
+  alert: 300,
+  emergency: 600,
+  fire: 600,
+  medical: 600,
+  silent: 600,
+  panic: 900,
+};
+
+/**
+ * Cinco redes en el máximo que el panel acepta por campo (31 y 63): cada una
+ * es válida, pero las cinco juntas no entran en los 1024 bytes de
+ * `MQTT_IN_PAYLOAD_MAX`.
+ *
+ * Antes esto se armaba con SSIDs de 200 caracteres, que también pasaba de los
+ * 1024 — pero desde que se validan los buffers del panel, ese patch muere una
+ * validación antes y la guarda del payload quedaba sin probar.
+ */
+function redesMaximas(): { ssid: string; psw: string; prio: number }[] {
+  return Array.from({ length: 5 }, (_, i) => ({
+    ssid: `Red${i}`.padEnd(31, 'x'),
+    psw: `Clave${i}`.padEnd(63, 'y'),
+    prio: i + 1,
+  }));
+}
+
 interface Ids {
   orgA: number;
   barrioOrg: number; // managed_by = ORGANIZATION → la org lo gestiona
@@ -45,11 +73,25 @@ describe('Configuración por equipo (e2e)', () => {
     cfgV: number,
     extra: Record<string, unknown> = {},
   ): Promise<void> {
+    // Un `cfg_full` completo, como el que arma el firmware: el merge de
+    // `publish_config` reenvía TODAS estas secciones, así que un espejo pobre
+    // hace que el payload medido sea más chico que el real.
     const payload = {
       cfg_v: cfgV,
       redes: [{ ssid: SSID_FIXTURE, psw: PSW_FIXTURE, prio: 1 }],
-      modulos: { ds3231: true, eeprom: true, supervisor: true, rf: true },
+      modulos: {
+        ds3231: true,
+        eeprom: true,
+        supervisor: true,
+        rf: true,
+        eeprom_slot: 0,
+      },
       tiempos: { send_tele_s: 300 },
+      hora: { tz_offset_s: -10800 },
+      mante: { on: false },
+      alarma: { autooff: { ...AUTOOFF_FIXTURE } },
+      red_avanzada: { roam_rssi: -72, roam_delta: 10, roam_cooldown_s: 300 },
+      rf: { total_codigos: 0, gen: 0 },
       id: { fw: '6.0.1' },
       ...extra,
     };
@@ -216,7 +258,7 @@ describe('Configuración por equipo (e2e)', () => {
     };
     expect(body.estado).toBe('VERIFICADO');
     expect(body.redes).toEqual([
-      { ssid: SSID_FIXTURE, prio: 1, tienePassword: true },
+      { ssid: SSID_FIXTURE, prio: 1, tienePassword: true, bloqueada: false },
     ]);
     // Lo que de verdad importa: la password no aparece EN NINGÚN LADO.
     expect(JSON.stringify(res.body)).not.toContain(PSW_FIXTURE);
@@ -314,15 +356,13 @@ describe('Configuración por equipo (e2e)', () => {
   });
 
   it('un payload de más de 1024 bytes devuelve 400 con el tamaño real', async () => {
-    const largo = 'x'.repeat(200);
-    const redes = Array.from({ length: 5 }, (_, i) => ({
-      ssid: `RedLarga${i}${largo}`,
-      psw: `${largo}${i}`,
-    }));
+    // Cinco redes VÁLIDAS que igual no entran: es el caso que avisó el GtD
+    // («una cfg completa de 5 redes puede no entrar en el panel»), y el único
+    // que la validación por campo no puede agarrar.
     const res = await api(app)
       .put(`/api/devices/${ids.equipoOrg}/config`)
       .set(auth(ana))
-      .send({ patch: { redes } })
+      .send({ patch: { redes: redesMaximas() } })
       .expect(400);
     expect((res.body as { message: string }).message).toContain('1024');
   });
@@ -332,18 +372,10 @@ describe('Configuración por equipo (e2e)', () => {
       `SELECT cfg_v FROM gtd.panel_config WHERE device_id = $1`,
       [ids.equipoOrg],
     );
-    const largo = 'y'.repeat(200);
     await api(app)
       .put(`/api/devices/${ids.equipoOrg}/config`)
       .set(auth(ana))
-      .send({
-        patch: {
-          redes: Array.from({ length: 5 }, (_, i) => ({
-            ssid: `Otra${i}${largo}`,
-            psw: `${largo}${i}`,
-          })),
-        },
-      })
+      .send({ patch: { redes: redesMaximas() } })
       .expect(400);
 
     const [despues] = await dataSource.query<{ cfg_v: string }[]>(
@@ -476,5 +508,410 @@ describe('Configuración por equipo (e2e)', () => {
     };
     expect(body.ultimoScan?.redes).toHaveLength(2);
     expect(body.ultimoScan?.redes[0].guardada).toBe(true);
+  });
+
+  // ── El rol también decide si el formulario se ve editable ──────────
+  // No alcanza con que el PUT devuelva 403: si el GET dice que puede editar,
+  // el MONITOR completa el formulario y se entera recién al apretar Guardar.
+
+  it('el MONITOR ve la configuración pero con puedeEditar en false', async () => {
+    const res = await api(app)
+      .get(`/api/devices/${ids.equipoOrg}/config`)
+      .set(auth(moni))
+      .expect(200);
+
+    const body = res.body as { puedeEditar: boolean; estado: string };
+    expect(body.estado).not.toBe('SIN_ESPEJO');
+    expect(body.puedeEditar).toBe(false);
+  });
+
+  it('puedeVerPasswords distingue a CPS de la organización', async () => {
+    const deCps = await api(app)
+      .get(`/api/devices/${ids.equipoOrg}/config`)
+      .set(auth(cps))
+      .expect(200);
+    const deOrg = await api(app)
+      .get(`/api/devices/${ids.equipoOrg}/config`)
+      .set(auth(ana))
+      .expect(200);
+
+    expect((deCps.body as { puedeVerPasswords: boolean }).puedeVerPasswords).toBe(true);
+    expect((deOrg.body as { puedeVerPasswords: boolean }).puedeVerPasswords).toBe(false);
+  });
+
+  // ── Los límites que faltaban ───────────────────────────────────────
+
+  it('un huso horario fuera de ±14 h devuelve 400 y no llega al equipo', async () => {
+    // El firmware descarta la cfg ENTERA sin mandar ack: si esto pasara, la
+    // pantalla quedaría esperando una confirmación que no existe.
+    const res = await api(app)
+      .put(`/api/devices/${ids.equipoOrg}/config`)
+      .set(auth(ana))
+      .send({ patch: { hora: { tz_offset_s: 60000 } } })
+      .expect(400);
+    expect(JSON.stringify(res.body)).toContain('50400');
+  });
+
+  it('el huso horario de Argentina se acepta', async () => {
+    await api(app)
+      .put(`/api/devices/${ids.equipoOrg}/config`)
+      .set(auth(ana))
+      .send({ patch: { hora: { tz_offset_s: -10800 } } })
+      .expect(200);
+  });
+
+  it('un auto-apagado fuera de rango devuelve 400 nombrando el modo', async () => {
+    const res = await api(app)
+      .put(`/api/devices/${ids.equipoOrg}/config`)
+      .set(auth(ana))
+      .send({ patch: { alarma: { autooff: { fire: 30 } } } })
+      .expect(400);
+    const cuerpo = JSON.stringify(res.body);
+    expect(cuerpo).toContain('fire');
+    expect(cuerpo).toContain('120');
+  });
+
+  it('el auto-apagado válido se publica y viaja en el payload', async () => {
+    await api(app)
+      .put(`/api/devices/${ids.equipoOrg}/config`)
+      .set(auth(ana))
+      .send({ patch: { alarma: { autooff: { fire: 900, panic: 1200 } } } })
+      .expect(200);
+
+    const [fila] = await dataSource.query<{ payload: Record<string, any> }[]>(
+      `SELECT payload FROM gtd.panel_config WHERE device_id = $1`,
+      [ids.equipoOrg],
+    );
+    expect(fila.payload.alarma.autooff.fire).toBe(900);
+    expect(fila.payload.alarma.autooff.panic).toBe(1200);
+  });
+
+  it('un SSID más largo que el buffer del panel devuelve 400', async () => {
+    const res = await api(app)
+      .put(`/api/devices/${ids.equipoOrg}/config`)
+      .set(auth(ana))
+      .send({ patch: { redes: [{ ssid: 'x'.repeat(32), psw: PSW_FIXTURE }] } })
+      .expect(400);
+    expect(JSON.stringify(res.body)).toContain('31');
+  });
+
+  it('el slot de eeprom fuera de 0..1 devuelve 400', async () => {
+    await api(app)
+      .put(`/api/devices/${ids.equipoOrg}/config`)
+      .set(auth(ana))
+      .send({ patch: { modulos: { eeprom_slot: 2 } } })
+      .expect(400);
+  });
+
+  it('el roaming incompleto devuelve 400: a medias descarta la cfg entera', async () => {
+    const res = await api(app)
+      .put(`/api/devices/${ids.equipoOrg}/config`)
+      .set(auth(ana))
+      .send({ patch: { red_avanzada: { roam_rssi: -70 } } })
+      .expect(400);
+    expect(JSON.stringify(res.body)).toContain('roam_delta');
+  });
+
+  // ── Vuelta a fábrica ───────────────────────────────────────────────
+
+  /** Un equipo propio: estos casos ensucian la cola y no deben arrastrar al resto. */
+  async function equipoPropio(mac: string, seq: number): Promise<number> {
+    const [bm] = await dataSource.query<{ id: number }[]>(
+      `SELECT id FROM board_model WHERE code = 'ALOY'`,
+    );
+    const [equipo] = await dataSource.query<{ id: number }[]>(
+      `INSERT INTO device (serial, mac, type, status, board_model_id, board_seq,
+                           neighborhood_id, latitude, longitude)
+       VALUES ($1,$2,'COMMUNITY_ALARM','OPERATIONAL',$3,$4,$5,-31.42,-64.18)
+       RETURNING id`,
+      ['AV-' + mac, mac, bm.id, seq, ids.barrioOrg],
+    );
+    return equipo.id;
+  }
+
+  it('el tele reconcilia solo: con el cfg_v del panel la cola queda applied', async () => {
+    // La red silenciosa de la escalera de confirmación. El `tele` es retained,
+    // así que es la ÚNICA señal que sobrevive a un GtD caído: si el ack y el
+    // cfg_full encadenado se pierden, esto es lo que saca la pantalla de
+    // "esperando confirmación".
+    const mac = 'AABBCCDDEE05';
+    const equipoId = await equipoPropio(mac, 5);
+    await sembrarEspejo(equipoId, 5);
+
+    await api(app)
+      .put(`/api/devices/${equipoId}/config`)
+      .set(auth(ana))
+      .send({ patch: { tiempos: { send_tele_s: 600 } } })
+      .expect(200);
+
+    const [encolada] = await dataSource.query<{ estado: string; cfg_v: string }[]>(
+      `SELECT estado, cfg_v FROM gtd.panel_config WHERE device_id = $1`,
+      [equipoId],
+    );
+    expect(encolada.estado).toBe('pending');
+
+    // Llega un tele diciendo que corre esa misma versión.
+    await dataSource.query(
+      `SELECT gtd.upsert_panel_state(p_mac => $1, p_estado => 'online', p_cfg_v => $2::BIGINT)`,
+      [mac, encolada.cfg_v],
+    );
+
+    const [despues] = await dataSource.query<{ estado: string }[]>(
+      `SELECT estado FROM gtd.panel_config WHERE device_id = $1`,
+      [equipoId],
+    );
+    expect(despues.estado).toBe('applied');
+  });
+
+  it('con la cola en stale el estado es DESACTUALIZADA, no VERIFICADO', async () => {
+    const equipo = { id: await equipoPropio('AABBCCDDEE04', 4) };
+    await sembrarEspejo(equipo.id, 5);
+
+    await api(app)
+      .put(`/api/devices/${equipo.id}/config`)
+      .set(auth(ana))
+      .send({ patch: { tiempos: { send_tele_s: 600 } } })
+      .expect(200);
+
+    // El panel aplicó la 6 y la espejó: hasta acá, verificado.
+    await sembrarEspejo(equipo.id, 6);
+    const antes = await api(app)
+      .get(`/api/devices/${equipo.id}/config`)
+      .set(auth(ana))
+      .expect(200);
+    expect((antes.body as { estado: string }).estado).toBe('VERIFICADO');
+
+    // Ahora el factory: el panel reporta cfg_v = 0 y la cola queda stale. El
+    // espejo NO se deja pisar por una versión más vieja, así que sigue en 6 —
+    // y la comparación de versiones daría VERIFICADO sobre defaults de fábrica.
+    await dataSource.query(
+      `SELECT gtd.upsert_panel_state(p_mac => $1, p_estado => 'online', p_cfg_v => 0)`,
+      ['AABBCCDDEE04'],
+    );
+
+    const despues = await api(app)
+      .get(`/api/devices/${equipo.id}/config`)
+      .set(auth(ana))
+      .expect(200);
+    expect((despues.body as { estado: string }).estado).toBe('DESACTUALIZADA');
+  });
+
+  // ── Comandos al panel ──────────────────────────────────────────────
+
+  it('un comando se encola con su payload y aparece en la lista', async () => {
+    await api(app)
+      .post(`/api/devices/${ids.equipoOrg}/commands`)
+      .set(auth(ana))
+      .send({ tipo: 'estado' })
+      .expect(201);
+
+    const res = await api(app)
+      .get(`/api/devices/${ids.equipoOrg}/commands`)
+      .set(auth(ana))
+      .expect(200);
+
+    const cola = res.body as {
+      comandos: {
+        tipo: string;
+        estado: string;
+        cancelable: boolean;
+        pedidoPor: string | null;
+      }[];
+      puedeOperar: boolean;
+    };
+    expect(cola.puedeOperar).toBe(true);
+    const estado = cola.comandos.find((c) => c.tipo === 'estado');
+    expect(estado?.estado).toBe('pending');
+    expect(estado?.cancelable).toBe(true);
+    expect(estado?.pedidoPor).toBe('Ana Admin');
+  });
+
+  it('el MONITOR ve la cola pero no puede encolar', async () => {
+    await api(app)
+      .get(`/api/devices/${ids.equipoOrg}/commands`)
+      .set(auth(moni))
+      .expect(200);
+    await api(app)
+      .post(`/api/devices/${ids.equipoOrg}/commands`)
+      .set(auth(moni))
+      .send({ tipo: 'restart' })
+      .expect(403);
+  });
+
+  it('con managed_by = CPS la organización no manda comandos', async () => {
+    await api(app)
+      .post(`/api/devices/${ids.equipoCps}/commands`)
+      .set(auth(ana))
+      .send({ tipo: 'restart' })
+      .expect(403);
+  });
+
+  it('destrabar una red sin decir cuál devuelve 400', async () => {
+    await api(app)
+      .post(`/api/devices/${ids.equipoOrg}/commands`)
+      .set(auth(ana))
+      .send({ tipo: 'red' })
+      .expect(400);
+  });
+
+  it('un tipo que no está en el catálogo devuelve 400', async () => {
+    // `rf` y `cal` existen en el firmware y en el CHECK de la base, pero la web
+    // todavía no los manda: el DTO es la puerta.
+    for (const tipo of ['rf', 'cal', 'inventado']) {
+      await api(app)
+        .post(`/api/devices/${ids.equipoOrg}/commands`)
+        .set(auth(ana))
+        .send({ tipo })
+        .expect(400);
+    }
+  });
+
+  // ── factory: la fricción no se saltea ──────────────────────────────
+
+  it('factory sin escribir el serial devuelve 400', async () => {
+    const res = await api(app)
+      .post(`/api/devices/${ids.equipoOrg}/commands`)
+      .set(auth(ana))
+      .send({ tipo: 'factory' })
+      .expect(400);
+    expect(JSON.stringify(res.body)).toContain('AV-AABBCCDDEE01');
+  });
+
+  it('factory con el serial de OTRO equipo devuelve 400', async () => {
+    await api(app)
+      .post(`/api/devices/${ids.equipoOrg}/commands`)
+      .set(auth(ana))
+      .send({ tipo: 'factory', confirmacion: 'AV-AABBCCDDEE02' })
+      .expect(400);
+  });
+
+  it('factory con el serial correcto viaja con el confirm que el panel espera', async () => {
+    await api(app)
+      .post(`/api/devices/${ids.equipoOrg}/commands`)
+      .set(auth(ana))
+      .send({ tipo: 'factory', confirmacion: 'AV-AABBCCDDEE01' })
+      .expect(201);
+
+    const [fila] = await dataSource.query<{ payload: { confirm: string } }[]>(
+      `SELECT payload FROM gtd.commands
+        WHERE device_id = $1 AND tipo = 'factory'
+        ORDER BY created_at DESC LIMIT 1`,
+      [ids.equipoOrg],
+    );
+    expect(fila.payload.confirm).toBe('AV-AABBCCDDEE01');
+  });
+
+  // ── Disparo remoto: la única acción que suma al MONITOR ────────────
+
+  it('el MONITOR SÍ puede disparar la alarma', async () => {
+    await api(app)
+      .post(`/api/devices/${ids.equipoOrg}/alarm`)
+      .set(auth(moni))
+      .send({ modo: 'emergency' })
+      .expect(201);
+
+    const [fila] = await dataSource.query<{ payload: { mode: string } }[]>(
+      `SELECT payload FROM gtd.commands
+        WHERE device_id = $1 AND tipo = 'alarma'
+        ORDER BY created_at DESC LIMIT 1`,
+      [ids.equipoOrg],
+    );
+    expect(fila.payload.mode).toBe('emergency');
+  });
+
+  it('un modo que no existe devuelve 400', async () => {
+    await api(app)
+      .post(`/api/devices/${ids.equipoOrg}/alarm`)
+      .set(auth(ana))
+      .send({ modo: 'incendio' }) // el slug del firmware es `fire`
+      .expect(400);
+  });
+
+  it('el monitor tampoco dispara en un barrio que opera CPS', async () => {
+    await api(app)
+      .post(`/api/devices/${ids.equipoCps}/alarm`)
+      .set(auth(moni))
+      .send({ modo: 'off' })
+      .expect(403);
+  });
+
+  // ── Cancelar ───────────────────────────────────────────────────────
+
+  it('un comando pendiente se cancela; uno ya enviado, no', async () => {
+    const encolar = await api(app)
+      .post(`/api/devices/${ids.equipoOrg}/commands`)
+      .set(auth(ana))
+      .send({ tipo: 'i2c_scan' })
+      .expect(201);
+
+    const cid = (
+      encolar.body as { comandos: { cid: string; tipo: string }[] }
+    ).comandos.find((c) => c.tipo === 'i2c_scan')!.cid;
+
+    const cancelado = await api(app)
+      .post(`/api/devices/${ids.equipoOrg}/commands/${cid}/cancel`)
+      .set(auth(ana))
+      .expect(201);
+    expect(
+      (
+        cancelado.body as { comandos: { cid: string; estado: string }[] }
+      ).comandos.find((c) => c.cid === cid)?.estado,
+    ).toBe('cancelled');
+
+    // Cancelar dos veces no revive nada: ya no está pendiente.
+    await api(app)
+      .post(`/api/devices/${ids.equipoOrg}/commands/${cid}/cancel`)
+      .set(auth(ana))
+      .expect(409);
+  });
+
+  it('no se puede cancelar el comando de otro equipo', async () => {
+    const [ajeno] = await dataSource.query<{ cid: string }[]>(
+      `SELECT gtd.enqueue_command($1, 'estado', '{}'::jsonb, NULL) AS cid`,
+      [ids.equipoCps],
+    );
+    await api(app)
+      .post(`/api/devices/${ids.equipoOrg}/commands/${ajeno.cid}/cancel`)
+      .set(auth(ana))
+      .expect(404);
+  });
+
+  // ── Copiar configuración de otro equipo ────────────────────────────
+
+  it('las fuentes para copiar son del mismo barrio y con espejo', async () => {
+    const res = await api(app)
+      .get(`/api/devices/${ids.equipoOrg}/config/sources`)
+      .set(auth(ana))
+      .expect(200);
+
+    const fuentes = res.body as { deviceId: number; serial: string }[];
+    const ids_ = fuentes.map((f) => f.deviceId);
+    // El de otro barrio no está, el sin espejo tampoco, y uno no se copia a sí mismo.
+    expect(ids_).not.toContain(ids.equipoCps);
+    expect(ids_).not.toContain(ids.equipoSinEspejo);
+    expect(ids_).not.toContain(ids.equipoOrg);
+  });
+
+  // ── Redes bloqueadas por el equipo ─────────────────────────────────
+
+  it('una red en la lista negra del panel viaja marcada', async () => {
+    await sembrarEspejo(ids.equipoCps, 9, {
+      redes: [
+        { ssid: SSID_FIXTURE, psw: PSW_FIXTURE, prio: 1, bl_perm: true },
+        { ssid: 'Vecino', psw: PSW_FIXTURE, prio: 2, bl_perm: false },
+      ],
+    });
+
+    const res = await api(app)
+      .get(`/api/devices/${ids.equipoCps}/config`)
+      .set(auth(ana))
+      .expect(200);
+
+    const redes = (res.body as { redes: { ssid: string; bloqueada: boolean }[] })
+      .redes;
+    expect(redes[0].bloqueada).toBe(true);
+    expect(redes[1].bloqueada).toBe(false);
+    // Y sigue sin haber una sola password en la respuesta.
+    expect(JSON.stringify(res.body)).not.toContain(PSW_FIXTURE);
   });
 });

@@ -11,9 +11,10 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, IsNull, Not, Repository } from 'typeorm';
-import { randomBytes } from 'node:crypto';
 import type { AuthenticatedUser } from '../auth/auth.service';
 import { AuditService } from '../common/audit.service';
+import { generarClaimCode } from '../common/claim-code';
+import { esViolacionDeClaveForanea } from '../common/db-errors';
 import {
   AccountType,
   DeviceMilestoneSource,
@@ -344,7 +345,7 @@ export class DevicesService {
           ? DeviceStatus.OPERATIONAL
           : DeviceStatus.INVENTORY,
         // El claim code nace con el equipo: es lo que el técnico usa después.
-        claimCode: dto.neighborhoodId ? null : generateClaimCode(),
+        claimCode: dto.neighborhoodId ? null : generarClaimCode(),
         manufacturedAt: dto.manufacturedAt
           ? new Date(dto.manufacturedAt)
           : new Date(),
@@ -495,7 +496,7 @@ export class DevicesService {
       updatedBy: actor.id,
       // Sin claim code no se puede instalar, y el anterior se imprimió en una
       // etiqueta que puede andar dando vueltas. Uno nuevo.
-      claimCode: generateClaimCode(),
+      claimCode: generarClaimCode(),
     });
 
     await this.audit.record({
@@ -1454,30 +1455,6 @@ function nonInventoryStatuses(): DeviceStatus[] {
   return Object.values(DeviceStatus).filter(
     (s) => s !== DeviceStatus.INVENTORY,
   );
-}
-
-/** 6 caracteres legibles (sin 0/O, 1/I): suficiente junto al serial. */
-function generateClaimCode(): string {
-  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  const bytes = randomBytes(6);
-  return [...bytes].map((b) => alphabet[b % alphabet.length]).join('');
-}
-
-/**
- * Postgres usa DOS códigos para esto y hay que mirar los dos.
- *
- * `23503` es `foreign_key_violation`, el genérico. Pero un `ON DELETE RESTRICT`
- * —que es justo lo que tiene `event.device_id`— levanta `23001`,
- * `restrict_violation`, que es otro código. Mirando solo el primero, borrar un
- * equipo con eventos se escapaba como un 500 con el nombre de una constraint
- * adentro en vez del mensaje que explica qué pasó. Verificado contra la base.
- *
- * Se mira el código y no el mensaje porque el mensaje viene en el idioma del
- * servidor y cambia entre versiones; el código es parte del contrato de SQL.
- */
-function esViolacionDeClaveForanea(e: unknown): boolean {
-  const code = (e as { code?: string })?.code;
-  return code === '23503' || code === '23001';
 }
 
 /** Quién puede disponer de un equipo, y por qué no. Ver `assertPuedeDisponer`. */

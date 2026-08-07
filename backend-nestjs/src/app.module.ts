@@ -9,6 +9,7 @@ import { ContractsModule } from './contracts/contracts.module';
 import { DatabaseModule } from './database/database.module';
 import { DevicesModule } from './devices/devices.module';
 import { EventsModule } from './events/events.module';
+import { FirmwareModule } from './firmware/firmware.module';
 import { GeographyModule } from './geography/geography.module';
 import { HomesModule } from './homes/homes.module';
 import { RemotesModule } from './remotes/remotes.module';
@@ -34,6 +35,7 @@ import { validateEnv } from './config/env.validation';
     DevicesModule,
     RemotesModule,
     EventsModule,
+    FirmwareModule,
   ],
   controllers: [AppController],
   providers: [AppService],

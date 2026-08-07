@@ -66,7 +66,7 @@ export class Dashboard {
       },
       {
         // El stock: acá está el RECLAMO con el que se instalan las alarmas.
-        route: '/inventario/stock',
+        route: '/inventario/alarmas',
         icon: 'icon-package',
         title: 'Inventario',
         description: 'Los equipos que todavía no están en servicio',

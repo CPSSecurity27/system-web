@@ -66,26 +66,49 @@ describe('buildNav', () => {
     }
   });
 
-  it('CPS ve las cuatro secciones', () => {
+  it('CPS ve las cinco secciones', () => {
     expect(sectionLabels(flags({ isCps: true, isManager: true }))).toEqual([
       'Operar',
       'Inventario',
+      // Sección propia desde 2026-08-06: un firmware no es stock, y lo que se
+      // decide ahí vale para los equipos de todos los clientes.
+      'Infraestructura',
       'Administrar',
       'Mi Empresa',
     ]);
   });
 
+  it('las actualizaciones son SOLO de CPS', () => {
+    // Una organización recibe equipos, no les instala software. Mismo criterio
+    // que la fábrica.
+    for (const f of [
+      flags({ isManager: true, isOrgManager: true }),
+      flags({ isManager: true }),
+      flags({}),
+    ]) {
+      expect(sectionLabels(f)).not.toContain('Infraestructura');
+      expect(buildNav(f).flatMap((s) => s.items.map((i) => i.link))).not.toContain(
+        '/actualizaciones',
+      );
+    }
+  });
+
   it('CPS ve todo el inventario, fábrica incluida', () => {
     expect(linksOf(flags({ isCps: true, isManager: true }), 'Inventario')).toEqual([
-      '/inventario/stock',
-      '/inventario/fabrica',
+      // Una entrada por familia, y la fábrica al final: es el paso anterior
+      // a todo esto y es lo único solo-CPS.
+      '/inventario/alarmas',
       '/inventario/controles',
+      '/inventario/fabrica',
     ]);
   });
 
   it('el cliente ve SU inventario: alarmas y controles, pero NO la fábrica', () => {
     const f = flags({ isManager: true, isOrgManager: true });
-    expect(linksOf(f, 'Inventario')).toEqual(['/inventario/stock', '/inventario/controles']);
+    expect(linksOf(f, 'Inventario')).toEqual([
+      '/inventario/alarmas',
+      '/inventario/controles',
+    ]);
   });
 
   it('el vecino no ve inventario', () => {

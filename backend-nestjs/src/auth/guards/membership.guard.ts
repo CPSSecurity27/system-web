@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import {
+  cumpleMembresia,
   MembershipRequirement,
   REQUIRED_MEMBERSHIP,
 } from '../decorators/roles.decorator';
@@ -32,13 +33,7 @@ export class MembershipGuard implements CanActivate {
 
     const { user } = context.switchToHttp().getRequest<RequestWithUser>();
 
-    const allowed = user.memberships.some((m) =>
-      required.some(
-        (r) => r.accountType === m.accountType && r.roles.includes(m.role),
-      ),
-    );
-
-    if (!allowed) {
+    if (!cumpleMembresia(user.memberships, required)) {
       throw new ForbiddenException('No tenés permisos para esta operación');
     }
     return true;

@@ -1,0 +1,229 @@
+<!--
+  La base de controles del equipo.
+
+  Comparte pestaña con la configuración pero NO es configuración: no tiene
+  cfg_v, no se mergea y no entra en el diff de "vas a cambiar". Por eso tiene su
+  propio botón y su propio estado.
+-->
+<section class="card mb-3">
+  <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <span>Controles remotos cargados en el equipo</span>
+    @if (estado(); as e) {
+      <span class="small text-muted">
+        {{ e.capacidad.ocupados }} de {{ e.capacidad.tope }} vecinos
+        @if (casiLleno()) {
+          <span class="badge bg-warning-soft text-warning border ms-1"> casi lleno </span>
+        }
+      </span>
+    }
+  </div>
+
+  <div class="card-body">
+    @if (cargando()) {
+      <p class="text-muted mb-0">Cargando la base de controles…</p>
+    } @else if (estado(); as e) {
+      <p class="small text-muted">
+        Los códigos de los controles viven en la memoria del equipo.
+        <strong>Un código que el equipo no tiene no dispara nada</strong>: el vecino aprieta el
+        botón y no pasa absolutamente nada. Acá se cargan los de las viviendas que tienen a esta
+        alarma como preferida.
+      </p>
+
+      @if (error(); as texto) {
+        <div class="alert alert-danger py-2 small">{{ texto }}</div>
+      }
+
+      <!-- ── Los que no le tocan a NINGÚN equipo ──────────────────────
+           Su vivienda no eligió alarma preferida, así que quedan afuera del
+           plan de todos los paneles. Sin este aviso la pantalla muestra cero
+           pendientes, que es indistinguible de "todo al día" — y es la mentira
+           que hace perder una hora buscando por qué un control asignado no
+           aparece. -->
+      @if (e.sinAlarma.length > 0) {
+        <div class="alert alert-warning py-2 small">
+          <strong>
+            {{ e.sinAlarma.length }}
+            {{
+              e.sinAlarma.length === 1
+                ? 'control de este barrio no se va'
+                : 'controles de este barrio no se van'
+            }}
+            a cargar en ninguna alarma.
+          </strong>
+          <p class="mb-2">
+            Su vivienda no tiene <strong>alarma preferida</strong>, y el plan de cada equipo sale
+            justamente de las casas que lo eligieron. El vecino tiene el llavero y ninguna alarma lo
+            conoce.
+          </p>
+          <ul class="list-unstyled mb-0">
+            @for (c of e.sinAlarma; track c.remoteId) {
+              <li class="mb-1">
+                <span class="font-monospace">{{ c.serial ?? '—' }}</span>
+                <span class="text-muted"> · {{ c.direccion }}</span>
+                <a [routerLink]="['/viviendas', c.homeId]" fragment="ubicacion" class="ms-2">
+                  elegirle una alarma
+                </a>
+              </li>
+            }
+          </ul>
+        </div>
+      }
+
+      <!-- ── El resumen ──────────────────────────────────────────── -->
+      <div class="d-flex gap-4 flex-wrap mb-3">
+        <div>
+          <div class="h4 mb-0">{{ e.alDia }}</div>
+          <div class="small text-muted">al día</div>
+        </div>
+        <div>
+          <div class="h4 mb-0" [class.text-primary]="e.pendientes.length > 0">
+            {{ e.pendientes.length }}
+          </div>
+          <div class="small text-muted">para cargar</div>
+        </div>
+        <div>
+          <div class="h4 mb-0" [class.text-warning]="e.bajas.length > 0">
+            {{ e.bajas.length }}
+          </div>
+          <div class="small text-muted">para borrar</div>
+        </div>
+        @if (e.salteados.length > 0) {
+          <div>
+            <div class="h4 mb-0">{{ e.salteados.length }}</div>
+            <div class="small text-muted">no se pueden</div>
+          </div>
+        }
+      </div>
+
+      <!-- ── La tanda en curso o la última ───────────────────────── -->
+      @if (e.tanda; as t) {
+        <div
+          class="alert py-2 small"
+          [class.alert-info]="t.estado === 'en_curso'"
+          [class.alert-success]="t.estado === 'terminada'"
+          [class.alert-danger]="t.estado === 'con_error'"
+        >
+          @switch (t.estado) {
+            @case ('en_curso') {
+              <strong>Cargando: {{ t.hechos }} de {{ t.total }} lotes.</strong>
+              <!--
+                Honestidad: los lotes salen de a uno y cada uno espera la
+                respuesta del equipo. Si está durmiendo, esto avanza cuando
+                despierte, no ahora.
+              -->
+              Van de a uno y cada uno espera que el equipo conteste. Si el equipo está durmiendo,
+              sigue cuando despierte.
+            }
+            @case ('terminada') {
+              El equipo confirmó los {{ t.total }} lotes.
+            }
+            @case ('con_error') {
+              <strong>El equipo rechazó un lote</strong> y lo que quedaba no se mandó: cargar sobre
+              una base a medias encadena errores.
+              @if (t.detalle) {
+                <div class="mt-1">Dijo: {{ t.detalle }}</div>
+              }
+            }
+          }
+        </div>
+      }
+
+      <!-- ── Para cargar ─────────────────────────────────────────── -->
+      @if (e.pendientes.length > 0) {
+        <h6 class="small fw-bold text-uppercase text-muted">Para cargar</h6>
+        <div class="table-responsive mb-3">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr class="small text-muted">
+                <th scope="col">Control</th>
+                <th scope="col">Vivienda</th>
+                <th scope="col">Lo lleva</th>
+                <th scope="col">DNI</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (c of e.pendientes; track c.remoteId) {
+                <tr>
+                  <td class="small font-monospace">{{ c.serial ?? '—' }}</td>
+                  <td class="small">{{ c.direccion }}</td>
+                  <td class="small">{{ c.portador ?? '—' }}</td>
+                  <td class="small font-monospace">{{ c.dni ?? '—' }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+
+      <!-- ── Para borrar ─────────────────────────────────────────── -->
+      @if (e.bajas.length > 0) {
+        <h6 class="small fw-bold text-uppercase text-muted">Para borrar</h6>
+        <ul class="list-group list-group-flush mb-3">
+          @for (b of e.bajas; track b.dni) {
+            <li class="list-group-item px-0 py-1 small">
+              <span class="font-monospace">{{ b.serial ?? 'DNI ' + b.dni }}</span>
+              <span class="text-muted"> — {{ b.motivo }}</span>
+            </li>
+          }
+        </ul>
+      }
+
+      <!-- ── Los que no se pueden cargar ─────────────────────────── -->
+      @if (e.salteados.length > 0) {
+        <h6 class="small fw-bold text-uppercase text-muted">No se pueden cargar</h6>
+        <ul class="list-group list-group-flush mb-3">
+          @for (s of e.salteados; track s.remoteId) {
+            <li class="list-group-item px-0 py-2 small">
+              <span class="font-monospace">{{ s.serial ?? '—' }}</span>
+              <span class="text-muted"> · {{ s.direccion }}</span>
+              <!-- La explicación la escribe el backend: la regla es del
+                   firmware y no se reescribe en dos idiomas. -->
+              <div class="text-muted">{{ s.explicacion }}</div>
+            </li>
+          }
+        </ul>
+      }
+
+      @if (aMandar() === 0 && !enCurso()) {
+        <p class="small text-muted mb-3">
+          El equipo tiene exactamente los controles que le corresponden.
+        </p>
+      }
+
+      <!-- ── El botón ────────────────────────────────────────────── -->
+      <div class="d-flex gap-2 align-items-center flex-wrap">
+        <button
+          type="button"
+          class="btn btn-primary"
+          [disabled]="!e.puedeSincronizar || enviando() || enCurso() || aMandar() === 0"
+          (click)="sincronizar()"
+        >
+          @if (enviando()) {
+            Enviando…
+          } @else {
+            Cargar la base en el equipo
+          }
+        </button>
+        <button
+          type="button"
+          class="btn btn-outline-secondary"
+          [disabled]="cargando()"
+          (click)="refrescar()"
+        >
+          Actualizar
+        </button>
+
+        @if (e.impedimento; as motivo) {
+          <span class="small text-muted">{{ motivo }}</span>
+        }
+      </div>
+
+      @if (e.pendientes.length > 5 && e.puedeSincronizar && !enCurso()) {
+        <p class="small text-muted mt-2 mb-0">
+          Son {{ estimado().lotes }} lotes: alrededor de {{ estimado().segundos }} segundos con el
+          equipo despierto. No se puede apurar — cada alta le hace barrer su memoria entera.
+        </p>
+      }
+    }
+  </div>
+</section>

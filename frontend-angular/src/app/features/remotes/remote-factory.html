@@ -1,0 +1,472 @@
+<!--
+  Espejo de la fábrica de alarmas: mismas cajas, mismas clases, mismos tamaños.
+  Lo único que cambia es el contenido, porque el trabajo es distinto — pero el
+  operario que pasa de una pestaña a la otra no tiene que reaprender dónde está
+  cada cosa.
+-->
+<div class="mb-3">
+  <h2 class="h5 fw-bold mb-0"><i class="icon-key text-brand me-2"></i>Fábrica de controles</h2>
+  <p class="text-muted small mb-0">
+    El sistema genera el número de serie y los códigos; se graban en el control,
+    se imprime la etiqueta y recién ahí se le da el visto bueno.
+  </p>
+</div>
+
+<div class="row g-3">
+  <!-- ====================== FABRICAR (la estación) ====================== -->
+  <div class="col-12 col-lg-4">
+    <div class="card border">
+      <div class="card-header bg-white border-bottom">
+        <span class="fw-semibold small">
+          <i class="icon-key-round me-1"></i> Fabricar control
+        </span>
+      </div>
+      <div class="card-body">
+        <div class="mb-3">
+          <label for="modelo" class="form-label small fw-medium">Modelo</label>
+          <select
+            id="modelo"
+            class="form-select"
+            [ngModel]="modeloId()"
+            (ngModelChange)="modeloId.set(+$event)"
+            [ngModelOptions]="{ standalone: true }"
+          >
+            <option [ngValue]="null">Elegí…</option>
+            @for (m of modelos(); track m.id) {
+              <option [ngValue]="m.id">{{ m.code }} — {{ m.name }}</option>
+            }
+          </select>
+          @if (modeloElegido()) {
+            <div class="form-text">
+              Lleva <strong>{{ cantidadCodigos() }} códigos</strong>, uno por botón:
+              A emergencia · B sospechoso · C alerta · D apagar.
+            </div>
+          }
+        </div>
+
+        @if (botonesDeMas() > 0) {
+          <div class="alert bg-warning-soft border-0 py-2 small" role="alert">
+            <i class="icon-triangle-alert me-1"></i>
+            {{ botonesDeMas() }} botón(es) de este modelo no se pueden registrar: el
+            equipo guarda 4 códigos por vecino y nada más.
+          </div>
+        }
+
+        <!--
+          Los tres caminos llegan al mismo lugar: cuatro números grabados en el
+          control. Lo que cambia es quién los elige.
+        -->
+        <label class="form-label small fw-medium">Códigos</label>
+        <div class="btn-group w-100 mb-2" role="group" aria-label="Cómo salen los códigos">
+          <button
+            type="button"
+            class="btn btn-sm"
+            [class.btn-brand]="modo() === 'azar'"
+            [class.btn-outline-secondary]="modo() !== 'azar'"
+            (click)="cambiarModo('azar')"
+          >
+            Al azar
+          </button>
+          <button
+            type="button"
+            class="btn btn-sm"
+            [class.btn-brand]="modo() === 'correlativo'"
+            [class.btn-outline-secondary]="modo() !== 'correlativo'"
+            (click)="cambiarModo('correlativo')"
+          >
+            Correlativos
+          </button>
+          <button
+            type="button"
+            class="btn btn-sm"
+            [class.btn-brand]="modo() === 'manual'"
+            [class.btn-outline-secondary]="modo() !== 'manual'"
+            (click)="cambiarModo('manual')"
+          >
+            A mano
+          </button>
+        </div>
+
+        @switch (modo()) {
+          @case ('azar') {
+            <div class="form-text mb-3">
+              Los sortea el sistema. Es lo correcto: un código que se puede adivinar
+              es un control que se puede clonar.
+            </div>
+          }
+          @case ('correlativo') {
+            <div class="form-text mb-3">
+              Siguen la numeración del último emitido, así una tanda queda en orden.
+              Los que ya estén usados se saltean solos.
+            </div>
+          }
+          @case ('manual') {
+            <div class="mb-3">
+              <div class="form-text mb-2">
+                Para el control que ya trae sus códigos y no se deja regrabar: se
+                copian tal cual están. <strong>La posición no es el orden</strong>:
+                es qué hace cada botón.
+              </div>
+
+              @if (!modeloElegido()) {
+                <div class="form-text">
+                  Elegí el modelo primero: es lo que dice cuántos códigos van.
+                </div>
+              }
+
+              @for (campo of camposManuales(); track campo.position) {
+                <div class="mb-2">
+                  <label class="form-label small mb-1" [for]="'codigo-' + campo.position">
+                    <span class="fw-semibold">{{ campo.boton }}</span>
+                    <span class="text-muted"> · {{ campo.label }}</span>
+                  </label>
+                  <input
+                    [id]="'codigo-' + campo.position"
+                    type="text"
+                    inputmode="numeric"
+                    autocomplete="off"
+                    class="form-control form-control-sm font-monospace"
+                    [class.is-invalid]="campo.error !== null"
+                    [value]="campo.valor"
+                    (input)="escribirCodigo(campo.indice, $any($event.target).value)"
+                    placeholder="Número grabado en el control"
+                  />
+                  @if (campo.error) {
+                    <div class="form-text text-emergency">{{ campo.error }}</div>
+                  }
+                </div>
+              }
+
+              @if (modeloElegido() && !manualCompleto()) {
+                <div class="form-text">
+                  Van los {{ cantidadCodigos() }}, o ninguno: un control a medio
+                  cargar es un llavero con botones que no hacen nada.
+                </div>
+              }
+            </div>
+          }
+        }
+
+        @if (error()) {
+          <div class="alert bg-emergency-soft text-emergency border-0 py-2 small" role="alert">
+            <i class="icon-triangle-alert me-1"></i> {{ error() }}
+          </div>
+        }
+
+        <button
+          type="button"
+          class="btn btn-brand w-100"
+          [disabled]="!puedeFabricar()"
+          (click)="fabricar()"
+        >
+          @if (guardando()) {
+            <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+            Fabricando…
+          } @else {
+            Fabricar control
+          }
+        </button>
+      </div>
+    </div>
+
+    <!--
+      Resultado del alta. Acá está TODO lo que hay que grabar en el control: si
+      esta tarjeta se cierra, los códigos se vuelven a pedir desde la fila de la
+      tabla (y esa lectura queda auditada).
+    -->
+    @if (recien(); as c) {
+      <div class="card border border-success mt-3">
+        <div
+          class="card-header bg-white border-bottom d-flex align-items-center justify-content-between"
+        >
+          <span class="fw-semibold small text-success">
+            <i class="icon-circle-check-big me-1"></i> Control fabricado
+          </span>
+          <button type="button" class="btn-close btn-sm" (click)="cerrarRecien()" title="Cerrar"></button>
+        </div>
+        <div class="card-body">
+          <div class="font-monospace fw-medium mb-2">{{ c.serial }}</div>
+          <p class="text-muted small">Grabá estos códigos en el control:</p>
+          <table class="table table-sm align-middle mb-3">
+            <tbody>
+              @for (cod of c.codigos; track cod.position) {
+                <tr>
+                  <td class="text-muted small" style="width: 2rem">{{ cod.boton }}</td>
+                  <td class="font-monospace fw-medium">{{ cod.codigo }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+
+          <button
+            type="button"
+            class="btn btn-brand w-100"
+            [disabled]="imprimiendo() !== null"
+            (click)="imprimir(c.id)"
+          >
+            <i class="icon-printer me-1"></i> Imprimir etiqueta
+          </button>
+        </div>
+      </div>
+    }
+  </div>
+
+  <!-- ====================== LISTADO ====================== -->
+  <div class="col-12 col-lg-8">
+    <div class="card border">
+      <div
+        class="card-header bg-white border-bottom d-flex align-items-center justify-content-between flex-wrap gap-2"
+      >
+        <span class="fw-semibold small">
+          <i class="icon-list me-1"></i> Controles fabricados
+          <span class="badge text-bg-light border ms-1">{{ listado().length }}</span>
+          @if (resultados() !== null) {
+            <span class="badge bg-warning-soft text-warning border ms-1">filtrado</span>
+          }
+        </span>
+
+        <div class="d-flex gap-2">
+          <a
+            routerLink="/inventario/fabrica/controles/removidos"
+            class="btn btn-sm btn-outline-secondary"
+            title="Controles fuera de circulación: se pueden reactivar o borrar"
+          >
+            <i class="icon-trash-2 me-1"></i> Removidos
+          </a>
+          @if (resultados() !== null) {
+            <button
+              type="button"
+              class="btn btn-sm btn-outline-secondary"
+              (click)="limpiarBusqueda()"
+              title="Volver a la lista completa"
+            >
+              Ver todos
+            </button>
+          }
+          <input
+            type="search"
+            class="form-control form-control-sm"
+            style="max-width: 200px"
+            placeholder="Serie o código…"
+            [ngModel]="consulta()"
+            (ngModelChange)="consulta.set($event)"
+            (keyup.enter)="buscar()"
+            [ngModelOptions]="{ standalone: true }"
+            aria-label="Buscar control"
+          />
+          <button
+            type="button"
+            class="btn btn-sm btn-outline-secondary"
+            [disabled]="buscando()"
+            (click)="buscar()"
+            title="Por código tiene que ser el número completo"
+          >
+            @if (buscando()) {
+              <span class="spinner-border spinner-border-sm"></span>
+            } @else {
+              <i class="icon-search"></i>
+            }
+          </button>
+        </div>
+      </div>
+
+      @if (cargando()) {
+        <div class="text-center text-muted py-5">
+          <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+          Cargando controles…
+        </div>
+      } @else if (listado().length === 0) {
+        <div class="text-center text-muted py-5 small">
+          @if (resultados() !== null) {
+            Ningún control con ese número de serie ni con ese código.
+          } @else {
+            Todavía no se fabricó ningún control.
+          }
+        </div>
+      } @else {
+        <div class="table-responsive">
+          <table class="table table-hover align-middle mb-0">
+            <thead>
+              <tr class="small text-muted">
+                <th scope="col">Serial</th>
+                <th scope="col">Etapa</th>
+                <th scope="col" class="text-end">Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (c of listado(); track c.id) {
+                <tr>
+                  <td class="small font-monospace fw-medium">{{ c.serial }}</td>
+
+                  <!--
+                    La etapa en su propia columna, como en alarmas: mezclada con
+                    el serial se lee como si fuera parte del número.
+                  -->
+                  <td>
+                    @if (c.homeId) {
+                      <span class="badge bg-brand-soft text-brand border">Entregado</span>
+                    } @else if (c.readyAt) {
+                      <span class="badge bg-success-soft text-success border">Listo</span>
+                    } @else {
+                      <span class="badge bg-light text-muted border">Fabricado</span>
+                    }
+                    @if (c.coincidePor === 'codigo') {
+                      <span
+                        class="badge bg-warning-soft text-warning border ms-1"
+                        title="Coincidió por el código de este botón"
+                      >
+                        botón {{ c.boton }}
+                      </span>
+                    }
+                  </td>
+
+                  <td class="text-end text-nowrap">
+                    <button
+                      type="button"
+                      class="btn btn-sm btn-outline-secondary py-0 px-2"
+                      [disabled]="imprimiendo() !== null || marcando() !== null"
+                      (click)="imprimir(c.id)"
+                      title="Imprimir la etiqueta"
+                    >
+                      @if (imprimiendo() === c.id) {
+                        <span class="spinner-border spinner-border-sm"></span>
+                      } @else {
+                        <i class="icon-printer"></i>
+                      }
+                    </button>
+
+                    <!-- Los códigos que hay que grabar. Auditado. -->
+                    <button
+                      type="button"
+                      class="btn btn-sm btn-outline-secondary py-0 px-2 ms-1"
+                      [disabled]="abriendoCodigos() !== null"
+                      (click)="verCodigos(c.id)"
+                      title="Ver los códigos RF (queda auditado)"
+                    >
+                      @if (abriendoCodigos() === c.id) {
+                        <span class="spinner-border spinner-border-sm"></span>
+                      } @else {
+                        <i class="icon-key"></i>
+                      }
+                    </button>
+
+                    <!-- El visto bueno: recién con esto entra al stock. -->
+                    <button
+                      type="button"
+                      class="btn btn-sm py-0 px-2 ms-1"
+                      [class.btn-outline-secondary]="!c.readyAt"
+                      [class.btn-success]="c.readyAt"
+                      [disabled]="marcando() !== null"
+                      (click)="marcarListo(c)"
+                      [title]="
+                        c.readyAt
+                          ? 'Listo para salir de fábrica — click para revertir'
+                          : 'Dar el visto bueno: recién ahí entra al stock'
+                      "
+                    >
+                      @if (marcando() === c.id) {
+                        <span class="spinner-border spinner-border-sm"></span>
+                      } @else {
+                        <i class="icon-package-check"></i>
+                      }
+                    </button>
+
+                    <!--
+                      Remover: a la papelera. Separado por el borde porque no es
+                      una marca más — saca el control de circulación y lo
+                      desvincula de la vivienda.
+                    -->
+                    <button
+                      type="button"
+                      class="btn btn-sm btn-outline-danger py-0 px-2 ms-2"
+                      [disabled]="removiendo() !== null"
+                      (click)="remover(c)"
+                      title="Sacarlo de circulación (va a la papelera)"
+                    >
+                      @if (removiendo() === c.id) {
+                        <span class="spinner-border spinner-border-sm"></span>
+                      } @else {
+                        <i class="icon-trash-2"></i>
+                      }
+                    </button>
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </div>
+  </div>
+</div>
+
+<!--
+  Los códigos, en un panel sobre la pantalla y no en una tarjeta al pie: son
+  cuatro números que hay que leer y copiar en el control, y con la lista atrás se
+  pierde el foco. Mismo patrón que las credenciales del equipo. Cada apertura
+  queda en audit_log del lado del backend.
+-->
+@if (codigosVistos(); as e) {
+  <div
+    class="position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center"
+    style="background: rgba(0, 0, 0, 0.45); z-index: 1050"
+    (click)="cerrarCodigos()"
+  >
+    <div
+      class="card border shadow-lg"
+      style="max-width: 420px; width: 92%"
+      (click)="$event.stopPropagation()"
+    >
+      <div
+        class="card-header bg-white border-bottom d-flex align-items-center justify-content-between"
+      >
+        <span class="fw-semibold small">
+          <i class="icon-key me-1"></i> Códigos de
+          <span class="font-monospace">{{ e.serial }}</span>
+        </span>
+        <button type="button" class="btn-close btn-sm" (click)="cerrarCodigos()" title="Cerrar"></button>
+      </div>
+
+      <div class="card-body">
+        <p class="text-muted small">
+          Son los que hay que grabar en el control. La posición no es un orden: es
+          qué hace cada botón.
+        </p>
+        <table class="table table-sm align-middle mb-2">
+          <tbody>
+            @for (cod of e.codigos; track cod.position) {
+              <tr>
+                <td class="text-muted small" style="width: 2rem">{{ cod.boton }}</td>
+                <td class="font-monospace fw-medium">{{ cod.codigo }}</td>
+                <td class="text-muted small text-end">{{ cod.label }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+        <div class="form-text">Queda registrado que los viste, con tu usuario y la hora.</div>
+      </div>
+
+      <div class="card-footer bg-white border-top text-end">
+        <button
+          type="button"
+          class="btn btn-sm btn-outline-secondary"
+          [disabled]="imprimiendo() !== null"
+          (click)="imprimir(e.id)"
+        >
+          <i class="icon-printer me-1"></i> Imprimir etiqueta
+        </button>
+      </div>
+    </div>
+  </div>
+}
+
+<!--
+  La etiqueta. Invisible en pantalla y lo ÚNICO visible al imprimir (ver las
+  reglas @media print de styles.scss). Va acá y no en una ventana nueva porque un
+  popup lo bloquea el navegador y porque así lo que se ve es lo que sale.
+-->
+<div class="solo-impresion">
+  @if (paraImprimir(); as e) {
+    <app-remote-label [etiqueta]="e" />
+  }
+</div>

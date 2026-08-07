@@ -52,6 +52,9 @@
           <th scope="col">Dirección</th>
           <th scope="col">Teléfono</th>
           <th scope="col">Barrio</th>
+          <!-- Sin alarma preferida, los controles de esa casa no se cargan en
+               ningún panel. Por eso está en la lista y no escondida en la ficha. -->
+          <th scope="col">Alarma preferida</th>
           <th scope="col">Estado</th>
           <th scope="col" class="text-end"></th>
         </tr>
@@ -62,6 +65,20 @@
             <td class="fw-medium">{{ home.address }}</td>
             <td class="text-muted small">{{ home.contactPhone ?? '—' }}</td>
             <td class="text-muted small">{{ barrioName(home.neighborhoodId) }}</td>
+            <td class="small">
+              @if (home.defaultDevice; as alarma) {
+                {{ alarma.name ?? alarma.serial }}
+              } @else {
+                <!-- No es un dato faltante cualquiera: es la razón por la que
+                     los controles de esta casa no se cargan en ningún equipo. -->
+                <span
+                  class="badge bg-warning-soft text-warning border"
+                  title="Sus controles no se van a cargar en ninguna alarma hasta que elijas una"
+                >
+                  <i class="icon-circle-alert me-1"></i> sin alarma
+                </span>
+              }
+            </td>
             <td>
               @if (home.status === 'ACTIVE') {
                 <span class="badge bg-success-soft text-success border">Activa</span>
@@ -73,6 +90,19 @@
               <!-- Los MIEMBROS (titular + familiares) son el corazón del hogar en v2. -->
               <a [routerLink]="['/viviendas', home.id]" class="btn btn-sm btn-outline-brand me-1">
                 <i class="icon-users me-1"></i> Miembros
+              </a>
+              <!--
+                Va a la MISMA ficha, pero con su propia etiqueta: el pin de una
+                casa se corrige ahí abajo y nadie iba a buscarlo detrás de un
+                botón que dice "Miembros".
+              -->
+              <a
+                [routerLink]="['/viviendas', home.id]"
+                fragment="ubicacion"
+                class="btn btn-sm btn-outline-secondary me-1"
+                title="Ver y corregir dónde está la casa"
+              >
+                <i class="icon-map-pin me-1"></i> Ubicación
               </a>
               <a
                 [routerLink]="['/controles']"

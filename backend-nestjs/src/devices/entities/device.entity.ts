@@ -85,6 +85,10 @@ import { DeviceMaintenance } from './device-maintenance.entity';
   'chk_device_identity',
   "type <> 'COMMUNITY_ALARM' OR (mac IS NOT NULL AND serial = 'AV-' || mac AND board_model_id IS NOT NULL AND board_seq IS NOT NULL)",
 )
+@Check(
+  'chk_device_legacy_marker',
+  "legacy_marker IS NULL OR legacy_marker ~ '^CENTRALVECINAL[0-9]{2}$'",
+)
 export class Device {
   @PrimaryGeneratedColumn()
   id!: number;
@@ -158,6 +162,19 @@ export class Device {
   iccid!: string | null;
 
   /**
+   * Última generación de base RF que le ASIGNAMOS. La que el panel dice tener
+   * vive en `device_state.rf_gen`, y compararlas es la detección de
+   * desincronización.
+   *
+   * Sube de a uno POR COMANDO, no por tanda: el equipo persiste la del último
+   * que le salió bien, así el número que reporta dice hasta dónde llegó. Con un
+   * solo `gen` para los 24 lotes, una tanda cortada por la mitad reportaría lo
+   * mismo que una completa.
+   */
+  @Column({ name: 'rf_gen', type: 'bigint', default: 0 })
+  rfGen!: string;
+
+  /**
    * MAC STA del eFuse: 12 hex en MAYÚSCULAS y SIN separadores. Es el dato que
    * el operador lee con `esptool read_mac` en la estación de flasheo y la única
    * identidad realmente única e inmutable del equipo. Un solo formato canónico
@@ -165,6 +182,21 @@ export class Device {
    */
   @Column({ type: 'text', nullable: true })
   mac!: string | null;
+
+  /**
+   * Alias por el que la app VIEJA de vecinos conoce a esta alarma
+   * (`CENTRALVECINAL05`). Es de la ALARMA y no del hogar: en Firebase colgaba
+   * del cliente (`ClientesID/<DNI>/Marcador`) y copiarlo así violaría la regla
+   * 1 del dominio. El hogar llega a su marcador por `default_device_id`.
+   *
+   * También define el alcance de la puerta vieja: `NULL` = la app vieja no
+   * llega a este equipo. El formato lo impone el CHECK porque este string se
+   * usa como raíz de un path de la RTDB y como tópico de FCM.
+   *
+   * TEMPORAL: se va con la app vieja (ver migración LegacyAppBridge).
+   */
+  @Column({ name: 'legacy_marker', type: 'text', nullable: true })
+  legacyMarker!: string | null;
 
   /** Modelo de placa (catálogo). El prefijo del número impreso: ALOY. */
   @Column({ name: 'board_model_id', type: 'int', nullable: true })

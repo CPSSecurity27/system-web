@@ -238,4 +238,123 @@
       </div>
     </div>
   </div>
+
+  <!-- ── Dónde está la casa ──────────────────────────────────────────────
+       No es un dato decorativo: sale en el mapa del monitoreo y viaja en el
+       `gps` de cada evento. Un pin mal puesto manda al móvil a otra cuadra, y
+       hasta ahora no había forma de corregirlo. -->
+  <div class="card border mt-3" id="ubicacion">
+    <div
+      class="card-header bg-white border-bottom d-flex align-items-center justify-content-between"
+    >
+      <span class="fw-semibold small"><i class="icon-map-pin me-1"></i> Dónde está</span>
+      <span class="small text-muted font-monospace">
+        {{ nuevaUbicacion()?.latitude ?? home()?.latitude }},
+        {{ nuevaUbicacion()?.longitude ?? home()?.longitude }}
+      </span>
+    </div>
+    <div class="card-body">
+      @if (puedeEditarUbicacion()) {
+        <p class="text-muted small mb-2">Hacé click en el mapa para corregir dónde está la casa.</p>
+        <app-map
+          [markers]="markers()"
+          [center]="centroMapa()"
+          [zoom]="17"
+          [clickable]="true"
+          pickVariant="home"
+          (positionChange)="setUbicacion($event)"
+        />
+
+        @if (nuevaUbicacion()) {
+          <!-- El punto nuevo se ve ANTES de guardar: mover el pin sin querer y
+               que se guarde solo sería peor que no poder moverlo. -->
+          <div class="d-flex align-items-center gap-2 mt-2 flex-wrap">
+            <button
+              type="button"
+              class="btn btn-sm btn-brand"
+              [disabled]="guardandoUbicacion()"
+              (click)="guardarUbicacion()"
+            >
+              @if (guardandoUbicacion()) {
+                <span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>
+                Guardando…
+              } @else {
+                Guardar la ubicación
+              }
+            </button>
+            <button
+              type="button"
+              class="btn btn-sm btn-outline-secondary"
+              [disabled]="guardandoUbicacion()"
+              (click)="descartarUbicacion()"
+            >
+              Descartar
+            </button>
+            <span class="small text-muted">
+              La alarma preferida no se recalcula sola: si la casa se movió lejos, revisala.
+            </span>
+          </div>
+        }
+      } @else {
+        <app-map [markers]="markers()" [center]="centroMapa()" [zoom]="17" />
+      }
+
+      <!-- ── A qué alarma responde ──────────────────────────────────────
+           Va en esta tarjeta y no en otra porque es función de dónde está la
+           casa: el combo se ordena por distancia al pin de arriba. -->
+      <div class="border-top mt-3 pt-3">
+        <label for="alarmaPreferida" class="form-label small fw-medium mb-1">
+          Alarma preferida
+        </label>
+        @if (puedeEditarUbicacion()) {
+          <select
+            id="alarmaPreferida"
+            class="form-select form-select-sm"
+            [disabled]="guardandoAlarma()"
+            [value]="home()?.defaultDeviceId ?? ''"
+            (change)="cambiarAlarma($any($event.target).value)"
+          >
+            <option value="">Sin alarma preferida</option>
+            @for (item of alarmasCercanas(); track item.device.id) {
+              <option [value]="item.device.id">
+                {{ item.device.name ?? item.device.serial }} — {{ distancia(item.metros) }}
+              </option>
+            }
+          </select>
+        } @else {
+          <p class="mb-0">
+            {{ home()?.defaultDevice?.name ?? home()?.defaultDevice?.serial ?? '—' }}
+          </p>
+        }
+
+        @if (home()?.defaultDeviceId) {
+          <div class="form-text">
+            Es la que responde por esta casa, y <strong>la que carga sus controles</strong>: los
+            códigos se graban en ese equipo.
+          </div>
+        } @else {
+          <!-- La consecuencia, dicha entera: es la que hace perder una hora
+               buscando por qué un control asignado no aparece en ningún lado. -->
+          <div class="form-text text-warning">
+            <i class="icon-circle-alert me-1"></i>
+            Sin alarma preferida,
+            <strong>los controles de esta casa no se cargan en ningún equipo</strong> — el vecino
+            tiene el llavero y ninguna alarma lo conoce. Pasa cuando la casa se creó antes de que el
+            barrio tuviera alarmas.
+          </div>
+        }
+      </div>
+
+      @if (avisoUbicacion(); as texto) {
+        <p class="small text-success mb-0 mt-2">
+          <i class="icon-circle-check me-1"></i>{{ texto }}
+        </p>
+      }
+      @if (errorUbicacion(); as texto) {
+        <p class="small text-emergency mb-0 mt-2">
+          <i class="icon-triangle-alert me-1"></i>{{ texto }}
+        </p>
+      }
+    </div>
+  </div>
 }

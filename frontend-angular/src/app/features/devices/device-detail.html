@@ -74,6 +74,17 @@
         <i class="icon-sliders me-1"></i> Configuración
       </button>
     </li>
+    <li class="nav-item">
+      <button
+        type="button"
+        class="nav-link"
+        [class.active]="tab() === 'acciones'"
+        (click)="tab.set('acciones')"
+        title="Pedirle cosas al equipo: reiniciar, actualizar, hacer sonar la alarma"
+      >
+        <i class="icon-wrench me-1"></i> Acciones
+      </button>
+    </li>
   </ul>
 
   <!-- ══ ALARMA ═══════════════════════════════════════════════════════════
@@ -667,6 +678,18 @@
      Lee el ESPEJO (lo que el equipo dice que corre) y publica un patch
      contra él. Ver docs/superpowers/specs/2026-08-04-configuracion-por-equipo-design.md
 -->
+@if (tab() === 'acciones') {
+  @if (device(); as d) {
+    <app-device-actions [deviceId]="id" [device]="d" [estadoVivo]="state()" />
+  }
+}
+
 @if (tab() === 'config') {
+  <!--
+    La base de controles va ARRIBA de la configuración: es lo que hace que un
+    llavero dispare o no, y eso pesa más que un huso horario. Componente aparte
+    porque NO es config — no tiene cfg_v, no se mergea, no entra en el diff.
+  -->
+  <app-device-rf [deviceId]="id" />
   <app-device-config [deviceId]="id" [estadoVivo]="state()" />
 }

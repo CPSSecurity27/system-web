@@ -5,10 +5,13 @@ import { Observable } from 'rxjs';
 import { environment } from '../../../environments/environment';
 import {
   BoardModel,
+  ColaComandos,
   Device,
   DeviceConfig,
   DeviceState,
   DeviceType,
+  EstadoRf,
+  FuenteConfig,
   InstallationData,
   Maintenance,
   RedWifiRevelada,
@@ -179,10 +182,7 @@ export class DevicesService {
    *
    * Una red sin `psw` conserva la que ya tiene guardada.
    */
-  publicarConfig(
-    id: number,
-    patch: Record<string, unknown>,
-  ): Observable<DeviceConfig> {
+  publicarConfig(id: number, patch: Record<string, unknown>): Observable<DeviceConfig> {
     return this.http.put<DeviceConfig>(`${this.api}/devices/${id}/config`, {
       patch,
     });
@@ -193,26 +193,84 @@ export class DevicesService {
    * su cuenta y aparece en el próximo `config()`.
    */
   pedirScan(id: number): Observable<{ mensaje: string }> {
-    return this.http.post<{ mensaje: string }>(
-      `${this.api}/devices/${id}/config/scan`,
-      {},
-    );
+    return this.http.post<{ mensaje: string }>(`${this.api}/devices/${id}/config/scan`, {});
   }
 
   /** Pedirle su configuración actual. Es el desbloqueo cuando no hay espejo. */
   pedirRefresh(id: number): Observable<{ mensaje: string }> {
-    return this.http.post<{ mensaje: string }>(
-      `${this.api}/devices/${id}/config/refresh`,
-      {},
-    );
+    return this.http.post<{ mensaje: string }>(`${this.api}/devices/${id}/config/refresh`, {});
   }
 
   /** Las passwords en claro. Solo CPS, y queda en `audit_log`. */
   revelarWifi(id: number): Observable<RedWifiRevelada[]> {
-    return this.http.post<RedWifiRevelada[]>(
-      `${this.api}/devices/${id}/config/reveal-wifi`,
-      {},
-    );
+    return this.http.post<RedWifiRevelada[]>(`${this.api}/devices/${id}/config/reveal-wifi`, {});
+  }
+
+  /** Los equipos del mismo barrio de los que se puede copiar la configuración. */
+  fuentesDeConfig(id: number): Observable<FuenteConfig[]> {
+    return this.http.get<FuenteConfig[]>(`${this.api}/devices/${id}/config/sources`);
+  }
+
+  // --- La base de controles del equipo ----------------------------------
+
+  /**
+   * Qué controles tiene cargados el equipo, cuáles faltan y cuáles sobran.
+   *
+   * Alcanza con poder VER el equipo: entender por qué un control no dispara es
+   * parte de mirarlo. Lo que se puede HACER viene en `puedeSincronizar`.
+   */
+  baseRf(id: number): Observable<EstadoRf> {
+    return this.http.get<EstadoRf>(`${this.api}/devices/${id}/rf`);
+  }
+
+  /**
+   * Carga la base en el equipo. Encola la tanda entera pero sale de a un paso:
+   * cada ack destraba el siguiente.
+   *
+   * Devuelve el estado con la tanda ya en curso, así la pantalla muestra el
+   * progreso sin volver a pedirlo.
+   */
+  sincronizarRf(id: number): Observable<EstadoRf> {
+    return this.http.post<EstadoRf>(`${this.api}/devices/${id}/rf/sync`, {});
+  }
+
+  // --- Comandos al panel ------------------------------------------------
+
+  /** Los últimos 20, con su estado. Alcanza con poder VER el equipo. */
+  comandos(id: number): Observable<ColaComandos> {
+    return this.http.get<ColaComandos>(`${this.api}/devices/${id}/commands`);
+  }
+
+  /**
+   * Encola un comando. Devuelve la cola ya actualizada, así la pantalla no
+   * tiene que adivinar en qué quedó ni pedirla de nuevo.
+   */
+  mandarComando(
+    id: number,
+    tipo: string,
+    params: Record<string, unknown> = {},
+    confirmacion?: string,
+  ): Observable<ColaComandos> {
+    return this.http.post<ColaComandos>(`${this.api}/devices/${id}/commands`, {
+      tipo,
+      params,
+      confirmacion,
+    });
+  }
+
+  /** Solo si sigue en la cola: lo publicado el panel lo recibe igual. */
+  cancelarComando(id: number, cid: string): Observable<ColaComandos> {
+    return this.http.post<ColaComandos>(`${this.api}/devices/${id}/commands/${cid}/cancel`, {});
+  }
+
+  /**
+   * Disparar o apagar la alarma a distancia. Es la única acción sobre el equipo
+   * que también tiene el MONITOR.
+   */
+  dispararAlarma(id: number, modo: string): Observable<ColaComandos> {
+    return this.http.post<ColaComandos>(`${this.api}/devices/${id}/alarm`, {
+      modo,
+    });
   }
 
   /**
@@ -222,18 +280,12 @@ export class DevicesService {
    * los equipos que quedaron sin registrar.
    */
   pedirProvision(id: number): Observable<{ mensaje: string }> {
-    return this.http.post<{ mensaje: string }>(
-      `${this.api}/devices/${id}/provision`,
-      {},
-    );
+    return this.http.post<{ mensaje: string }>(`${this.api}/devices/${id}/provision`, {});
   }
 
   /** Dar de baja la credencial. Siempre manual: ningún estado la revoca sola. */
   revocarCredencial(id: number): Observable<{ mensaje: string }> {
-    return this.http.post<{ mensaje: string }>(
-      `${this.api}/devices/${id}/revoke-credential`,
-      {},
-    );
+    return this.http.post<{ mensaje: string }>(`${this.api}/devices/${id}/revoke-credential`, {});
   }
 
   /** Modelos de placa: el desplegable / la referencia de prefijos válidos. */

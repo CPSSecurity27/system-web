@@ -78,10 +78,22 @@ export class HomesService {
    * Viviendas visibles: las del barrio que gestionás, o la tuya si sos vecino.
    * Un titular NO ve las casas de sus vecinos.
    */
+  /**
+   * El listado trae la ALARMA PREFERIDA con su nombre, no solo el id.
+   *
+   * Es la que responde por esa casa: sin verla en la lista no hay forma de
+   * detectar de un vistazo las viviendas que quedaron sin ninguna — y una casa
+   * sin alarma preferida es una casa cuyos controles **no se cargan en ningún
+   * panel**, o sea llaveros que no disparan nada. Pasa siempre que la vivienda
+   * se creó antes de que el barrio tuviera alarmas.
+   */
+  private static readonly RELACIONES_LISTA = { defaultDevice: true } as const;
+
   async findAll(scope: AccessScope, neighborhoodId?: number): Promise<Home[]> {
     if (scope.global) {
       return this.homes.find({
         where: neighborhoodId ? { neighborhoodId } : {},
+        relations: HomesService.RELACIONES_LISTA,
         order: { address: 'ASC' },
       });
     }
@@ -89,10 +101,14 @@ export class HomesService {
     const porBarrio = scope.neighborhoodIds.length
       ? await this.homes.find({
           where: { neighborhoodId: In(scope.neighborhoodIds) },
+          relations: HomesService.RELACIONES_LISTA,
         })
       : [];
     const propias = scope.homeIds.length
-      ? await this.homes.find({ where: { id: In(scope.homeIds) } })
+      ? await this.homes.find({
+          where: { id: In(scope.homeIds) },
+          relations: HomesService.RELACIONES_LISTA,
+        })
       : [];
 
     const unicas = new Map<number, Home>();
@@ -106,7 +122,7 @@ export class HomesService {
   async findOne(id: number, scope: AccessScope): Promise<Home> {
     const home = await this.homes.findOne({
       where: { id },
-      relations: { neighborhood: true },
+      relations: { neighborhood: true, defaultDevice: true },
     });
     if (!home) throw new NotFoundException(`No existe la vivienda ${id}`);
 
@@ -219,14 +235,33 @@ export class HomesService {
       await this.assertDeviceInNeighborhood(dto.defaultDeviceId, barrioFinal);
     }
 
+    /**
+     * Mudar la casa de barrio SIN mandar alarma preferida le dejaba la del
+     * barrio viejo, violando la invariante del esquema ("debe ser un device del
+     * mismo barrio"). Se validaba solo la que venía en el patch.
+     *
+     * Ahora importa más que antes: el plan de sincronización de cada equipo sale
+     * de las viviendas que lo eligieron, así que una casa mudada seguiría
+     * mandándole sus controles a un poste de otro barrio.
+     *
+     * Se limpia, no se adivina: elegir la más cercana del barrio nuevo sería
+     * decidir por el gestor algo que la pantalla ya le muestra en naranja.
+     */
+    const conservada = dto.defaultDeviceId ?? home.defaultDeviceId;
+    let preferidaFinal = conservada;
+    if (dto.defaultDeviceId === undefined && conservada !== null) {
+      const sigueSirviendo = await this.devices.findOne({
+        where: { id: conservada, neighborhoodId: barrioFinal },
+        select: { id: true },
+      });
+      preferidaFinal = sigueSirviendo ? conservada : null;
+    }
+
     await this.homes.update(id, {
       address: dto.address ?? home.address,
       contactPhone: dto.contactPhone ?? home.contactPhone,
       neighborhoodId: barrioFinal,
-      defaultDeviceId:
-        dto.defaultDeviceId !== undefined
-          ? dto.defaultDeviceId
-          : home.defaultDeviceId,
+      defaultDeviceId: preferidaFinal,
       latitude: dto.latitude ?? home.latitude,
       longitude: dto.longitude ?? home.longitude,
       status: dto.status ?? home.status,

@@ -22,7 +22,9 @@ const ENERGIA = { modo: 'ACTIVE_240', vbat: 12.6, vpanel: 13.9, vfuente: 0.0 };
 const RED = { ssid: 'MuniWiFi', ip: '192.168.1.7', rssi: -61, recon: 3, ping_fail: 0, wdt: 0 };
 const TELE = {
   rtc: { q: 0, sync_hace_s: 120, ds3231: true, ntp_boot: true },
-  modulos: { supervisor: false, ds3231_ok: true, eeprom_kb: 32 },
+  // `eeprom` va con la forma REAL del firmware (`modulos.eeprom.kb`, en
+  // kilobytes): con `eeprom_kb` plano la capacidad se leía como "sin telemetría".
+  modulos: { supervisor: false, ds3231_ok: true, eeprom: { det: true, slot: 0, kb: 4, hab: true } },
   ota: { estado: 0, ultimo: 0 },
   rf: { rx: 123, dec: 50, rechaz: 1, supr: 4, desc: 2, lim: 0, ee_err: 0, drops: 0 },
   sueno: { despierta: 0, motivo: 0 },

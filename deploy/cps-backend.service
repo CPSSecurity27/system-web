@@ -1,0 +1,48 @@
+[Unit]
+Description=CPS Security — API del panel web (NestJS)
+Documentation=https://github.com/CPSSecurity27/system-web
+# La base es local y escucha solo en 127.0.0.1: sin ella el proceso arranca y
+# muere en el primer query, así que se espera.
+After=network-online.target postgresql.service
+Wants=network-online.target postgresql.service
+
+[Service]
+Type=simple
+User=servidorcps
+Group=servidorcps
+WorkingDirectory=/home/servidorcps/SistemaCPS/web/backend
+# El .env lo lee @nestjs/config desde el WorkingDirectory, igual que el GtD.
+ExecStart=/usr/bin/node dist/main
+Environment=NODE_ENV=production
+
+# Si el proceso muere es por algo serio (la base caída, memoria). Reintentar sin
+# ahogar a la Pi, que tiene 921 MB y encima corre mosquitto, el GtD y Postgres.
+Restart=always
+RestartSec=10
+
+# La Pi es chica: un backend que se desmadre no puede llevarse el broker puesto.
+# 320 MB alcanzan de sobra para este Nest (arranca en ~120 MB).
+MemoryMax=320M
+
+# Endurecimiento: la API no necesita nada del sistema fuera de sus directorios.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+# TODO lo demás es de solo lectura, así que cada carpeta que la API ESCRIBA
+# tiene que estar acá. Con `ProtectHome=read-only` un intento de escritura falla
+# con ENOENT —no con EACCES—, que es un error que no se parece en nada a un
+# problema de permisos y manda a buscar al lado equivocado (pasó el 2026-08-06:
+# la carpeta de firmwares existía, nginx la leía bien, y el backend no podía
+# crear un subdirectorio adentro).
+ReadWritePaths=/home/servidorcps/SistemaCPS/web/backend
+# Los `.bin` del catálogo OTA. Va APARTE del directorio del backend a propósito:
+# son datos, no código, y un despliegue que descomprime `dist` encima no tiene
+# que poder tocarlos.
+ReadWritePaths=/home/servidorcps/SistemaCPS/web/firmware
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -171,6 +171,23 @@ export class EnvironmentVariables {
   @Min(5000)
   @Type(() => Number)
   PROVISIONING_TIMEOUT_MS?: number;
+
+  /**
+   * Dónde se guardan los `.bin` del catálogo de firmwares.
+   *
+   * Tiene que ser una carpeta que **nginx sirva bajo `/firmware/` en el APEX
+   * `cpssecurity.com.ar`**, y el host es exacto: el firmware compara contra
+   * `OTA_ALLOWED_HOST` y rechaza cualquier otro antes de bajar un byte, así que
+   * servirlos desde `system.cpssecurity.com.ar` no funciona.
+   *
+   * En el servidor: `/home/servidorcps/SistemaCPS/web/firmware`.
+   *
+   * Es opcional para que un entorno de desarrollo sin OTA arranque igual; el
+   * módulo tira un error claro cuando falta y alguien intenta subir algo.
+   */
+  @IsOptional()
+  @IsString()
+  FIRMWARE_ROOT?: string;
 }
 
 export function validateEnv(config: Record<string, unknown>) {

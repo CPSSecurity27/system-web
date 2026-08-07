@@ -70,13 +70,30 @@ export function buildNav(flags: NavFlags): NavSection[] {
       items:
         flags.isCps || flags.isOrgManager
           ? [
-              { label: 'Alarmas', link: '/inventario/stock', icon: 'icon-package' },
+              // Una entrada por FAMILIA, cada una con su stock. La fábrica va
+              // al final porque es el paso anterior a todo esto y es de CPS.
+              { label: 'Alarmas', link: '/inventario/alarmas', icon: 'icon-package' },
+              { label: 'Controles', link: '/inventario/controles', icon: 'icon-key-round' },
               ...(flags.isCps
                 ? [{ label: 'Fábrica', link: '/inventario/fabrica', icon: 'icon-cpu' }]
                 : []),
-              { label: 'Controles', link: '/inventario/controles', icon: 'icon-key-round' },
             ]
           : [],
+    },
+    {
+      /**
+       * El software que corre la infraestructura. Sección propia y no una
+       * pestaña de Inventario: un firmware no es stock —no se cuenta, no se
+       * entrega, no se instala en un poste— y lo que se decide acá vale para
+       * los equipos de TODOS los clientes.
+       *
+       * Solo CPS, por la misma razón que la fábrica: una organización recibe
+       * equipos, no los programa.
+       */
+      label: 'Infraestructura',
+      items: flags.isCps
+        ? [{ label: 'Actualizaciones', link: '/actualizaciones', icon: 'icon-refresh-cw' }]
+        : [],
     },
     {
       // Contratos NO está más acá. Desde que el contrato es de la CUENTA (uno

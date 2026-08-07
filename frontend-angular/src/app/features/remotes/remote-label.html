@@ -1,0 +1,27 @@
+<!--
+  La etiqueta y nada más. Quién la muestra y cuándo se imprime es problema de la
+  pantalla que la usa: acá adentro no hay botones ni vista previa, igual que en
+  la etiqueta del equipo.
+-->
+<div class="etqc">
+  <div class="etqc-qr">
+    @if (qr(); as svg) {
+      <div [innerHTML]="svg"></div>
+    }
+  </div>
+  <div class="etqc-datos">
+    <div class="etqc-marca">CPS SECURITY</div>
+    <div class="etqc-serial">{{ etiqueta().serial }}</div>
+    <div class="etqc-modelo">
+      {{ etiqueta().modelo.buttons }} botones
+      @if (etiqueta().claimCode) {
+        · <span class="etqc-claim">{{ etiqueta().claimCode }}</span>
+      }
+    </div>
+    <div class="etqc-codigos">
+      @for (c of etiqueta().codigos; track c.position) {
+        <div>{{ c.boton }} {{ c.codigo }}</div>
+      }
+    </div>
+  </div>
+</div>

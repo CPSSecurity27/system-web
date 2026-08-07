@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   InternalServerErrorException,
@@ -7,20 +8,24 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { In, IsNull, Not, Repository } from 'typeorm';
 import type { AuthenticatedUser } from '../auth/auth.service';
 import { AuditService } from '../common/audit.service';
 import { AccountType, RemoteStatus } from '../common/enums';
 import { CryptoService } from '../common/crypto.service';
 import { AccessScope, ScopeService } from '../common/scope.service';
+import { Account } from '../accounts/entities/account.entity';
 import { Device } from '../devices/entities/device.entity';
 import { HomeMember } from '../homes/entities/home-member.entity';
 import { Home } from '../homes/entities/home.entity';
 import { Neighborhood } from '../neighborhoods/entities/neighborhood.entity';
 import {
   AddRemoteCodeDto,
+  AdoptRemoteDto,
   AssignRemoteDto,
   CreateRemoteDto,
+  DeliverRemotesDto,
+  FindRemotesQuery,
   UpdateRemoteDto,
 } from './dto/remote.dto';
 import { RemoteCode } from './entities/remote-code.entity';
@@ -31,6 +36,18 @@ export interface RemoteCodeSummary {
   id: number;
   position: number;
   createdAt: Date;
+}
+
+/**
+ * Una página de controles. Cada item viene con `home`, `home.neighborhood`,
+ * `home.neighborhood.organization` y `assignedToUser` PARCIALES: solo las
+ * columnas que la tabla muestra.
+ */
+export interface PagedRemotes {
+  items: Remote[];
+  total: number;
+  limit: number;
+  offset: number;
 }
 
 /**
@@ -57,38 +74,136 @@ export class RemotesService {
     @InjectRepository(Neighborhood)
     private readonly neighborhoods: Repository<Neighborhood>,
     @InjectRepository(Device) private readonly devices: Repository<Device>,
+    // La entrega y la adopción validan que el destino sea una ORGANIZATION.
+    @InjectRepository(Account) private readonly accounts: Repository<Account>,
     private readonly scopes: ScopeService,
     private readonly crypto: CryptoService,
     private readonly audit: AuditService,
   ) {}
 
-  async findAll(scope: AccessScope, homeId?: number): Promise<Remote[]> {
-    if (homeId) {
-      const home = await this.getHome(homeId);
-      this.scopes.assertHome(scope, homeId, home.neighborhoodId);
-      return this.remotes.find({
-        where: { homeId },
-        relations: { assignedToUser: true },
-        order: { id: 'ASC' },
-      });
+  /**
+   * Los controles ENTREGADOS, filtrados y paginados.
+   *
+   * Solo los que están en una vivienda: el stock tiene su propia pantalla
+   * (`findInventory`) y sus filas no tienen ni barrio ni cliente ni portador, o
+   * sea nada de lo que esta pantalla filtra. Los removidos tampoco salen —el
+   * `removed_at` los saca de todas las listas, y hasta ahora esta se lo salteaba.
+   *
+   * ## Por qué QueryBuilder y no `find()`
+   *
+   * La pantalla necesita cliente, barrio, dirección y DNI del portador en cada
+   * fila. Con `find()` eso se resolvía bajando TODAS las viviendas al front para
+   * traducir `homeId -> dirección`, y con 12.000 controles eso no termina más.
+   * Acá los joins traen solo las columnas que la tabla muestra: nada de entidades
+   * enteras (el `passwordHash` del portador ni se nombra).
+   *
+   * ## El alcance se INTERSECTA, nunca se ensancha
+   *
+   * Los filtros se aplican ENCIMA de la condición de alcance. Pedir el barrio de
+   * otro cliente no devuelve 403 sino vacío: decir "existe pero no lo ves" ya es
+   * contar algo.
+   */
+  async findAll(
+    scope: AccessScope,
+    query: FindRemotesQuery,
+  ): Promise<PagedRemotes> {
+    const { limit, offset } = query;
+    const vacio: PagedRemotes = { items: [], total: 0, limit, offset };
+
+    // Sin barrios ni viviendas no hay nada que ver: la consulta daría vacío
+    // igual, pero un `IN ()` de TypeORM con array vacío es un error de SQL.
+    if (
+      !scope.global &&
+      scope.neighborhoodIds.length === 0 &&
+      scope.homeIds.length === 0
+    ) {
+      return vacio;
     }
 
-    if (scope.global) {
-      return this.remotes.find({
-        relations: { assignedToUser: true },
-        order: { id: 'ASC' },
-      });
+    const qb = this.remotes
+      .createQueryBuilder('remote')
+      .innerJoin('remote.home', 'home')
+      .addSelect([
+        'home.id',
+        'home.address',
+        'home.neighborhoodId',
+        'home.defaultDeviceId',
+      ])
+      .innerJoin('home.neighborhood', 'barrio')
+      .addSelect(['barrio.id', 'barrio.name', 'barrio.organizationId'])
+      .innerJoin('barrio.organization', 'cliente')
+      .addSelect(['cliente.id', 'cliente.name', 'cliente.subtype'])
+      .leftJoin('remote.assignedToUser', 'portador')
+      .addSelect(['portador.id', 'portador.name', 'portador.dni'])
+      .where('remote.removed_at IS NULL');
+
+    if (!scope.global) {
+      // La suya, o todas las de su barrio si gestiona. Se resuelve en el SQL:
+      // bajar los ids de vivienda para armar un IN de miles era la versión vieja.
+      const partes: string[] = [];
+      if (scope.neighborhoodIds.length > 0) {
+        partes.push('home.neighborhood_id IN (:...barriosDelAlcance)');
+        qb.setParameter('barriosDelAlcance', scope.neighborhoodIds);
+      }
+      if (scope.homeIds.length > 0) {
+        partes.push('remote.home_id IN (:...casasDelAlcance)');
+        qb.setParameter('casasDelAlcance', scope.homeIds);
+      }
+      qb.andWhere(`(${partes.join(' OR ')})`);
     }
 
-    // Las viviendas que alcanza: la suya, o todas las de su barrio si gestiona.
-    const homes = await this.homesInScope(scope);
-    if (homes.length === 0) return [];
+    if (query.organizationId) {
+      qb.andWhere('barrio.organization_id = :organizationId', {
+        organizationId: query.organizationId,
+      });
+    }
+    if (query.neighborhoodId) {
+      qb.andWhere('home.neighborhood_id = :neighborhoodId', {
+        neighborhoodId: query.neighborhoodId,
+      });
+    }
+    if (query.homeId) {
+      qb.andWhere('remote.home_id = :homeId', { homeId: query.homeId });
+    }
+    if (query.defaultDeviceId) {
+      qb.andWhere('home.default_device_id = :defaultDeviceId', {
+        defaultDeviceId: query.defaultDeviceId,
+      });
+    }
+    if (query.status) {
+      qb.andWhere('remote.status = :status', { status: query.status });
+    }
 
-    return this.remotes.find({
-      where: { homeId: In(homes) },
-      relations: { assignedToUser: true },
-      order: { id: 'ASC' },
-    });
+    const q = query.q?.trim();
+    if (q) {
+      // Un solo buscador para las cuatro formas de nombrar un control: por su
+      // etiqueta (serial), por dónde vive (dirección) o por quién lo lleva
+      // (nombre o DNI). El DNI se compara sin puntos: en la base va limpio,
+      // pero el que busca lo escribe como se lo dictaron.
+      const patron = `%${q.toLowerCase()}%`;
+      const soloDigitos = q.replace(/\D/g, '');
+      qb.andWhere(
+        `(LOWER(remote.serial) LIKE :patron
+          OR LOWER(remote.name) LIKE :patron
+          OR LOWER(home.address) LIKE :patron
+          OR LOWER(portador.name) LIKE :patron
+          ${soloDigitos ? 'OR portador.dni LIKE :dni' : ''})`,
+        soloDigitos ? { patron, dni: `%${soloDigitos}%` } : { patron },
+      );
+    }
+
+    // Barrio -> dirección -> serial: los controles de una misma casa caen
+    // juntos, que es la lectura agrupada sin pagar el precio de un acordeón.
+    const [items, total] = await qb
+      .orderBy('barrio.name', 'ASC')
+      .addOrderBy('home.address', 'ASC')
+      .addOrderBy('remote.serial', 'ASC')
+      .addOrderBy('remote.id', 'ASC')
+      .take(limit)
+      .skip(offset)
+      .getManyAndCount();
+
+    return { items, total, limit, offset };
   }
 
   /** El stock de controles: CPS todo; una organización solo el suyo. */
@@ -96,9 +211,21 @@ export class RemotesService {
     const esCps = actor.memberships.some(
       (m) => m.accountType === AccountType.COMPANY,
     );
+    // Solo los que tienen el visto bueno de fábrica. Un control recién
+    // fabricado ya está en INVENTORY —el CHECK de custodia lo exige mientras no
+    // tenga vivienda— así que sin este filtro aparecería en el stock antes de
+    // tener los códigos grabados, y alguien podría entregar un llavero que
+    // todavía no es nada.
     if (esCps) {
       return this.remotes.find({
-        where: { status: RemoteStatus.INVENTORY },
+        where: {
+          status: RemoteStatus.INVENTORY,
+          readyAt: Not(IsNull()),
+          removedAt: IsNull(),
+        },
+        // El modelo viaja con el control: la pantalla de stock muestra cuántos
+        // botones tiene, y sin la relación esa columna salía vacía.
+        relations: { model: true },
         order: { id: 'ASC' },
       });
     }
@@ -109,7 +236,13 @@ export class RemotesService {
     if (orgIds.length === 0) return Promise.resolve([]);
 
     return this.remotes.find({
-      where: { status: RemoteStatus.INVENTORY, organizationId: In(orgIds) },
+      where: {
+        status: RemoteStatus.INVENTORY,
+        organizationId: In(orgIds),
+        readyAt: Not(IsNull()),
+        removedAt: IsNull(),
+      },
+      relations: { model: true },
       order: { id: 'ASC' },
     });
   }
@@ -184,8 +317,223 @@ export class RemotesService {
   }
 
   /**
+   * ENTREGA DE LOTE: del stock de CPS al de una organización. Solo CPS.
+   *
+   * Existe por lo mismo que en alarmas: pasarle 50 controles a una muni eran 50
+   * llamadas, cada una con su chance de fallar por la mitad. Acá o van todos o
+   * no va ninguno.
+   *
+   * `organizationId: null` los devuelve al stock de fábrica.
+   */
+  async deliver(
+    dto: DeliverRemotesDto,
+    actorUserId: number,
+  ): Promise<{ delivered: number }> {
+    const controles = await this.remotes.find({
+      where: { id: In(dto.remoteIds) },
+    });
+    if (controles.length !== dto.remoteIds.length) {
+      throw new NotFoundException('Alguno de los controles no existe');
+    }
+
+    for (const control of controles) {
+      if (control.removedAt !== null) {
+        throw new BadRequestException(
+          `${control.serial ?? control.id} está removido`,
+        );
+      }
+      if (
+        control.status !== RemoteStatus.INVENTORY ||
+        control.homeId !== null
+      ) {
+        throw new BadRequestException(
+          `${control.serial ?? control.id} ya está en una vivienda`,
+        );
+      }
+      // Un control sin el visto bueno todavía no tiene los códigos grabados.
+      if (control.serial !== null && control.readyAt === null) {
+        throw new BadRequestException(
+          `${control.serial} todavía no tiene el visto bueno de fábrica`,
+        );
+      }
+    }
+
+    if (dto.organizationId !== null) {
+      await this.assertOrganizacion(dto.organizationId);
+    }
+
+    await this.remotes.update(
+      { id: In(dto.remoteIds) },
+      { organizationId: dto.organizationId, updatedBy: actorUserId },
+    );
+
+    await this.audit.record({
+      actorUserId,
+      action: 'remote.deliver',
+      entityType: 'remote',
+      accountId: dto.organizationId,
+      newValue: {
+        organizationId: dto.organizationId,
+        seriales: controles.map((c) => c.serial),
+      },
+    });
+
+    return { delivered: controles.length };
+  }
+
+  /**
+   * ADOPTAR: sumar un control al stock propio con serial + código.
+   *
+   * El otro camino al stock además del lote: la bolsa que alguien ya tiene en la
+   * mano. Solo sobre controles SIN DUEÑO — uno que ya es de alguien se entrega,
+   * no se adopta.
+   */
+  async adopt(dto: AdoptRemoteDto, actor: AuthenticatedUser): Promise<Remote> {
+    const control = await this.remotes.findOne({
+      where: { serial: dto.serial.trim().toUpperCase() },
+    });
+    // Mismo mensaje para "no existe" y "código equivocado": distinguirlos
+    // convierte el endpoint en una forma de averiguar qué seriales existen.
+    if (
+      !control ||
+      control.claimCode === null ||
+      control.claimCode !== dto.claimCode.trim().toUpperCase()
+    ) {
+      throw new NotFoundException(
+        'No hay ningún control con ese serial y código',
+      );
+    }
+    if (control.removedAt !== null) {
+      throw new BadRequestException('Ese control está removido');
+    }
+    if (control.homeId !== null) {
+      throw new ConflictException('Ese control ya está en una vivienda');
+    }
+    if (control.organizationId !== null) {
+      throw new ConflictException(
+        'Ese control ya está en el stock de una organización. Si tiene que ' +
+          'cambiar de manos, la entrega la hace CPS.',
+      );
+    }
+    if (control.readyAt === null) {
+      throw new BadRequestException(
+        'Ese control todavía no tiene el visto bueno de fábrica',
+      );
+    }
+
+    const organizationId = this.resolverOrganizacion(actor, dto.organizationId);
+    await this.assertOrganizacion(organizationId);
+
+    await this.remotes.update(control.id, {
+      organizationId,
+      updatedBy: actor.id,
+    });
+
+    await this.audit.record({
+      actorUserId: actor.id,
+      action: 'remote.adopt',
+      entityType: 'remote',
+      entityId: control.id,
+      accountId: organizationId,
+      newValue: { organizationId, serial: control.serial },
+    });
+
+    return this.remotes.findOneOrFail({ where: { id: control.id } });
+  }
+
+  /**
+   * DEVOLVER al stock: la familia entregó el control.
+   *
+   * Vuelve al inventario de la organización dueña del barrio —o al de fábrica si
+   * el barrio lo opera CPS— y se le saca el portador. Desde ahí se lo puede
+   * asignar a otra casa.
+   *
+   * **Ojo con lo que esto NO hace**: sus códigos siguen grabados en los paneles
+   * del barrio. Mientras no exista la sincronización de la base RF, el llavero
+   * devuelto sigue disparando la alarma de esa gente hasta que se lo entregue a
+   * otro y se recarguen los códigos.
+   */
+  async devolver(
+    id: number,
+    actor: AuthenticatedUser,
+    scope: AccessScope,
+  ): Promise<Remote> {
+    const remote = await this.remotes.findOne({ where: { id } });
+    if (!remote) throw new NotFoundException(`No existe el control ${id}`);
+    if (remote.homeId === null) {
+      throw new BadRequestException('Ese control ya está en el stock');
+    }
+
+    const home = await this.getHome(remote.homeId);
+    this.scopes.assertHome(scope, remote.homeId, home.neighborhoodId);
+
+    const barrio = await this.neighborhoods.findOneOrFail({
+      where: { id: home.neighborhoodId },
+    });
+
+    await this.remotes.update(id, {
+      status: RemoteStatus.INVENTORY,
+      homeId: null,
+      assignedToUserId: null,
+      // Vuelve al stock de quien opera ese barrio. Si el barrio es de una
+      // organización, es suyo; si lo opera CPS, vuelve a fábrica.
+      organizationId: barrio.organizationId,
+      updatedBy: actor.id,
+    });
+
+    await this.audit.record({
+      actorUserId: actor.id,
+      action: 'remote.return',
+      entityType: 'remote',
+      entityId: id,
+      neighborhoodId: home.neighborhoodId,
+      oldValue: {
+        homeId: remote.homeId,
+        assignedToUserId: remote.assignedToUserId,
+      },
+      newValue: { organizationId: barrio.organizationId },
+    });
+
+    return this.remotes.findOneOrFail({ where: { id } });
+  }
+
+  /** La cuenta destino tiene que existir y ser una ORGANIZATION. */
+  private async assertOrganizacion(id: number | null): Promise<void> {
+    if (id === null) return;
+    const cuenta = await this.accounts.findOne({ where: { id } });
+    if (!cuenta || cuenta.type !== AccountType.ORGANIZATION) {
+      throw new BadRequestException(`La cuenta ${id} no es una organización`);
+    }
+  }
+
+  /** A qué stock va: el que se pidió, o el único propio si hay uno solo. */
+  private resolverOrganizacion(
+    actor: AuthenticatedUser,
+    pedida: number | undefined,
+  ): number {
+    const propias = actor.memberships
+      .filter((m) => m.accountType === AccountType.ORGANIZATION)
+      .map((m) => m.accountId);
+
+    if (pedida !== undefined) {
+      const esCps = actor.memberships.some(
+        (m) => m.accountType === AccountType.COMPANY,
+      );
+      if (!esCps && !propias.includes(pedida)) {
+        throw new ForbiddenException('No podés adoptar para otra organización');
+      }
+      return pedida;
+    }
+
+    if (propias.length === 1) return propias[0];
+    throw new BadRequestException(
+      'Decí a qué organización va el control: pertenecés a más de una',
+    );
+  }
+
+  /**
    * Asignar un control del STOCK a una vivienda (la entrega física). A partir
-   * de acá la vivienda es dueña y el homeId no se toca más.
+   * de acá la vivienda es dueña; para moverlo hay que devolverlo al stock.
    */
   async assign(
     id: number,
@@ -197,7 +545,18 @@ export class RemotesService {
     if (!remote) throw new NotFoundException(`No existe el control ${id}`);
     if (remote.status !== RemoteStatus.INVENTORY || remote.homeId !== null) {
       throw new BadRequestException(
-        'Ese control ya pertenece a una vivienda: el dueño no se cambia',
+        'Ese control ya está en una vivienda. Si tiene que ir a otra, primero ' +
+          'devolvelo al stock.',
+      );
+    }
+    if (remote.removedAt !== null) {
+      throw new BadRequestException('Ese control está removido');
+    }
+    // El visto bueno de fábrica. Sin él, el control puede no tener todavía los
+    // códigos grabados: entregarlo sería darle a un vecino un llavero mudo.
+    if (remote.serial !== null && remote.readyAt === null) {
+      throw new BadRequestException(
+        'Ese control todavía no tiene el visto bueno de fábrica',
       );
     }
 
@@ -220,9 +579,16 @@ export class RemotesService {
       }
     }
 
+    // El portador es obligatorio al entregar y tiene que ser de ESA casa: el
+    // `dni` que viaja en la alarma sale de acá, así que un control entregado
+    // sin nombre es un evento que después no se le puede atribuir a nadie.
+    await this.assertUserBelongsToHome(dto.homeId, dto.assignedToUserId);
+    await this.assertPortadorLibre(dto.assignedToUserId);
+
     await this.remotes.update(id, {
       status: RemoteStatus.ACTIVE,
       homeId: dto.homeId,
+      assignedToUserId: dto.assignedToUserId,
       organizationId: null, // entregado: ya no es stock
       updatedBy: actor.id,
     });
@@ -237,7 +603,11 @@ export class RemotesService {
         status: RemoteStatus.INVENTORY,
         organizationId: remote.organizationId,
       },
-      newValue: { status: RemoteStatus.ACTIVE, homeId: dto.homeId },
+      newValue: {
+        status: RemoteStatus.ACTIVE,
+        homeId: dto.homeId,
+        assignedToUserId: dto.assignedToUserId,
+      },
     });
 
     return this.remotes.findOneOrFail({ where: { id } });
@@ -262,6 +632,7 @@ export class RemotesService {
         );
       }
       await this.assertUserBelongsToHome(remote.homeId, dto.assignedToUserId);
+      await this.assertPortadorLibre(dto.assignedToUserId, id);
     }
     if (dto.deviceId && remote.homeId !== null) {
       const home = await this.getHome(remote.homeId);
@@ -327,11 +698,26 @@ export class RemotesService {
       );
     }
 
+    // La huella determinística, igual que en la fábrica: si este camino no la
+    // escribiera, el duplicado que la fábrica frena entraría por acá — y un
+    // código repetido es una alarma atribuida a la casa equivocada.
+    const codeHmac = this.crypto.fingerprint(dto.code);
+    const repetido = await this.codes.findOne({
+      where: { codeHmac },
+      select: { id: true },
+    });
+    if (repetido) {
+      // Sin decir de qué control es: cargar códigos de a uno no puede ser una
+      // forma de sondear los de la flota.
+      throw new ConflictException('Ese código ya está cargado en otro control');
+    }
+
     const code = await this.codes.save(
       this.codes.create({
         remoteId,
         position: dto.position,
         codeEncrypted: this.crypto.encrypt(dto.code),
+        codeHmac,
       }),
     );
 
@@ -430,6 +816,36 @@ export class RemotesService {
     }
   }
 
+  /**
+   * UNA PERSONA, UN CONTROL.
+   *
+   * No es una regla nuestra: la base del panel se indexa por DNI y guarda un
+   * registro por persona (hasta 4 códigos), así que un segundo control del mismo
+   * portador **nunca podría cargarse** — el equipo lo rechaza con `EE_DUP`.
+   * Permitirlo en la web sería entregar un llavero que no va a disparar nada.
+   *
+   * La base lo garantiza con `uq_remote_one_per_carrier`; esto existe para que
+   * el mensaje diga CUÁL es el otro control en vez de un 500 con el nombre de
+   * un índice adentro.
+   */
+  private async assertPortadorLibre(
+    userId: number,
+    exceptoRemoteId?: number,
+  ): Promise<void> {
+    const otro = await this.remotes.findOne({
+      where: { assignedToUserId: userId, removedAt: IsNull() },
+      select: { id: true, serial: true },
+    });
+    if (!otro || otro.id === exceptoRemoteId) return;
+
+    throw new ConflictException(
+      `Esa persona ya lleva el control ${otro.serial ?? `#${otro.id}`}. Una ` +
+        'persona lleva un solo control: la alarma guarda un registro por DNI, ' +
+        'así que el segundo no se podría cargar en el equipo. Cambiale el ' +
+        'portador a uno de los dos.',
+    );
+  }
+
   /** CUPO del barrio (§5.2): habilita o no los controles. Vive en neighborhood. */
   private async assertRemotesEnabled(neighborhoodId: number): Promise<void> {
     const barrio = await this.neighborhoods.findOne({
@@ -467,19 +883,5 @@ export class RemotesService {
     const home = await this.homes.findOne({ where: { id } });
     if (!home) throw new NotFoundException(`No existe la vivienda ${id}`);
     return home;
-  }
-
-  private async homesInScope(scope: AccessScope): Promise<number[]> {
-    const ids = new Set(scope.homeIds);
-
-    if (scope.neighborhoodIds.length > 0) {
-      const homes = await this.homes.find({
-        where: { neighborhoodId: In(scope.neighborhoodIds) },
-        select: { id: true },
-      });
-      for (const home of homes) ids.add(home.id);
-    }
-
-    return [...ids];
   }
 }

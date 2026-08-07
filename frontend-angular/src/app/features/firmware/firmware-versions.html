@@ -1,0 +1,445 @@
+<div class="mb-3">
+  <h2 class="h5 fw-bold mb-0">
+    <i class="icon-package text-brand me-2"></i>Versiones de firmware
+  </h2>
+  <p class="text-muted small mb-0">
+    Subir un <code>.bin</code> lo guarda en el servidor. Recién cuando se
+    <strong>publica</strong> hay un equipo que pueda bajarlo.
+  </p>
+</div>
+
+@if (error(); as e) {
+  <div class="alert alert-danger py-2 small d-flex align-items-start gap-2">
+    <i class="icon-circle-alert mt-1"></i>
+    <div>{{ e }}</div>
+  </div>
+}
+@if (aviso(); as a) {
+  <div class="alert alert-success py-2 small d-flex align-items-start gap-2">
+    <i class="icon-circle-check mt-1"></i>
+    <div>{{ a }}</div>
+  </div>
+}
+
+<div class="row g-3">
+  <!-- ═══════════════ SUBIR ═══════════════════════════════════════════ -->
+  <div class="col-12 col-lg-4">
+    <div class="card border">
+      <div class="card-header bg-white border-bottom">
+        <span class="fw-semibold small">
+          <i class="icon-package-plus me-1"></i> Cargar una versión
+        </span>
+      </div>
+      <div class="card-body">
+        <div class="mb-3">
+          <label for="bin" class="form-label small fw-medium">
+            El archivo <code>.bin</code>
+          </label>
+          <input
+            id="bin"
+            type="file"
+            class="form-control"
+            accept=".bin"
+            (change)="elegirArchivo($event)"
+          />
+          <div class="form-text">
+            El de la aplicación, no el <code>bootloader.bin</code> ni la tabla de
+            particiones: esos dos no se actualizan por OTA.
+          </div>
+        </div>
+
+        <div class="mb-3">
+          <label for="version" class="form-label small fw-medium">Versión</label>
+          <input
+            id="version"
+            type="text"
+            class="form-control font-monospace"
+            [ngModel]="version()"
+            (ngModelChange)="version.set($event)"
+            [ngModelOptions]="{ standalone: true }"
+            placeholder="new_0_7_0"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <!--
+            Por qué se tipea y no sale del archivo: el CMakeLists del firmware no
+            define PROJECT_VER, así que el binario declara su git describe
+            ("f1a0459-dirty") y eso no sirve para nombrar una versión.
+          -->
+          <div class="form-text">
+            <code>new_X_Y_Z</code> o <code>stable_X_Y_Z</code>. El prefijo
+            distingue experimental de estable y no bloquea nada: el equipo baja lo
+            que se le mande.
+          </div>
+        </div>
+
+        <div class="mb-3">
+          <label for="notas" class="form-label small fw-medium">
+            Qué trae <span class="text-muted fw-normal">(opcional)</span>
+          </label>
+          <textarea
+            id="notas"
+            class="form-control"
+            rows="2"
+            [ngModel]="notas()"
+            (ngModelChange)="notas.set($event)"
+            [ngModelOptions]="{ standalone: true }"
+            placeholder="Arregla el corte de RF con batería baja"
+          ></textarea>
+        </div>
+
+        <button
+          type="button"
+          class="btn btn-brand w-100"
+          [disabled]="!puedeSubir() || subiendo()"
+          (click)="subir()"
+        >
+          @if (subiendo()) {
+            <span class="spinner-border spinner-border-sm me-1"></span> Cargando…
+          } @else {
+            <i class="icon-package-plus me-1"></i> Cargar
+          }
+        </button>
+
+        <p class="text-muted small mb-0 mt-2">
+          Del archivo se leen solos el proyecto, el tamaño y el sha256.
+        </p>
+      </div>
+    </div>
+
+    <!-- ── Estado del servidor ─────────────────────────────────────── -->
+    <div class="card border mt-3">
+      <div class="card-header bg-white border-bottom">
+        <span class="fw-semibold small">
+          <i class="icon-shield-check me-1"></i> El servidor
+        </span>
+      </div>
+      <div class="card-body">
+        <p class="text-muted small">
+          Si nginx no sirve <code>/firmware/</code> o la carpeta no existe, acá se
+          ve todo bien igual y los equipos bajan un 404.
+        </p>
+        <button
+          type="button"
+          class="btn btn-outline-secondary btn-sm w-100"
+          [disabled]="chequeando()"
+          (click)="verificar()"
+        >
+          @if (chequeando()) {
+            <span class="spinner-border spinner-border-sm me-1"></span> Verificando…
+          } @else {
+            <i class="icon-search me-1"></i> Verificar el servidor
+          }
+        </button>
+
+        @if (chequeo(); as c) {
+          <dl class="row small mb-0 mt-3">
+            <dt class="col-5 text-muted fw-normal">Carpeta</dt>
+            <dd class="col-7 font-monospace text-break">{{ c.raiz }}</dd>
+            <dt class="col-5 text-muted fw-normal">Escribible</dt>
+            <dd class="col-7">
+              @if (c.escribible) {
+                <span class="badge text-bg-success">sí</span>
+              } @else {
+                <span class="badge text-bg-danger">no</span>
+              }
+            </dd>
+          </dl>
+          @if (c.faltantes.length > 0) {
+            <div class="alert alert-danger py-2 small mt-2 mb-0">
+              <strong>Falta el archivo de:</strong>
+              {{ c.faltantes.join(', ') }}. Están en el catálogo pero no en el
+              disco: hay que volver a subirlas.
+            </div>
+          }
+          @if (!c.escribible) {
+            <div class="alert alert-danger py-2 small mt-2 mb-0">
+              El backend no puede escribir ahí. Revisá
+              <code>FIRMWARE_ROOT</code> y los permisos de la carpeta.
+            </div>
+          }
+        }
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════ LO PUBLICADO + EL CATÁLOGO ══════════════════════ -->
+  <div class="col-12 col-lg-8">
+    <!-- ── Las dos ranuras ─────────────────────────────────────────── -->
+    <div class="row g-3 mb-3">
+      <div class="col-12 col-md-6">
+        <div class="card border h-100">
+          <div class="card-header bg-white border-bottom">
+            <span class="fw-semibold small">
+              <i class="icon-refresh-cw me-1"></i> Actualización automática
+            </span>
+          </div>
+          <div class="card-body">
+            @if (ranuraNew(); as r) {
+              <p class="h6 font-monospace mb-1">{{ r.version }}</p>
+              <p class="text-muted small mb-2">
+                Es lo que baja un equipo cuando se le manda actualizar.
+              </p>
+              <button
+                type="button"
+                class="btn btn-outline-secondary btn-sm"
+                (click)="copiar(r.url)"
+                title="Para pegar en el campo de URL manual de la ficha de un equipo"
+              >
+                <i class="icon-clipboard me-1"></i> Copiar la URL
+              </button>
+            } @else {
+              <p class="text-muted small mb-0">
+                <i class="icon-circle-alert me-1"></i>
+                Nada publicado. Mientras siga así, un pedido de actualización
+                manda al equipo a una carpeta vacía.
+              </p>
+            }
+          </div>
+        </div>
+      </div>
+
+      <div class="col-12 col-md-6">
+        <div class="card border h-100">
+          <div class="card-header bg-white border-bottom">
+            <span class="fw-semibold small">
+              <i class="icon-shield me-1"></i> Recuperación de emergencia
+            </span>
+          </div>
+          <div class="card-body">
+            @if (ranuraEmergencia(); as r) {
+              <p class="h6 font-monospace mb-1">{{ r.version }}</p>
+            } @else {
+              <p class="text-muted small mb-2">
+                <i class="icon-circle-alert me-1"></i> Nada publicado.
+              </p>
+            }
+            <!--
+              Esto NO es "la última". El equipo la baja SOLO, sin que nadie se lo
+              pida, cuando decide que está roto. Si acá está la misma versión de
+              la que trata de escapar, el mecanismo no sirve para nada.
+            -->
+            <p class="text-muted small mb-0">
+              La que el equipo baja <strong>solo</strong> cuando se detecta roto.
+              Tiene que ser una que sepas que anda, no la más nueva.
+            </p>
+            @if (emergenciaEsLaMisma()) {
+              <div class="alert alert-warning py-2 small mt-2 mb-0">
+                <i class="icon-triangle-alert me-1"></i>
+                Es la misma que la automática. Si esa versión resulta ser la que
+                falla, la recuperación va a bajar el mismo firmware roto.
+              </div>
+            }
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── El catálogo ─────────────────────────────────────────────── -->
+    <div class="card border">
+      <div class="card-header bg-white border-bottom d-flex justify-content-between align-items-center">
+        <span class="fw-semibold small">
+          <i class="icon-list me-1"></i> Cargadas ({{ versiones().length }})
+        </span>
+      </div>
+
+      @if (cargando()) {
+        <div class="card-body text-center text-muted py-4">
+          <span class="spinner-border spinner-border-sm me-2"></span> Cargando…
+        </div>
+      } @else if (versiones().length === 0) {
+        <div class="card-body text-center text-muted py-4 small">
+          Todavía no se cargó ningún firmware.
+        </div>
+      } @else {
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead class="table-light">
+              <tr>
+                <th class="small">Versión</th>
+                <th class="small">Tamaño</th>
+                <th class="small">Cargada</th>
+                <th class="small">Publicada en</th>
+                <th class="small text-end">Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (v of versiones(); track v.id) {
+                <tr>
+                  <td>
+                    <span class="font-monospace fw-semibold">{{ v.version }}</span>
+                    @if (v.channel === 'new') {
+                      <span
+                        class="badge text-bg-light border ms-1"
+                        title="Experimental. El prefijo es registro: no bloquea nada."
+                        >experimental</span
+                      >
+                    }
+                    @if (v.notes) {
+                      <div class="text-muted small">{{ v.notes }}</div>
+                    }
+                    <div class="text-muted small font-monospace" [title]="v.sha256">
+                      {{ v.sha256.slice(0, 16) }}…
+                    </div>
+                  </td>
+                  <td class="small text-nowrap">
+                    {{ v.sizeBytes / 1024 | number: '1.0-0' }} KB
+                  </td>
+                  <td class="small text-nowrap">
+                    {{ v.creadoEn | date: 'dd/MM/yy HH:mm' }}
+                    @if (v.subidoPor) {
+                      <div class="text-muted">{{ v.subidoPor }}</div>
+                    }
+                  </td>
+                  <td>
+                    @if (estaEn(v, 'new')) {
+                      <span class="badge text-bg-success d-block mb-1">automática</span>
+                    }
+                    @if (estaEn(v, 'emergency')) {
+                      <span class="badge text-bg-info d-block">emergencia</span>
+                    }
+                    @if (v.publicadoEn.length === 0) {
+                      <span class="text-muted small">—</span>
+                    }
+                  </td>
+                  <td class="text-end text-nowrap">
+                    @if (trabajando() === v.id) {
+                      <span class="spinner-border spinner-border-sm"></span>
+                    } @else {
+                      @if (!estaEn(v, 'new')) {
+                        <button
+                          type="button"
+                          class="btn btn-sm btn-outline-primary me-1"
+                          (click)="pedirPublicar(v, 'new')"
+                          title="Que sea la que bajen los equipos al actualizar"
+                        >
+                          Publicar
+                        </button>
+                      }
+                      @if (!estaEn(v, 'emergency')) {
+                        <button
+                          type="button"
+                          class="btn btn-sm btn-outline-secondary me-1"
+                          (click)="pedirPublicar(v, 'emergency')"
+                          title="Designarla como firmware de recuperación"
+                        >
+                          <i class="icon-shield"></i>
+                        </button>
+                      }
+                      <button
+                        type="button"
+                        class="btn btn-sm btn-outline-danger"
+                        [disabled]="v.publicadoEn.length > 0"
+                        (click)="pedirBorrar(v)"
+                        [title]="
+                          v.publicadoEn.length > 0
+                            ? 'Está publicada: primero publicá otra en esa ranura'
+                            : 'Sacarla del catálogo y del disco'
+                        "
+                      >
+                        <i class="icon-trash-2"></i>
+                      </button>
+                    }
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ CONFIRMAR PUBLICACIÓN ════════════════════════════ -->
+@if (publicando(); as p) {
+  <div class="modal d-block" tabindex="-1" style="background: rgba(0, 0, 0, 0.5)">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title h6">
+            @if (p.slot === 'new') {
+              Publicar {{ p.release.version }}
+            } @else {
+              Designar {{ p.release.version }} como recuperación
+            }
+          </h5>
+        </div>
+        <div class="modal-body small">
+          @if (p.slot === 'new') {
+            <p>
+              A partir de ahora, cualquier equipo al que se le mande actualizar va
+              a bajar <span class="font-monospace">{{ p.release.version }}</span>.
+            </p>
+            <p class="text-muted mb-0">
+              Publicar <strong>no manda nada</strong>: los equipos siguen con lo
+              que tienen hasta que se les pida actualizar, en la pestaña Equipos.
+            </p>
+          } @else {
+            <!--
+              La ranura de emergencia es la red de seguridad de última instancia:
+              el equipo la usa cuando se detecta a sí mismo roto, sin que nadie
+              se lo pida y sin poder consultarnos.
+            -->
+            <p>
+              <span class="font-monospace">{{ p.release.version }}</span> pasa a
+              ser el firmware que el equipo baja <strong>por su cuenta</strong>
+              cuando se detecta roto, sin que nadie se lo pida.
+            </p>
+            <div class="alert alert-warning py-2 mb-0">
+              <i class="icon-triangle-alert me-1"></i>
+              Poné acá una versión que <strong>sepas que funciona</strong> en la
+              calle, no la más nueva. Es lo último que le queda al equipo antes de
+              que haya que ir hasta el poste.
+            </div>
+          }
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-sm btn-outline-secondary" (click)="cancelarPublicacion()">
+            Cancelar
+          </button>
+          <button
+            type="button"
+            class="btn btn-sm"
+            [class.btn-brand]="p.slot === 'new'"
+            [class.btn-warning]="p.slot === 'emergency'"
+            (click)="confirmarPublicacion()"
+          >
+            @if (p.slot === 'new') {
+              Publicar
+            } @else {
+              Designar como recuperación
+            }
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+}
+
+<!-- ═══════════════ CONFIRMAR BORRADO ════════════════════════════════ -->
+@if (borrando(); as b) {
+  <div class="modal d-block" tabindex="-1" style="background: rgba(0, 0, 0, 0.5)">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title h6">Borrar {{ b.version }}</h5>
+        </div>
+        <div class="modal-body small">
+          <p class="mb-0">
+            Se saca del catálogo y del disco. Los equipos que ya la tienen
+            instalada <strong>no se ven afectados</strong>: siguen corriéndola.
+          </p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-sm btn-outline-secondary" (click)="cancelarBorrado()">
+            Cancelar
+          </button>
+          <button type="button" class="btn btn-sm btn-danger" (click)="confirmarBorrado()">
+            Borrar
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+}

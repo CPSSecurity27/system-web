@@ -15,7 +15,7 @@ export interface StatusLook {
   icon?: string;
 }
 
-export type StatusKind = 'event' | 'device';
+export type StatusKind = 'event' | 'device' | 'remote';
 
 export const STATUS_MAP: Record<StatusKind, Record<string, StatusLook>> = {
   event: {
@@ -51,6 +51,28 @@ export const STATUS_MAP: Record<StatusKind, Record<string, StatusLook>> = {
       icon: 'icon-triangle-alert',
     },
     RETIRED: { label: 'Dada de baja', classes: 'bg-light text-muted border' },
+  },
+  /**
+   * El control remoto. `LOST` va en rojo y es el único que se lo gana: un
+   * llavero perdido sigue abriendo la alarma de esa gente —los códigos viven en
+   * la EEPROM del panel y la web todavía no los sincroniza—, así que es un
+   * problema de seguridad y no una etiqueta más.
+   */
+  remote: {
+    INVENTORY: { label: 'En stock', classes: 'bg-light text-muted border', icon: 'icon-package' },
+    ACTIVE: { label: 'Activo', classes: 'bg-success-soft text-success border' },
+    SUSPENDED: {
+      label: 'Suspendido',
+      classes: 'bg-warning-soft text-warning border',
+      icon: 'icon-pause',
+    },
+    LOST: {
+      label: 'Perdido',
+      classes: 'bg-emergency-soft text-emergency border',
+      icon: 'icon-triangle-alert',
+    },
+    REPLACED: { label: 'Reemplazado', classes: 'bg-light text-muted border' },
+    CLOSED: { label: 'Cerrado', classes: 'bg-light text-muted border' },
   },
 };
 

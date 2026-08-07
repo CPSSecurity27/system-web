@@ -1,0 +1,114 @@
+/*
+ * Etiqueta del control remoto: 40 × 20 mm, blanco y negro.
+ *
+ * Todo en MILÍMETROS, igual que la del equipo: es un objeto que se pega a un
+ * llavero. La diferencia de tamaño no es estética — 90 × 45 no entra en un
+ * control, y una etiqueta que sobra se despega en una semana en un bolsillo.
+ *
+ * Cero grises y cero color: en una térmica monocromática los grises se dithean
+ * y un fondo lleno sale veteado si el cabezal está gastado.
+ */
+
+.etqc {
+  width: 40mm;
+  height: 20mm;
+  background: #fff;
+  color: #000;
+  font-family: Arial, Helvetica, sans-serif;
+  display: flex;
+  align-items: stretch;
+  gap: 1.2mm;
+  padding: 1.2mm;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.etqc * {
+  box-sizing: border-box;
+}
+
+/* ── El QR ─────────────────────────────────────────────────────────
+   14 mm de lado: con nivel Q y ~45 caracteres quedan módulos de ~0,35 mm, que
+   es lo mínimo que resuelve una térmica de 203 dpi (0,125 mm por punto). Más
+   chico que esto y la cámara no engancha. */
+
+.etqc-qr {
+  width: 14mm;
+  height: 14mm;
+  flex: 0 0 14mm;
+  align-self: center;
+}
+
+.etqc-qr svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* ── El texto ──────────────────────────────────────────────────── */
+
+.etqc-datos {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.etqc-marca {
+  font-size: 1.6mm;
+  font-weight: 800;
+  letter-spacing: 0.3mm;
+  line-height: 1;
+}
+
+/* El serial es lo que se busca revolviendo una caja: va lo más grande que
+   entre sin cortar. */
+.etqc-serial {
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 3.4mm;
+  font-weight: 700;
+  line-height: 1.1;
+  margin-top: 0.4mm;
+}
+
+.etqc-modelo {
+  font-size: 1.7mm;
+  line-height: 1.2;
+  margin-top: 0.3mm;
+}
+
+/* El código de reclamo, escrito además del QR: se dicta por teléfono cuando la
+   muni carga la bolsa a mano, así que tiene que leerse sin lupa. */
+.etqc-claim {
+  font-family: 'Courier New', Courier, monospace;
+  font-weight: 700;
+  letter-spacing: 0.15mm;
+}
+
+/* Los códigos van escritos ADEMÁS del QR: son el dato que hay que grabar en el
+   control, y si el QR no lee el operario tiene que poder tipearlos. */
+.etqc-codigos {
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 1.5mm;
+  line-height: 1.25;
+  margin-top: 0.6mm;
+  word-break: break-all;
+}
+
+/* ── Impresión ─────────────────────────────────────────────────────
+   El bloque global de `styles.scss` fija la hoja en 90 × 45 (la etiqueta del
+   equipo). Acá se declara una hoja NOMBRADA y se la aplica solo a esta
+   etiqueta, así las dos conviven sin pisarse. El `html/body` con la clase es la
+   red por si el navegador ignora la hoja nombrada: el contenido igual entra. */
+
+@media print {
+  @page etiqueta-control {
+    size: 40mm 20mm;
+    margin: 0;
+  }
+
+  .solo-impresion .etqc {
+    page: etiqueta-control;
+  }
+}

@@ -1,279 +1,300 @@
-<div class="d-flex align-items-center justify-content-between mb-3">
-  <div>
-    <h2 class="h5 fw-bold mb-0"><i class="icon-key-round text-brand me-2"></i>Controles remotos</h2>
-    <!-- El control es de la VIVIENDA y dispara las alarmas del barrio. -->
-    <p class="text-muted small mb-0">
-      Cada control pertenece a una vivienda y dispara las alarmas del barrio
-    </p>
-  </div>
+<!--
+  El control es de la VIVIENDA y dispara las alarmas del barrio.
 
+  Tabla y no tarjetas: una alarma lleva de 10 a 120 controles y una municipal
+  se va a ~12.000. Filtra y pagina el SERVIDOR; acá no se filtra nada a mano.
+-->
+<cps-page-header
+  title="Controles remotos"
+  icon="icon-key-round"
+  subtitle="Cada control pertenece a una vivienda y dispara las alarmas del barrio"
+>
   @if (auth.isManager()) {
-    <a routerLink="/inventario/controles" class="btn btn-brand btn-sm">
-      <i class="icon-plus me-1"></i> Nuevo control
+    <a actions routerLink="/controles/asignar" class="btn btn-brand btn-sm">
+      <i class="icon-house me-1"></i> Asignar
     </a>
   }
-</div>
+</cps-page-header>
 
-@if (homeList().length > 0) {
-  <div class="mb-3" style="max-width: 320px">
-    <label for="filtro" class="form-label small fw-medium">Filtrar por vivienda</label>
-    <select
-      id="filtro"
-      class="form-select form-select-sm"
-      [(ngModel)]="filter"
-      (ngModelChange)="onFilterChange()"
-    >
-      <option value="">Todas las viviendas</option>
-      @for (home of homeList(); track home.id) {
-        <option [value]="home.id">{{ home.address }}</option>
-      }
-    </select>
-  </div>
-}
-
-@if (loading()) {
-  <div class="text-center text-muted py-5">
-    <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
-    Cargando controles…
-  </div>
-} @else if (error()) {
-  <div class="alert bg-emergency-soft text-emergency border-0" role="alert">
-    <i class="icon-triangle-alert me-2"></i>{{ error() }}
-  </div>
-} @else if (items().length === 0) {
-  <div class="text-center text-muted py-5 bg-light rounded">
-    <i class="icon-key d-block mb-2" style="font-size: 2rem"></i>
-    No hay controles para mostrar.
-  </div>
-} @else {
-  <div class="row g-3">
-    @for (remote of items(); track remote.id) {
-      <div class="col-12 col-lg-6">
-        <div class="card border h-100">
-          <div class="card-body">
-            <div class="d-flex align-items-start justify-content-between mb-2">
-              <div>
-                <h3 class="h6 fw-semibold mb-0">{{ remote.name }}</h3>
-                <p class="text-muted small mb-0">
-                  <i class="icon-house me-1"></i>{{ homeName(remote.homeId) }}
-                </p>
-              </div>
-
-              @switch (remote.status) {
-                @case ('ACTIVE') {
-                  <span class="badge bg-success-soft text-success border">Activo</span>
-                }
-                @case ('INVENTORY') {
-                  <span class="badge bg-warning-soft text-warning border">En stock</span>
-                }
-                @case ('LOST') {
-                  <!-- Un control perdido es un problema de seguridad, no una etiqueta más. -->
-                  <span class="badge bg-emergency-soft text-emergency border">Perdido</span>
-                }
-                @default {
-                  <span class="badge bg-light text-muted border">{{ remote.status }}</span>
-                }
-              }
-            </div>
-
-            @if (remote.homeId !== null) {
-              <!--
-                DUEÑO ≠ PORTADOR. La vivienda es la dueña y no cambia; el portador
-                es quien lo lleva encima hoy y debe ser MIEMBRO del hogar.
-              -->
-              <dl class="row small mb-0">
-                <dt class="col-5 text-muted fw-normal">Vivienda dueña</dt>
-                <dd class="col-7 mb-1">{{ homeName(remote.homeId) }}</dd>
-
-                <dt class="col-5 text-muted fw-normal">Lo lleva hoy</dt>
-                <dd class="col-7 mb-0">
-                  @if (remote.assignedToUser) {
-                    {{ remote.assignedToUser.name }}
-                    @if (remote.assignedToUser.dni) {
-                      <span class="text-muted">(DNI {{ remote.assignedToUser.dni }})</span>
-                    }
-                  } @else {
-                    <span class="text-muted">Sin asignar</span>
-                  }
-                  @if (auth.isManager() || auth.isTitular()) {
-                    <button
-                      type="button"
-                      class="btn btn-link btn-sm p-0 ms-2 align-baseline"
-                      (click)="toggleCarrier(remote)"
-                    >
-                      {{ carrierRemoteId() === remote.id ? 'Cancelar' : 'Cambiar' }}
-                    </button>
-                  }
-                </dd>
-              </dl>
-
-              @if (carrierRemoteId() === remote.id) {
-                <!-- El portador debe ser MIEMBRO del hogar dueño; '' = sin portador. -->
-                <div class="d-flex gap-2 align-items-center mt-2">
-                  @if (loadingMembers()) {
-                    <span class="text-muted small">
-                      <span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>
-                      Cargando miembros…
-                    </span>
-                  } @else {
-                    <select
-                      class="form-select form-select-sm"
-                      style="max-width: 220px"
-                      [(ngModel)]="carrierUserId"
-                    >
-                      <option value="">Sin portador (queda en la casa)</option>
-                      @for (member of carrierMembers(); track member.id) {
-                        <option [value]="member.userId">
-                          {{ member.user.name }} ({{ member.role }})
-                        </option>
-                      }
-                    </select>
-                    <button
-                      type="button"
-                      class="btn btn-sm btn-brand"
-                      [disabled]="saving()"
-                      (click)="saveCarrier(remote)"
-                    >
-                      <i class="icon-user-check me-1"></i> Guardar
-                    </button>
-                  }
-                </div>
-              }
-            } @else if (auth.isManager()) {
-              <!-- Entrega física: stock → vivienda. Desde ahí el dueño no cambia. -->
-              <div class="d-flex gap-2 align-items-center mt-2">
-                <select
-                  class="form-select form-select-sm"
-                  style="max-width: 220px"
-                  [(ngModel)]="assignHomeId"
-                >
-                  <option value="">Entregar a la vivienda…</option>
-                  @for (home of homeList(); track home.id) {
-                    <option [value]="home.id">{{ home.address }}</option>
-                  }
-                </select>
-                <button
-                  type="button"
-                  class="btn btn-sm btn-brand"
-                  [disabled]="saving() || assignHomeId === ''"
-                  (click)="assign(remote)"
-                >
-                  <i class="icon-log-out me-1"></i> Entregar
-                </button>
-              </div>
+<!-- ====================== FILTROS ====================== -->
+<div class="card border mb-3">
+  <div class="card-body py-3">
+    <div class="d-flex gap-2 flex-wrap align-items-end">
+      @if (muestraCliente()) {
+        <div>
+          <label for="fCliente" class="form-label small fw-medium mb-1">Cliente</label>
+          <select
+            id="fCliente"
+            class="form-select form-select-sm"
+            style="min-width: 200px"
+            [ngModel]="fCliente()"
+            (ngModelChange)="onCliente($event)"
+            [ngModelOptions]="{ standalone: true }"
+          >
+            <option [ngValue]="null">Todos los clientes</option>
+            @for (cliente of clientes(); track cliente.id) {
+              <option [ngValue]="cliente.id">{{ cliente.name }}</option>
             }
-
-            <button
-              type="button"
-              class="btn btn-sm btn-outline-secondary mt-3"
-              (click)="toggleCodes(remote)"
-            >
-              <i class="icon-list-ordered me-1"></i>
-              {{ openRemoteId() === remote.id ? 'Ocultar códigos' : 'Ver códigos RF' }}
-            </button>
-
-            @if (openRemoteId() === remote.id) {
-              <div class="border-top mt-3 pt-3">
-                @if (loadingCodes()) {
-                  <div class="text-muted small">
-                    <span class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>
-                    Cargando códigos…
-                  </div>
-                } @else {
-                  @if (codes().length === 0) {
-                    <p class="text-muted small mb-2">Este control no tiene códigos cargados.</p>
-                  } @else {
-                    <!--
-                      La lista NUNCA trae el valor del código: solo posición y fecha.
-                      Revelar es un pedido aparte, y solo CPS puede hacerlo.
-                    -->
-                    <ul class="list-group list-group-flush">
-                      @for (code of codes(); track code.id) {
-                        <li
-                          class="list-group-item px-0 d-flex align-items-center justify-content-between"
-                        >
-                          <span class="small">
-                            <span class="badge text-bg-light border me-2"
-                              >#{{ code.position }}</span
-                            >
-                            @if (revealed()?.codeId === code.id) {
-                              <code class="text-brand fw-bold">{{ revealed()?.code }}</code>
-                            } @else {
-                              <span class="text-muted font-monospace">••••••••</span>
-                            }
-                          </span>
-
-                          @if (auth.isCps()) {
-                            @if (revealed()?.codeId === code.id) {
-                              <button
-                                type="button"
-                                class="btn btn-sm btn-outline-secondary"
-                                (click)="hide()"
-                              >
-                                <i class="icon-eye-off me-1"></i> Ocultar
-                              </button>
-                            } @else {
-                              <button
-                                type="button"
-                                class="btn btn-sm btn-outline-brand"
-                                (click)="reveal(code.id)"
-                              >
-                                <i class="icon-eye me-1"></i> Revelar
-                              </button>
-                            }
-                          }
-                        </li>
-                      }
-                    </ul>
-                  }
-
-                  @if (auth.isCps()) {
-                    <!-- Alta de código: posición 1..4 (el hardware tiene 4). -->
-                    <div class="d-flex gap-2 align-items-center mt-2">
-                      <input
-                        type="text"
-                        class="form-control form-control-sm font-monospace"
-                        style="max-width: 140px"
-                        placeholder="Código RF"
-                        autocomplete="off"
-                        [(ngModel)]="newCode"
-                      />
-                      <select
-                        class="form-select form-select-sm"
-                        style="max-width: 110px"
-                        [(ngModel)]="newCodePosition"
-                      >
-                        <option value="">Posición</option>
-                        <option [value]="1">1</option>
-                        <option [value]="2">2</option>
-                        <option [value]="3">3</option>
-                        <option [value]="4">4</option>
-                      </select>
-                      <button
-                        type="button"
-                        class="btn btn-sm btn-outline-brand"
-                        [disabled]="saving() || !newCode || newCodePosition === ''"
-                        (click)="addCode()"
-                      >
-                        <i class="icon-plus me-1"></i> Grabar
-                      </button>
-                    </div>
-                    <p class="text-muted small mb-0 mt-2">
-                      <i class="icon-shield-check me-1"></i>
-                      Se cifra antes de guardarse. El revelado se audita y no queda cacheado.
-                    </p>
-                  } @else {
-                    <p class="text-muted small mb-0 mt-2">
-                      <i class="icon-shield-check me-1"></i>
-                      Los códigos RF solo puede verlos CPS.
-                    </p>
-                  }
-                }
-              </div>
-            }
-          </div>
+          </select>
         </div>
+      }
+
+      <div>
+        <label for="fBarrio" class="form-label small fw-medium mb-1">Barrio</label>
+        <select
+          id="fBarrio"
+          class="form-select form-select-sm"
+          style="min-width: 200px"
+          [ngModel]="fBarrio()"
+          (ngModelChange)="onBarrio($event)"
+          [ngModelOptions]="{ standalone: true }"
+        >
+          <option [ngValue]="null">Todos los barrios</option>
+          @for (barrio of barriosDelCliente(); track barrio.id) {
+            <option [ngValue]="barrio.id">{{ barrio.name }}</option>
+          }
+        </select>
+      </div>
+
+      <div>
+        <!--
+          La alarma PREFERIDA del hogar (la que suena en un evento SINGLE), no
+          la que tiene grabados los códigos del llavero: son dos preguntas
+          distintas y esta es la del operador.
+        -->
+        <label for="fAlarma" class="form-label small fw-medium mb-1">Alarma preferida</label>
+        <select
+          id="fAlarma"
+          class="form-select form-select-sm"
+          style="min-width: 190px"
+          [disabled]="fBarrio() === null"
+          [ngModel]="fAlarma()"
+          (ngModelChange)="onAlarma($event)"
+          [ngModelOptions]="{ standalone: true }"
+        >
+          <option [ngValue]="null">
+            {{ fBarrio() === null ? 'Elegí un barrio primero' : 'Todas las alarmas' }}
+          </option>
+          @for (alarma of alarmas(); track alarma.id) {
+            <option [ngValue]="alarma.id">{{ alarma.name ?? alarma.serial }}</option>
+          }
+        </select>
+      </div>
+
+      <div>
+        <label for="fEstado" class="form-label small fw-medium mb-1">Estado</label>
+        <select
+          id="fEstado"
+          class="form-select form-select-sm"
+          style="min-width: 150px"
+          [ngModel]="fEstado()"
+          (ngModelChange)="onEstado($event)"
+          [ngModelOptions]="{ standalone: true }"
+        >
+          <option value="">Todos</option>
+          <option value="ACTIVE">Activos</option>
+          <option value="LOST">Perdidos</option>
+          <option value="SUSPENDED">Suspendidos</option>
+          <option value="REPLACED">Reemplazados</option>
+        </select>
+      </div>
+
+      <div class="flex-grow-1" style="min-width: 220px">
+        <label for="fBuscar" class="form-label small fw-medium mb-1">Buscar</label>
+        <input
+          id="fBuscar"
+          type="search"
+          class="form-control form-control-sm"
+          placeholder="DNI, serial, dirección o portador…"
+          autocomplete="off"
+          [ngModel]="search()"
+          (ngModelChange)="onSearch($event)"
+          [ngModelOptions]="{ standalone: true }"
+        />
+      </div>
+
+      @if (hayFiltros()) {
+        <button type="button" class="btn btn-sm btn-outline-secondary" (click)="limpiarFiltros()">
+          <i class="icon-x me-1"></i> Limpiar
+        </button>
+      }
+    </div>
+
+    @if (fCasa() !== null) {
+      <!-- Vino por ?homeId= desde la ficha del hogar: se dice y se puede sacar. -->
+      <div class="mt-2">
+        <span class="badge bg-brand-soft text-brand border">
+          <i class="icon-house me-1"></i>
+          Solo {{ casaNombre() ?? 'una vivienda' }}
+          <button
+            type="button"
+            class="btn btn-link btn-sm p-0 ms-2 align-baseline text-brand"
+            (click)="quitarCasa()"
+          >
+            quitar
+          </button>
+        </span>
       </div>
     }
   </div>
+</div>
+
+@if (error()) {
+  <cps-alert variant="error" [dense]="true">{{ error() }}</cps-alert>
 }
+
+<cps-async
+  [loading]="loading()"
+  [empty]="items().length === 0"
+  loadingText="Cargando controles…"
+  emptyText="No hay controles entregados que coincidan."
+  emptyIcon="icon-key"
+>
+  <div class="table-responsive">
+    <table class="table table-hover align-middle">
+      <thead>
+        <tr class="small text-muted">
+          <th scope="col">Serial</th>
+          <th scope="col">Vivienda</th>
+          <th scope="col">Barrio</th>
+          <th scope="col">Lo lleva hoy</th>
+          <th scope="col">DNI</th>
+          <th scope="col">Estado</th>
+          <th scope="col" class="text-end"></th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (remote of items(); track remote.id) {
+          <tr>
+            <td class="small font-monospace fw-medium">
+              {{ remote.serial ?? '—' }}
+              @if (remote.name) {
+                <span class="text-muted d-block">{{ remote.name }}</span>
+              }
+            </td>
+            <td class="small">
+              {{ direccion(remote) }}
+              @if (muestraCliente()) {
+                <span class="text-muted d-block">{{ clienteDe(remote) }}</span>
+              }
+            </td>
+            <td class="small">{{ barrioDe(remote) }}</td>
+            <!-- DUEÑO ≠ PORTADOR: la vivienda es la dueña, el portador cambia. -->
+            <td class="small">
+              @if (remote.assignedToUser) {
+                {{ remote.assignedToUser.name }}
+              } @else {
+                <span class="text-muted">Sin asignar</span>
+              }
+            </td>
+            <td class="small font-monospace">{{ remote.assignedToUser?.dni ?? '—' }}</td>
+            <td><cps-status kind="remote" [value]="remote.status" /></td>
+            <td class="text-end text-nowrap">
+              @if (auth.isManager() || auth.isTitular()) {
+                <button
+                  type="button"
+                  class="btn btn-sm btn-outline-secondary"
+                  title="Portador y devolución"
+                  (click)="abrir(remote)"
+                >
+                  <i [class]="abierto() === remote.id ? 'icon-chevron-up' : 'icon-user-cog'"></i>
+                </button>
+              }
+            </td>
+          </tr>
+
+          @if (abierto() === remote.id) {
+            <tr>
+              <td colspan="7" class="bg-light">
+                <div class="py-2">
+                  <!-- ── PORTADOR: quién lo lleva encima hoy ── -->
+                  <div class="d-flex gap-2 align-items-center flex-wrap">
+                    <span class="small fw-medium">Lo lleva:</span>
+                    @if (cargandoMiembros()) {
+                      <span class="text-muted small">
+                        <span
+                          class="spinner-border spinner-border-sm me-1"
+                          aria-hidden="true"
+                        ></span>
+                        Cargando miembros…
+                      </span>
+                    } @else {
+                      <select
+                        class="form-select form-select-sm"
+                        style="max-width: 260px"
+                        [ngModel]="portadorElegido()"
+                        (ngModelChange)="portadorElegido.set($event)"
+                        [ngModelOptions]="{ standalone: true }"
+                        aria-label="Portador del control"
+                      >
+                        <option value="">Sin portador (queda en la casa)</option>
+                        @for (miembro of miembros(); track miembro.id) {
+                          <option [ngValue]="miembro.userId">
+                            {{ miembro.user.name }} ({{ miembro.role }})
+                          </option>
+                        }
+                      </select>
+                      <button
+                        type="button"
+                        class="btn btn-sm btn-brand"
+                        [disabled]="saving()"
+                        (click)="guardarPortador(remote)"
+                      >
+                        <i class="icon-user-check me-1"></i> Guardar
+                      </button>
+                    }
+
+                    @if (auth.isManager() && devolviendo() !== remote.id) {
+                      <button
+                        type="button"
+                        class="btn btn-sm btn-outline-warning ms-auto"
+                        title="La familia lo entregó: vuelve al stock"
+                        (click)="pedirDevolucion(remote)"
+                      >
+                        <i class="icon-rotate-ccw me-1"></i> Devolver al stock
+                      </button>
+                    }
+                  </div>
+
+                  <!-- ── DEVOLUCIÓN: el mensaje tiene que nombrar lo que NO hace ── -->
+                  @if (devolviendo() === remote.id) {
+                    <cps-alert variant="warning" [dense]="true">
+                      Vuelve al stock y se le saca el portador.
+                      <strong>Sus códigos siguen grabados en las alarmas del barrio</strong>: hasta
+                      que exista la sincronización, este llavero sigue disparando.
+                    </cps-alert>
+                    <button
+                      type="button"
+                      class="btn btn-sm btn-warning"
+                      [disabled]="saving()"
+                      (click)="devolver(remote)"
+                    >
+                      Sí, devolver al stock
+                    </button>
+                    <button
+                      type="button"
+                      class="btn btn-sm btn-outline-secondary ms-1"
+                      [disabled]="saving()"
+                      (click)="cancelarDevolucion()"
+                    >
+                      Cancelar
+                    </button>
+                  }
+                </div>
+              </td>
+            </tr>
+          }
+        }
+      </tbody>
+    </table>
+  </div>
+
+  <cps-paginator
+    [offset]="offset()"
+    [count]="items().length"
+    [total]="total()"
+    [disabled]="loading()"
+    (prev)="prev()"
+    (next)="next()"
+  />
+</cps-async>

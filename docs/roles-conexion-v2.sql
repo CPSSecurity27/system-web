@@ -67,10 +67,15 @@ REVOKE ALL ON ALL FUNCTIONS IN SCHEMA gtd FROM PUBLIC, cps_web, cps_alarms;
 -- Entrada: las 8 que son 1:1 con el Protocol Repo del GtD, más el barrido de
 -- pendientes (fetch_pending_macs), el camino de vuelta de una cfg que no se
 -- pudo entregar (mark_config_failed) y la confirmación de una cfg aplicada
--- (confirm_config: el ack no trae cid, se correlaciona por mac + cfg_v). Firma
--- v2 de upsert_panel_state (2026-08-04): estado durmiendo, reloj declarado y fw.
+-- (confirm_config: el ack no trae cid, se correlaciona por mac + cfg_v).
+--
+-- OJO CON LA FIRMA de upsert_panel_state: un GRANT nombra la función POR SUS
+-- TIPOS, así que cada vez que una migración le agrega un parámetro hay que
+-- actualizar esta línea o el script entero falla con "does not exist" — y falla
+-- DESPUÉS de haber revocado, o sea dejando al GtD sin permisos. Los dos últimos
+-- (p_red, p_tele) los sumó DeviceStateNetwork el 2026-08-05.
 GRANT EXECUTE ON FUNCTION
-  gtd.upsert_panel_state(TEXT, TEXT, TEXT, TEXT, BIGINT, BIGINT, JSONB, TEXT, BIGINT, BIGINT, SMALLINT, BOOLEAN),
+  gtd.upsert_panel_state(TEXT, TEXT, TEXT, TEXT, BIGINT, BIGINT, JSONB, TEXT, BIGINT, BIGINT, SMALLINT, BOOLEAN, JSONB, JSONB),
   gtd.insert_evento(TEXT, TEXT, JSONB, TEXT, BIGINT),
   gtd.confirm_command(TEXT, TEXT, TEXT),
   gtd.confirm_config(TEXT, BIGINT, TEXT, TEXT),
@@ -90,14 +95,29 @@ GRANT EXECUTE ON FUNCTION
   gtd.enqueue_command(INT, TEXT, JSONB, INT),
   gtd.publish_config(INT, JSONB, INT),
   gtd.cancel_command(TEXT, INT),
-  gtd.enqueue_rf_batch(INT, JSONB, INT),
+  gtd.enqueue_rf_sync(INT, JSONB, INT),
   gtd.last_scan(INT),
+  -- El progreso del OTA. Va como función y no como GRANT sobre uplink_raw
+  -- porque ahí viven también los cfg_full, con las passwords WiFi en claro.
+  gtd.last_ota(INT),
   gtd.enqueue_provisioning(INT, TEXT, INT)
 TO cps_web;
 
--- La web LEE la cola de provisioning para mostrar el estado en la ficha del
--- equipo. No la escribe: para eso está enqueue_provisioning.
-GRANT SELECT ON gtd.provisioning_queue TO cps_web;
+-- Lo que la web LEE del esquema gtd para MOSTRARLO. Nada de escritura: para eso
+-- están las funciones de arriba, que es donde viven la atomicidad y la auditoría.
+--
+-- Faltaban tres y se descubrió en producción (2026-08-06): la pantalla de
+-- Configuración y la de Acciones tiraban 500 con "permission denied for table
+-- commands". El REVOKE ALL de más arriba las dejaba sin nada y solo se reponía
+-- provisioning_queue. En desarrollo no se veía porque la app corría con un rol
+-- con más privilegios que cps_web.
+--
+--   commands       → la cola de comandos en la ficha del equipo, y el estado de
+--                    una sincronización de base RF en curso
+--   panel_config   → qué cfg_v le mandamos y en qué quedó (pending/applied/failed)
+--   config_espejo  → lo que el panel DICE que corre, que es lo que se muestra
+GRANT SELECT ON gtd.provisioning_queue, gtd.commands, gtd.panel_config,
+                gtd.config_espejo TO cps_web;
 
 -- ----------------------------------------------------------------------------
 -- El PROVISIONER: alta y baja de credenciales en el broker (2026-08-04).
@@ -130,6 +150,31 @@ GRANT SELECT (id, serial, mac) ON device TO cps_provisioner;
 
 -- El GtD no participa del alta de credenciales: no se le da nada de la cola.
 REVOKE ALL ON gtd.provisioning_queue FROM cps_alarms;
+
+-- ----------------------------------------------------------------------------
+-- cps_legacy: el puente con la app VIEJA de vecinos (2026-08-07). TEMPORAL.
+--
+-- Otro proceso aparte. Su entrada es MQTT anónimo sobre el listener 1883, que
+-- está abierto (`deploy/legacy-1883.acl`: topic readwrite #) — o sea que
+-- cualquiera puede publicarle. Por eso su rol tiene UNA sola capacidad y
+-- ninguna lectura: toda la validación vive adentro de la función, y el destino
+-- de la activación no se puede elegir desde el mensaje.
+--
+--   CREATE ROLE cps_legacy LOGIN PASSWORD '...';
+-- ----------------------------------------------------------------------------
+GRANT USAGE ON SCHEMA gtd TO cps_legacy;
+REVOKE ALL ON ALL TABLES IN SCHEMA gtd FROM cps_legacy;
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA gtd FROM cps_legacy;
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM cps_legacy;
+
+GRANT EXECUTE ON FUNCTION
+  gtd.enqueue_legacy_alarm(TEXT, TEXT, DOUBLE PRECISION, DOUBLE PRECISION)
+TO cps_legacy;
+
+-- La web LEE de dónde vino una activación; el GtD no necesita nada (la lectura
+-- la hace insert_evento, que es SECURITY DEFINER).
+GRANT SELECT ON gtd.legacy_activation, gtd.legacy_mode_map TO cps_web;
+REVOKE ALL ON gtd.legacy_activation, gtd.legacy_mode_map FROM cps_alarms;
 
 -- ----------------------------------------------------------------------------
 -- Tablas FUTURAS: las migraciones corren como `postgres`, y sin esto cada tabla

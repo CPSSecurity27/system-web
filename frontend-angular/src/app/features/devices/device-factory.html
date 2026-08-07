@@ -1,3 +1,18 @@
+<!--
+  El título va acá y no en el shell: son dos fábricas distintas —alarmas y
+  controles— y la pestaña sola no alcanza para saber en cuál estás cuando la
+  pantalla está scrolleada.
+-->
+<div class="mb-3">
+  <h2 class="h5 fw-bold mb-0">
+    <i class="icon-radio-tower text-brand me-2"></i>Fábrica de alarmas
+  </h2>
+  <p class="text-muted small mb-0">
+    El serial se deriva de la MAC y la credencial del broker se pide sola; después
+    se etiqueta, se prueba y se le da el visto bueno.
+  </p>
+</div>
+
 <div class="row g-3">
   <!-- ====================== FABRICAR (la estación) ====================== -->
   <div class="col-12 col-lg-4">
@@ -226,7 +241,7 @@
 
         <div class="d-flex gap-2">
           <a
-            routerLink="/inventario/removidos"
+            routerLink="/inventario/fabrica/alarmas/removidos"
             class="btn btn-sm btn-outline-secondary"
             title="Equipos fuera de circulación: se pueden reactivar o borrar"
           >
@@ -266,7 +281,7 @@
             <span class="flex-grow-1">
               <span class="font-monospace">{{ serial }}</span> salió de circulación y se revocó su
               credencial. Está en
-              <a routerLink="/inventario/removidos" class="alert-link">removidos</a>, donde se puede
+              <a routerLink="/inventario/fabrica/alarmas/removidos" class="alert-link">removidos</a>, donde se puede
               dar de alta de nuevo.
             </span>
             <button type="button" class="btn-close btn-sm ms-2" (click)="descartarRemovido()"></button>

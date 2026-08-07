@@ -53,6 +53,21 @@ export class HomesService {
     return this.http.post<Home>(`${this.api}/homes`, home);
   }
 
+  /**
+   * Corrige datos de la vivienda. Es un PATCH: lo que no se manda no se toca.
+   *
+   * El `homeId` de un control NO se cambia por acá —la vivienda es DUEÑA del
+   * control— y el barrio tampoco se ofrece desde la ficha: mudar una casa
+   * arrastra sus miembros, sus controles ya sincronizados y su alarma preferida,
+   * y no es una corrección.
+   *
+   * Lo puede hacer quien gestiona el barrio y también el TITULAR de la casa: el
+   * backend lo resuelve con `assertCanManageHome`.
+   */
+  update(id: number, patch: Partial<Home>): Observable<Home> {
+    return this.http.patch<Home>(`${this.api}/homes/${id}`, patch);
+  }
+
   // --- Miembros del hogar (el dominio del vecino, NUEVO en v2) --------------
 
   members(homeId: number): Observable<HomeMember[]> {

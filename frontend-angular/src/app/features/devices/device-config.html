@@ -1,19 +1,42 @@
 @if (cargando()) {
   <p class="text-muted">Cargando la configuración del equipo…</p>
 } @else {
-
   <!-- Estado de la publicación: la pantalla dice la verdad en cada momento -->
   @switch (config()?.estado) {
     @case ('SIN_ESPEJO') {
       <div class="alert alert-warning">
         <strong>El equipo nunca reportó su configuración.</strong>
         <p class="mb-2 small">
-          Sin saber qué está corriendo, mandarle un cambio parcial apagaría
-          módulos sin querer. Pedile la configuración actual: la manda al toque
-          si está conectado, o cuando despierte.
+          Sin saber qué está corriendo, mandarle un cambio parcial apagaría módulos sin querer.
+          Pedile la configuración actual: la manda al toque si está conectado, o cuando despierte.
         </p>
-        <button type="button" class="btn btn-sm btn-warning"
-                [disabled]="!config()?.puedeEditar" (click)="pedirRefresh()">
+        <button
+          type="button"
+          class="btn btn-sm btn-warning"
+          [disabled]="!config()?.puedeEditar"
+          (click)="pedirRefresh()"
+        >
+          Pedir configuración al equipo
+        </button>
+      </div>
+    }
+    @case ('DESACTUALIZADA') {
+      <div class="alert alert-warning">
+        <strong>El equipo volvió a los valores de fábrica.</strong>
+        <p class="mb-2 small">
+          Reportó que arrancó sin configuración, así que
+          <strong
+            >lo que ves acá abajo es la última configuración conocida, no la que está corriendo
+            ahora</strong
+          >. Ya quedó en cola para reenviársela; si no se aplica sola, guardá desde acá para
+          forzarla.
+        </p>
+        <button
+          type="button"
+          class="btn btn-sm btn-warning"
+          [disabled]="!config()?.puedeEditar"
+          (click)="pedirRefresh()"
+        >
           Pedir configuración al equipo
         </button>
       </div>
@@ -22,8 +45,12 @@
       <div class="alert alert-danger">
         <strong>No se pudo entregar la configuración.</strong>
         <p class="mb-2 small">{{ config()?.detalle }}</p>
-        <button type="button" class="btn btn-sm btn-danger"
-                [disabled]="guardando()" (click)="guardar()">
+        <button
+          type="button"
+          class="btn btn-sm btn-danger"
+          [disabled]="guardando()"
+          (click)="guardar()"
+        >
           Reintentar
         </button>
       </div>
@@ -31,22 +58,25 @@
     @case ('PENDIENTE') {
       <div class="alert alert-info small mb-3">
         Configuración <strong>v{{ config()?.cfgVPendiente }}</strong> en cola.
-        @if (durmiendo()) { {{ motivoSinScan() }}: la va a tomar al despertar. }
-        @else { Esperando que el equipo la reciba. }
+        @if (durmiendo()) {
+          {{ motivoSinScan() }}: la va a tomar al despertar.
+        } @else {
+          Esperando que el equipo la reciba.
+        }
       </div>
     }
     @case ('ENVIADA') {
       <div class="alert alert-info small mb-3">
         Enviada al equipo, esperando confirmación…
-        @if (durmiendo() || estadoVivo()?.online !== true) { {{ motivoSinScan() }}. }
+        @if (durmiendo() || estadoVivo()?.online !== true) {
+          {{ motivoSinScan() }}.
+        }
       </div>
     }
     @case ('APLICADA_SIN_VERIFICAR') {
       <div class="alert alert-info small mb-3">
         El equipo confirmó que la aplicó. Verificando qué quedó exactamente…
-        <span class="text-muted">
-          (el firmware puede recortar valores en silencio)
-        </span>
+        <span class="text-muted"> (el firmware puede recortar valores en silencio) </span>
       </div>
     }
     @case ('VERIFICADO') {
@@ -59,16 +89,41 @@
     }
   }
 
-  @if (error()) { <div class="alert alert-danger small">{{ error() }}</div> }
-  @if (aviso()) { <div class="alert alert-success small">{{ aviso() }}</div> }
+  @if (error()) {
+    <div class="alert alert-danger small">{{ error() }}</div>
+  }
+  @if (aviso()) {
+    <div class="alert alert-success small">{{ aviso() }}</div>
+  }
 
   @if (!config()?.puedeEditar && !sinEspejo()) {
     <div class="alert alert-secondary small">
-      Este barrio lo opera CPS: podés ver la configuración, pero no modificarla.
+      Podés ver la configuración de este equipo, pero no modificarla.
     </div>
   }
 
   <fieldset [disabled]="bloqueado()">
+    <!-- ── Copiar de otro poste ───────────────────────────────────── -->
+    @if (fuentes().length > 0) {
+      <section class="card mb-3 bg-body-tertiary">
+        <div class="card-body py-2 d-flex align-items-center gap-2 flex-wrap">
+          <span class="small text-muted">Copiar la configuración de</span>
+          <select
+            class="form-select form-select-sm w-auto"
+            (change)="copiarDe(+$any($event.target).value)"
+          >
+            <option [value]="0">Elegí un equipo del barrio…</option>
+            @for (f of fuentes(); track f.deviceId) {
+              <option [value]="f.deviceId">{{ f.nombre }}</option>
+            }
+          </select>
+          <small class="text-muted">
+            Precarga el formulario y nada más: no guarda, y las contraseñas WiFi no se copian porque
+            no se leen.
+          </small>
+        </div>
+      </section>
+    }
 
     <!-- ── Redes WiFi ─────────────────────────────────────────────── -->
     <section class="card mb-3">
@@ -80,8 +135,12 @@
               Redes vistas el {{ config()?.ultimoScan?.recibidoEn | date: 'short' }}
             </span>
           }
-          <button type="button" class="btn btn-sm btn-outline-secondary"
-                  [disabled]="!puedeEscanear()" (click)="pedirScan()">
+          <button
+            type="button"
+            class="btn btn-sm btn-outline-secondary"
+            [disabled]="!puedeEscanear()"
+            (click)="pedirScan()"
+          >
             Buscar redes
           </button>
         </span>
@@ -91,12 +150,35 @@
           <p class="text-muted small">{{ motivoSinScan() }}: no se le puede pedir un scan ahora.</p>
         }
 
+        @if (esperando() === 'scan') {
+          <!-- Sin esto la espera parece que no pasó nada: el equipo tarda unos
+               segundos en barrer las bandas y contestar. -->
+          <p class="small text-muted">
+            <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>
+            Esperando que el equipo termine de buscar… la lista se actualiza sola.
+          </p>
+        }
+
         @for (red of redes(); track $index) {
           <div class="row g-2 align-items-end mb-2">
             <div class="col-md-4">
-              <label class="form-label small">SSID</label>
-              <input class="form-control form-control-sm" [(ngModel)]="red.ssid"
-                     [ngModelOptions]="{ standalone: true }" />
+              <label class="form-label small">
+                SSID
+                @if (red.bloqueada) {
+                  <span
+                    class="badge text-bg-warning ms-1"
+                    title="El equipo la bloqueó y no la va a usar aunque esté cargada"
+                  >
+                    bloqueada por el equipo
+                  </span>
+                }
+              </label>
+              <input
+                class="form-control form-control-sm"
+                [(ngModel)]="red.ssid"
+                maxlength="31"
+                [ngModelOptions]="{ standalone: true }"
+              />
             </div>
             <div class="col-md-4">
               <label class="form-label small">
@@ -105,42 +187,138 @@
                   <span class="text-muted">(guardada — dejala vacía para conservarla)</span>
                 }
               </label>
-              <input type="password" class="form-control form-control-sm"
-                     [(ngModel)]="red.psw" [ngModelOptions]="{ standalone: true }"
-                     [placeholder]="red.tienePassword ? '••••••••' : ''" />
+              <input
+                type="password"
+                class="form-control form-control-sm"
+                maxlength="63"
+                [(ngModel)]="red.psw"
+                [ngModelOptions]="{ standalone: true }"
+                [placeholder]="red.tienePassword ? '••••••••' : ''"
+              />
               @if (passwordRevelada(red.ssid); as clara) {
-                <small class="text-danger">{{ clara }}</small>
+                <small class="text-danger font-monospace">{{ clara }}</small>
               }
             </div>
             <div class="col-md-2">
               <label class="form-label small">Prioridad</label>
-              <input type="number" class="form-control form-control-sm"
-                     [(ngModel)]="red.prio" [ngModelOptions]="{ standalone: true }" />
+              <input
+                type="number"
+                class="form-control form-control-sm"
+                min="1"
+                max="5"
+                [(ngModel)]="red.prio"
+                [ngModelOptions]="{ standalone: true }"
+              />
             </div>
             <div class="col-md-2">
-              <button type="button" class="btn btn-sm btn-outline-danger"
-                      (click)="quitarRed($index)">Quitar</button>
+              <button
+                type="button"
+                class="btn btn-sm btn-outline-danger"
+                (click)="quitarRed($index)"
+              >
+                Quitar
+              </button>
             </div>
           </div>
 
-          @if (config()?.ultimoScan?.redes; as vistas) {
-            <div class="mb-3 ps-1">
-              @for (v of vistas; track v.ssid) {
-                <button type="button" class="btn btn-sm btn-link p-0 me-2"
-                        (click)="elegirDelScan($index, v.ssid)">
-                  {{ v.ssid }}
-                  <span class="text-muted">({{ v.rssi }} dBm@if (v.guardada) {, guardada})</span>
-                </button>
-              }
-            </div>
+          @if (red.bloqueada) {
+            <p class="small text-warning-emphasis ps-1 mb-2">
+              El equipo puso esta red en su lista negra: no la va a usar aunque el SSID y la clave
+              estén bien. Se destraba desde el equipo.
+            </p>
           }
         }
 
-        <button type="button" class="btn btn-sm btn-outline-primary"
-                [disabled]="redes().length >= 5" (click)="agregarRed()">
+        <button
+          type="button"
+          class="btn btn-sm btn-outline-primary"
+          [disabled]="redes().length >= 5"
+          (click)="agregarRed()"
+        >
           Agregar red
         </button>
         <small class="text-muted ms-2">El equipo guarda hasta 5.</small>
+
+        <!-- ── Lo que el equipo VE desde donde está ────────────────────
+             Una sola lista, de la más fuerte a la más débil y sin las que ya
+             están cargadas arriba. Antes esto se repetía debajo de CADA red
+             configurada, como un párrafo de links corridos. -->
+        @if (config()?.ultimoScan) {
+          <div class="mt-3 border-top pt-3">
+            <h6 class="small fw-bold text-uppercase text-muted">Redes que ve el equipo</h6>
+            @if (redesVistas().length === 0) {
+              <p class="small text-muted mb-0">Todas las que encontró ya están cargadas arriba.</p>
+            } @else {
+              <div class="table-responsive">
+                <table class="table table-sm table-hover align-middle mb-0">
+                  <thead>
+                    <tr class="small text-muted">
+                      <th scope="col">Red</th>
+                      <th scope="col">Señal</th>
+                      <th scope="col">Canal</th>
+                      <th scope="col" class="text-end"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    @for (v of redesVistas(); track v.ssid) {
+                      <tr>
+                        <td class="small">
+                          {{ v.ssid }}
+                          @if (!v.seg) {
+                            <!-- Un poste en la calle con la config del barrio no
+                                 va a una red abierta. -->
+                            <span class="badge bg-warning-soft text-warning border ms-1">
+                              abierta
+                            </span>
+                          }
+                        </td>
+                        <td class="small">
+                          <span [class]="calidad(v.rssi).clase">
+                            {{ calidad(v.rssi).texto }}
+                          </span>
+                          <span class="text-muted font-monospace ms-1"> {{ v.rssi }} dBm </span>
+                        </td>
+                        <td class="small text-muted">{{ v.ch }}</td>
+                        <td class="text-end">
+                          <button
+                            type="button"
+                            class="btn btn-sm btn-outline-primary"
+                            [disabled]="redes().length >= 5"
+                            (click)="sumarDelScan(v.ssid)"
+                          >
+                            Agregar
+                          </button>
+                        </td>
+                      </tr>
+                    }
+                  </tbody>
+                </table>
+              </div>
+              @if (redes().length >= 5) {
+                <p class="small text-muted mb-0 mt-2">
+                  Ya hay 5 redes cargadas, que es el tope del equipo. Quitá una para poder sumar
+                  otra.
+                </p>
+              }
+            }
+          </div>
+        }
+
+        <!-- Revelar: el ÚNICO camino de lectura, solo CPS y auditado. Para
+             cambiar una clave no hace falta verla, así que esto es la excepción. -->
+        @if (config()?.puedeVerPasswords && !sinEspejo()) {
+          <button
+            type="button"
+            class="btn btn-sm btn-outline-danger float-end"
+            [disabled]="reveladas() !== null"
+            (click)="revelarWifi()"
+          >
+            Ver contraseñas
+          </button>
+          @if (reveladas()) {
+            <small class="text-muted float-end me-2 mt-1"> Queda registrado quién las miró. </small>
+          }
+        }
       </div>
     </section>
 
@@ -150,12 +328,35 @@
       <div class="card-body">
         @for (m of ['ds3231', 'eeprom', 'supervisor', 'rf']; track m) {
           <div class="form-check">
-            <input type="checkbox" class="form-check-input" [id]="'mod-' + m"
-                   [checked]="$any(borrador()['modulos'])?.[m]"
-                   (change)="cambiarEscalar('modulos.' + m, $any($event.target).checked)" />
+            <input
+              type="checkbox"
+              class="form-check-input"
+              [id]="'mod-' + m"
+              [checked]="$any(valor('modulos.' + m))"
+              (change)="cambiarEscalar('modulos.' + m, $any($event.target).checked)"
+            />
             <label class="form-check-label" [for]="'mod-' + m">{{ m }}</label>
           </div>
         }
+
+        <div class="row g-3 mt-1">
+          <div class="col-md-4">
+            <label class="form-label small" for="eeprom-slot">Slot de memoria activo</label>
+            <select
+              class="form-select form-select-sm"
+              id="eeprom-slot"
+              [value]="valor('modulos.eeprom_slot')"
+              (change)="cambiarEscalar('modulos.eeprom_slot', +$any($event.target).value)"
+            >
+              <option [value]="0">0</option>
+              <option [value]="1">1</option>
+            </select>
+            <small class="text-muted">
+              Cuál de las dos memorias usa para la base de códigos RF.
+            </small>
+          </div>
+        </div>
+
         @for (a of avisosDeApagado(); track a) {
           <div class="alert alert-warning small mt-2 mb-0">{{ a }}</div>
         }
@@ -167,26 +368,77 @@
       <div class="card-header">Tiempos y mantenimiento</div>
       <div class="card-body row g-3">
         <div class="col-md-4">
-          <label class="form-label small">Telemetría cada (segundos)</label>
-          <input type="number" class="form-control form-control-sm"
-                 [value]="$any(borrador()['tiempos'])?.['send_tele_s']"
-                 (change)="cambiarEscalar('tiempos.send_tele_s', +$any($event.target).value)" />
+          <label class="form-label small" for="tele">Telemetría cada (segundos)</label>
+          <input
+            type="number"
+            class="form-control form-control-sm"
+            id="tele"
+            min="30"
+            max="86400"
+            [value]="valor('tiempos.send_tele_s')"
+            (change)="cambiarEscalar('tiempos.send_tele_s', +$any($event.target).value)"
+          />
           <small class="text-muted">Entre 30 y 86400.</small>
         </div>
         <div class="col-md-4">
-          <label class="form-label small">Huso horario (segundos)</label>
-          <input type="number" class="form-control form-control-sm"
-                 [value]="$any(borrador()['hora'])?.['tz_offset_s']"
-                 (change)="cambiarEscalar('hora.tz_offset_s', +$any($event.target).value)" />
-          <small class="text-muted">Argentina: −10800.</small>
+          <label class="form-label small" for="tz">Huso horario (horas)</label>
+          <input
+            type="number"
+            class="form-control form-control-sm"
+            id="tz"
+            min="-14"
+            max="14"
+            step="0.5"
+            [value]="tzHoras()"
+            (change)="cambiarTzHoras(+$any($event.target).value)"
+          />
+          <small class="text-muted">
+            Argentina: −3. Entre −14 y +14; fuera de ahí el equipo descarta la configuración entera
+            sin avisar.
+          </small>
         </div>
         <div class="col-md-4">
           <div class="form-check mt-4">
-            <input type="checkbox" class="form-check-input" id="mante"
-                   [checked]="$any(borrador()['mante'])?.['on']"
-                   (change)="cambiarEscalar('mante.on', $any($event.target).checked)" />
+            <input
+              type="checkbox"
+              class="form-check-input"
+              id="mante"
+              [checked]="$any(valor('mante.on'))"
+              (change)="cambiarEscalar('mante.on', $any($event.target).checked)"
+            />
             <label class="form-check-label" for="mante">Modo mantenimiento</label>
           </div>
+          <small class="text-muted">Sale solo a las 4 horas.</small>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Auto-apagado por modo ──────────────────────────────────── -->
+    <section class="card mb-3">
+      <div class="card-header">Auto-apagado por modo de alarma</div>
+      <div class="card-body">
+        <p class="small text-muted">
+          Cuánto suena cada modo antes de apagarse solo. Entre 120 y 1800 segundos; el equipo
+          recorta en silencio lo que se pase, así que el formulario no deja mandarlo.
+        </p>
+        <div class="row g-3">
+          @for (m of modosAutooff; track m.slug) {
+            <div class="col-md-3">
+              <label class="form-label small" [for]="'autooff-' + m.slug">
+                {{ m.label }}
+                <span class="text-muted">({{ m.slug }})</span>
+              </label>
+              <input
+                type="number"
+                class="form-control form-control-sm"
+                [id]="'autooff-' + m.slug"
+                min="120"
+                max="1800"
+                [value]="valor('alarma.autooff.' + m.slug)"
+                (change)="cambiarEscalar('alarma.autooff.' + m.slug, +$any($event.target).value)"
+              />
+            </div>
+          }
         </div>
       </div>
     </section>
@@ -196,24 +448,42 @@
       <div class="card-header">Red avanzada (roaming)</div>
       <div class="card-body row g-3">
         <div class="col-md-4">
-          <label class="form-label small">RSSI de cambio</label>
-          <input type="number" class="form-control form-control-sm"
-                 [value]="$any(borrador()['red_avanzada'])?.['roam_rssi']"
-                 (change)="cambiarEscalar('red_avanzada.roam_rssi', +$any($event.target).value)" />
+          <label class="form-label small" for="roam-rssi">RSSI de cambio</label>
+          <input
+            type="number"
+            class="form-control form-control-sm"
+            id="roam-rssi"
+            min="-90"
+            max="-50"
+            [value]="valor('red_avanzada.roam_rssi')"
+            (change)="cambiarEscalar('red_avanzada.roam_rssi', +$any($event.target).value)"
+          />
           <small class="text-muted">Entre −90 y −50.</small>
         </div>
         <div class="col-md-4">
-          <label class="form-label small">Diferencia mínima</label>
-          <input type="number" class="form-control form-control-sm"
-                 [value]="$any(borrador()['red_avanzada'])?.['roam_delta']"
-                 (change)="cambiarEscalar('red_avanzada.roam_delta', +$any($event.target).value)" />
+          <label class="form-label small" for="roam-delta">Diferencia mínima</label>
+          <input
+            type="number"
+            class="form-control form-control-sm"
+            id="roam-delta"
+            min="5"
+            max="30"
+            [value]="valor('red_avanzada.roam_delta')"
+            (change)="cambiarEscalar('red_avanzada.roam_delta', +$any($event.target).value)"
+          />
           <small class="text-muted">Entre 5 y 30.</small>
         </div>
         <div class="col-md-4">
-          <label class="form-label small">Espera entre cambios (s)</label>
-          <input type="number" class="form-control form-control-sm"
-                 [value]="$any(borrador()['red_avanzada'])?.['roam_cooldown_s']"
-                 (change)="cambiarEscalar('red_avanzada.roam_cooldown_s', +$any($event.target).value)" />
+          <label class="form-label small" for="roam-cd">Espera entre cambios (s)</label>
+          <input
+            type="number"
+            class="form-control form-control-sm"
+            id="roam-cd"
+            min="60"
+            max="3600"
+            [value]="valor('red_avanzada.roam_cooldown_s')"
+            (change)="cambiarEscalar('red_avanzada.roam_cooldown_s', +$any($event.target).value)"
+          />
           <small class="text-muted">Entre 60 y 3600.</small>
         </div>
       </div>
@@ -224,19 +494,32 @@
   <section class="card mb-3 bg-body-tertiary">
     <div class="card-header">Datos del equipo (no se editan acá)</div>
     <div class="card-body small">
-      <p class="mb-1">
-        <strong>Identidad</strong> — el alias, la ubicación y el grupo se
-        <em>generan</em> con el nombre del equipo y el código del barrio. Si se
-        pudieran tipear, en seis meses el poste se llamaría distinto en la web y
-        en el equipo y no habría forma de saber cuál miente.
+      <p class="mb-2">
+        <strong>Identidad</strong> — el alias, la ubicación y el grupo se <em>generan</em> con el
+        nombre del equipo y el código del barrio. Si se pudieran tipear, en seis meses el poste se
+        llamaría distinto en la web y en el equipo y no habría forma de saber cuál miente.
       </p>
-      <p class="mb-1">
-        <strong>Base RF</strong> y <strong>calibración</strong> — se cambian con
-        sus propias acciones, no con la configuración.
-      </p>
-      @if ($any(config()?.configuracion)?.['id']?.['fw']; as fw) {
-        <p class="mb-0"><strong>Firmware</strong> — {{ fw }}</p>
-      }
+      <dl class="row mb-0">
+        @if (soloLectura().fw) {
+          <dt class="col-sm-3 text-muted fw-normal">Firmware</dt>
+          <dd class="col-sm-9">{{ soloLectura().fw }}</dd>
+        }
+        @if (soloLectura().rfCodigos !== null) {
+          <dt class="col-sm-3 text-muted fw-normal">Base RF</dt>
+          <dd class="col-sm-9">
+            {{ soloLectura().rfCodigos }} códigos cargados · generación {{ soloLectura().rfGen }}
+            <span class="text-muted">— se cambia con la sincronización de controles</span>
+          </dd>
+        }
+        @if (soloLectura().calibraciones.length) {
+          <dt class="col-sm-3 text-muted fw-normal">Calibración</dt>
+          <dd class="col-sm-9">
+            @for (c of soloLectura().calibraciones; track c.canal) {
+              <span class="me-3 font-monospace"> {{ c.canal }}: m={{ c.m }} b={{ c.b }} </span>
+            }
+          </dd>
+        }
+      </dl>
     </div>
   </section>
 
@@ -247,7 +530,7 @@
       <ul class="list-group list-group-flush">
         @for (c of cambios(); track c.campo) {
           <li class="list-group-item small">
-            <code>{{ c.campo }}</code>: {{ c.de }} → <strong>{{ c.a }}</strong>
+            {{ c.etiqueta }}: {{ c.de }} → <strong>{{ c.a }}</strong>
           </li>
         }
       </ul>
@@ -255,17 +538,28 @@
   }
 
   <div class="d-flex gap-2">
-    <button type="button" class="btn btn-primary"
-            [disabled]="!hayCambios() || guardando() || bloqueado()"
-            (click)="guardar()">
+    <button
+      type="button"
+      class="btn btn-primary"
+      [disabled]="!hayCambios() || guardando() || bloqueado()"
+      (click)="guardar()"
+    >
       {{ guardando() ? 'Enviando…' : 'Guardar y enviar al equipo' }}
     </button>
-    <button type="button" class="btn btn-outline-secondary"
-            [disabled]="!hayCambios()" (click)="descartar()">
+    <button
+      type="button"
+      class="btn btn-outline-secondary"
+      [disabled]="!hayCambios()"
+      (click)="descartar()"
+    >
       Descartar cambios
     </button>
-    <button type="button" class="btn btn-outline-secondary ms-auto"
-            [disabled]="bloqueado()" (click)="pedirRefresh()">
+    <button
+      type="button"
+      class="btn btn-outline-secondary ms-auto"
+      [disabled]="bloqueado()"
+      (click)="pedirRefresh()"
+    >
       Pedir configuración actual
     </button>
   </div>

@@ -17,11 +17,19 @@ import { AccountType, UserRole } from '../common/enums';
 import { ScopeService } from '../common/scope.service';
 import type { AuthenticatedUser } from '../auth/auth.service';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import {
-  MembershipRequirement,
-  RequireMembership,
-} from '../auth/decorators/roles.decorator';
+import { RequireMembership } from '../auth/decorators/roles.decorator';
+import { DeviceCommandsService } from './device-commands.service';
 import { DeviceConfigService } from './device-config.service';
+import {
+  CONFIGURAN_EQUIPOS,
+  DISPARAN_ALARMA,
+  VEN_PASSWORDS_WIFI,
+} from './device-permissions';
+import {
+  ColaComandosView,
+  SendCommandDto,
+  TriggerAlarmDto,
+} from './dto/device-command.dto';
 import { ProvisioningService } from './provisioning.service';
 import { DevicesService } from './devices.service';
 import {
@@ -30,6 +38,7 @@ import {
 } from './dto/board-model.dto';
 import {
   DeviceConfigView,
+  FuenteConfigView,
   PublishConfigDto,
   RedWifiRevelada,
 } from './dto/device-config.dto';
@@ -68,25 +77,6 @@ class FindInventoryQuery {
 }
 
 /**
- * Quién CONFIGURA un equipo, por rol. El otro eje —en qué barrio— lo resuelve
- * `assertManagesNeighborhood` adentro del servicio: los dos son obligatorios.
- *
- * El MONITOR queda afuera a propósito: mira el tablero y resuelve eventos, no
- * toca la infraestructura. Apagar el módulo `rf` desde la pantalla de monitoreo
- * dejaría un poste sordo a los controles remotos sin que nadie lo note.
- */
-const CONFIGURAN_EQUIPOS: MembershipRequirement[] = [
-  {
-    accountType: AccountType.COMPANY,
-    roles: [UserRole.OWNER, UserRole.ADMIN, UserRole.TECHNICIAN],
-  },
-  {
-    accountType: AccountType.ORGANIZATION,
-    roles: [UserRole.OWNER, UserRole.ADMIN, UserRole.TECHNICIAN],
-  },
-];
-
-/**
  * Alarmas comunitarias (v2): infraestructura del BARRIO, con inventario.
  *
  * - Alta (fabricación): SOLO CPS. El equipo nace en INVENTORY con claim code.
@@ -102,6 +92,7 @@ export class DevicesController {
   constructor(
     private readonly devices: DevicesService,
     private readonly deviceConfig: DeviceConfigService,
+    private readonly commands: DeviceCommandsService,
     private readonly provisioning: ProvisioningService,
     private readonly scopes: ScopeService,
   ) {}
@@ -230,7 +221,28 @@ export class DevicesController {
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<DeviceConfigView> {
-    return this.deviceConfig.findConfig(id, await this.scopes.forUser(user));
+    return this.deviceConfig.findConfig(
+      id,
+      await this.scopes.forUser(user),
+      user,
+    );
+  }
+
+  /**
+   * GET /api/devices/:id/config/sources — de qué otros equipos se puede copiar.
+   *
+   * Los del MISMO barrio que ya reportaron su configuración. Copiar de otro
+   * barrio sería copiar redes WiFi que ahí no existen.
+   */
+  @Get(':id/config/sources')
+  async findConfigSources(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<FuenteConfigView[]> {
+    return this.deviceConfig.fuentesParaCopiar(
+      id,
+      await this.scopes.forUser(user),
+    );
   }
 
   /**
@@ -254,7 +266,7 @@ export class DevicesController {
       id,
       dto.patch,
       await this.scopes.forUser(user),
-      user.id,
+      user,
     );
   }
 
@@ -304,10 +316,7 @@ export class DevicesController {
    * a nadie.
    */
   @Post(':id/config/reveal-wifi')
-  @RequireMembership({
-    accountType: AccountType.COMPANY,
-    roles: [UserRole.OWNER, UserRole.ADMIN, UserRole.TECHNICIAN],
-  })
+  @RequireMembership(...VEN_PASSWORDS_WIFI)
   async revelarWifi(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: AuthenticatedUser,
@@ -316,6 +325,91 @@ export class DevicesController {
       id,
       await this.scopes.forUser(user),
       user.id,
+    );
+  }
+
+  // --- Comandos al panel -----------------------------------------------------
+
+  /**
+   * GET /api/devices/:id/commands — los últimos 20, con su estado.
+   *
+   * Solo pide VER el equipo. Sin esta lista, un comando que quedó `pending`
+   * porque el equipo duerme es indistinguible de uno que nunca se mandó.
+   */
+  @Get(':id/commands')
+  async findCommands(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<ColaComandosView> {
+    return this.commands.listar(id, await this.scopes.forUser(user), user);
+  }
+
+  /**
+   * POST /api/devices/:id/commands — encola un comando de infraestructura.
+   *
+   * Los dos ejes de siempre: el ROL acá y el ALCANCE
+   * (`assertManagesNeighborhood`) adentro del servicio. El MONITOR queda afuera
+   * —reiniciar un poste no es monitorear— salvo para disparar la alarma, que
+   * tiene su propia ruta.
+   */
+  @Post(':id/commands')
+  @RequireMembership(...CONFIGURAN_EQUIPOS)
+  async sendCommand(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: SendCommandDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<ColaComandosView> {
+    return this.commands.mandar(
+      id,
+      dto.tipo,
+      dto.params ?? {},
+      dto.confirmacion,
+      await this.scopes.forUser(user),
+      user,
+    );
+  }
+
+  /**
+   * POST /api/devices/:id/commands/:cid/cancel — sacarlo de la cola.
+   *
+   * Solo mientras sigue `pending`: lo que ya se publicó en el broker el panel lo
+   * va a recibir igual, así que un comando enviado no se cancela, se compensa.
+   */
+  @Post(':id/commands/:cid/cancel')
+  @RequireMembership(...CONFIGURAN_EQUIPOS)
+  async cancelCommand(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('cid') cid: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<ColaComandosView> {
+    return this.commands.cancelar(
+      id,
+      cid,
+      await this.scopes.forUser(user),
+      user,
+    );
+  }
+
+  /**
+   * POST /api/devices/:id/alarm — disparar o apagar la alarma a distancia.
+   *
+   * Ruta aparte de los comandos porque NO es infraestructura: es la operación, y
+   * es la única acción sobre el equipo que suma al MONITOR. Lo que realmente
+   * pasó no vuelve por acá: llega después como `up t:alarma` y termina en un
+   * `event` igual que si lo hubiera disparado un vecino.
+   */
+  @Post(':id/alarm')
+  @RequireMembership(...DISPARAN_ALARMA)
+  async triggerAlarm(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: TriggerAlarmDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<ColaComandosView> {
+    return this.commands.disparar(
+      id,
+      dto.modo,
+      await this.scopes.forUser(user),
+      user,
     );
   }
 

@@ -264,11 +264,91 @@ comparte solo la base; controles con 4 códigos RF; sin git por decisión del us
       `gateway-to-device/docs/08-propuestas-firmware.md`. La F4 es una línea que
       nos deja sacar el `refresh` encadenado de toda la flota.
 
-    **Queda anotado, sin hacer**: copiar configuración de otro equipo; `cmd t:test`
-    (probar un SSID puntual, es la herramienta del técnico en la calle); campañas
-    masivas sobre N equipos; y el cifrado en reposo (DT2), que sigue abierto y con
-    la observación del GtD de que cifrar Postgres no alcanza mientras la `cfg`
-    viaje retenida en el broker.
+    **Segunda pasada (2026-08-05): se auditó la pantalla y se cerró lo que
+    faltaba de la `cfg`.** La primera versión cubría 8 de las 10 secciones que el
+    panel acepta y validaba 4 de los 12 límites. Ahora está completa:
+    - **Auto-apagado por modo** (`alarma.autooff`, los 7) y **`modulos.eeprom_slot`**:
+      estaban en el spec como editables y no se habían implementado. Los valores
+      no se perdían —el merge los repone del espejo— pero no había forma de
+      cambiarlos.
+    - **`hora.tz_offset_s` se validaba en ningún lado y es el peor de todos**:
+      fuera de ±14 h el firmware descarta la cfg ENTERA y **no manda ack**, así
+      que un huso mal tipeado dejaba la pantalla en "esperando confirmación" para
+      siempre. Ídem `red_avanzada` incompleto. Además el campo pasó a editarse en
+      HORAS: en segundos, escribir `-3` pensando en horas es un valor que entra
+      en rango y rompe el reloj del equipo sin que nada avise.
+    - **Largos de `ssid` (31) y `psw` (63) y `prio` (1..5)**: el firmware trunca
+      en silencio y ackea `ok` — una clave larga dejaba el poste sin conectar con
+      la pantalla diciendo "aplicado".
+    - **`puedeEditar` no miraba el rol.** El hallazgo del MONITOR de la primera
+      pasada había sobrevivido en el `GET`: el formulario le llegaba habilitado y
+      el 403 recién al guardar. Ahora el `GET` y el `PUT` responden con la misma
+      función (`cumpleMembresia`, la del guard).
+    - **`reveal-wifi` era código muerto en el front**: el endpoint, el
+      `audit_log` y su e2e existían, pero no había ningún botón que lo llamara.
+    - **Redes bloqueadas por el panel** (`bl_perm`): una red bien cargada que el
+      equipo puso en su lista negra no conectaba y nada lo explicaba.
+    - **Estado `DESACTUALIZADA`**: tras un `factory` el espejo conserva la config
+      vieja (no se deja pisar por `cfg_v = 0`) y la pantalla decía "verificado
+      contra el equipo" sobre un panel con defaults de fábrica.
+    - **Regresión de fondo, migración `RestoreConfigReconcile`**: `DeviceStateNetwork`
+      (2026-08-05) reescribió `gtd.upsert_panel_state` para sumarle `p_red`/`p_tele`
+      y **perdió el bloque que reconcilia `cfg_v`**. Con eso se había roto la red
+      silenciosa de la escalera de confirmación —el `tele` es la única señal
+      retenida, o sea la única que sobrevive a un GtD caído— y la detección del
+      `factory`. Restituido y probado en los dos sentidos.
+    - 31 casos e2e contra la base real (eran 19), 24 unitarios de límites (eran
+      13) y 96 del front (eran 83).
+
+    **Tercera pasada (2026-08-05): comandos, copiar configuración y la cola a la
+    vista.** Con esto la pestaña queda cerrada salvo lo que se decidió no hacer.
+    - **Pestaña "Acciones"** en la ficha del equipo, con los comandos agrupados
+      por riesgo y `POST /devices/:id/commands`. Diagnóstico (`estado`, `hora`,
+      `i2c_scan`) van derecho; `restart`, `ota` y `factory` muestran primero qué
+      le pasa al equipo. `red bl_clear` destraba un SSID que el panel bloqueó —
+      cerraba el agujero de la pasada anterior, donde la pantalla te decía que
+      una red estaba bloqueada y no te dejaba hacer nada.
+    - **`factory`: leído en el firmware, no supuesto.** Es `nvs_erase`, así que
+      borra configuración y **credenciales WiFi** —el equipo queda incomunicado
+      y hay que ir al poste— pero la base RF vive en la EEPROM externa y **los
+      controles NO se borran**. Sí se pierde `rf_gen` (vive en NVS): cuando
+      hagamos la base RF, un `gen = 0` significa "perdió la cuenta", no "libreta
+      vacía". Pide escribir el serial: el firmware exige el `confirm` con el ID
+      del equipo y el backend lo completa solo, pero la fricción es para el
+      humano.
+    - **Disparo remoto** (`POST /devices/:id/alarm`), la única acción sobre el
+      equipo que suma al **MONITOR** — no es infraestructura, es la operación.
+      Lo que pasó vuelve por el camino normal (`up t:alarma` → `event`), no por
+      el ack.
+    - **La cola de comandos a la vista**, con cancelar mientras siga `pending`.
+      Sin ella, un comando esperando porque el equipo duerme era indistinguible
+      de uno que nunca salió. `gtd.cancel_command` existía sin llamador.
+    - **Copiar configuración de otro poste** del mismo barrio (`GET
+      /config/sources`). No copia `central` (el alias es de cada equipo) ni las
+      contraseñas, que no se leen por ningún lado.
+    - **Los permisos los dice el backend**: la cola devuelve `puedeOperar` y
+      `puedeDisparar` ya resueltos. Son dos matrices distintas y las dos
+      dependen del barrio; deducirlas en el navegador era repetir el bug de
+      `puedeEditar`.
+    - 45 casos e2e (eran 31), 115 unitarios de backend y 116 del front.
+
+    **Descartado (no reabrir)**: campañas masivas sobre N equipos.
+
+    **Queda anotado, sin hacer**: `cmd t:cal` (calibrar tensiones — cambia lo que
+    significan los voltajes y necesita un tester al lado del poste) y `cmd t:test`
+    (probar un SSID puntual), las dos herramientas de campo; y el cifrado en
+    reposo (DT2), con la observación del GtD de que cifrar Postgres no alcanza
+    mientras la `cfg` viaje retenida en el broker.
+    *(El catálogo de firmwares que figuraba acá se hizo el 2026-08-06 — punto 12.)*
+
+    **Y lo más urgente sigue siendo la BASE RF** (punto 9), que está congelada a
+    pedido hasta definirla: `gtd.enqueue_rf_batch` existe y **nadie la llama**,
+    así que un control remoto cargado en la web no está en el panel y no dispara
+    nada. Dos cosas anotadas para cuando se retome: la función **no manda `gen`**
+    y el firmware lo exige (ausente vale 0, y el panel escribiría `rf_gen = 0`
+    después de cada lote); y hay dos decisiones de negocio abiertas — qué DNI se
+    graba (el control es del hogar, el portador es reasignable) y en qué postes
+    del barrio se graba cada control.
 11. ~~**Alta de equipos en el broker**~~ — **HECHA (2026-08-04)**. Fabricar un
     equipo desde la web ahora pide su credencial MQTT sola. Diseño en
     `docs/superpowers/specs/2026-08-04-provisioner-broker-design.md`.
@@ -303,9 +383,212 @@ comparte solo la base; controles con 4 códigos RF; sin git por decisión del us
     **`cpssecurityarg`**, y hay que verificar las 16 migraciones contra 17 —acá
     se desarrolla en 18—. El GtD desplegado está en `6c5d600`, o sea antes del
     plan 1, corriendo con `StubRepo` y `GTD_PG_DSN` vacío.
-12. **Servicio de alarmas** (programa separado, MQTT → `device_state` + `event` + FCM):
+12. **Controles remotos: el flujo completo** — EN CURSO (2026-08-05).
+    Se paró el trabajo de alarmas para definir esto de punta a punta:
+    fabricación → etiquetado → inventario → asignación a hogar y familia.
+
+    **Fase 1, FABRICACIÓN Y ETIQUETA: HECHA.** Migración `RemoteFactory`.
+    - **Catálogo `remote_model`** (al molde de `board_model`): lo que define un
+      modelo es **cuántos botones tiene**. Nace con una sola fila, la de 4.
+    - **El choque que apareció al leer el firmware**: la POSICIÓN del código
+      decide qué hace el botón (1 emergencia, 2 sospechoso, 3 alerta, **4
+      apagar**), y el panel guarda **4 por vecino y nada más**. O sea: un control
+      al que le falte la posición 4 no puede cancelar una falsa alarma, y de un
+      modelo de 6 botones dos teclas no disparan nada. Por eso los modelos de 2 y
+      6 **se postergaron**: agregarlos es una fila, pero antes hay que decidir
+      qué posiciones lleva cada uno.
+    - **Serial `CR-000137`**, correlativo por secuencia. Sin el modelo adentro: el
+      serial identifica, no describe, y así nunca puede mentir.
+    - **Los códigos los elige CPS** y se graban en el control (decisión del
+      2026-08-05, revierte el "los tipeamos a mano"). Se generan con
+      `randomInt` de `node:crypto` en el rango del panel (10.000 a
+      999.999.999.999).
+    - **Tres caminos para el código, elegibles en la pantalla** (2026-08-06):
+      *al azar* (el default, y el único en que un código no se puede adivinar),
+      *correlativos* y *a mano*. El manual existía en la API desde el principio y
+      ahora tiene pantalla: es para el control que ya trae sus códigos de fábrica
+      y no se deja regrabar. Van los 4 o ninguno —mezclar tipeados con generados
+      mostraría números que nadie sabe si están grabados— y el front valida rango,
+      dígitos y repetidos antes de mandar, aunque el backend lo revalide igual.
+    - **Numeración correlativa** (migración `RemoteCodeSequence`): sigue
+      el último código emitido en vez de sortear, para grabar una tanda en orden.
+      Va por secuencia y no por `MAX(código)`, que es imposible: los códigos
+      están cifrados con IV aleatorio. Saltea los ya tomados — en correlativo los
+      ocupados están todos juntos, así que chocar con la tanda anterior es lo
+      normal, no la excepción.
+    - **En la fábrica no hay apodo**: se trabaja por número de serie. El nombre lo
+      pone la familia cuando el control llega a una casa.
+    - **Buscador por serial o por código** (`GET /remotes/search`). Por código
+      funciona gracias al HMAC de la unicidad: es determinístico, así que
+      encuentra con un índice **sin descifrar nada**. Solo con el número
+      completo —no se puede enumerar— y la respuesta trae qué BOTÓN coincidió,
+      nunca los códigos.
+    - **`code_hmac` con UNIQUE**: el cifrado usa IV aleatorio, así que hasta hoy
+      **nada detectaba un código duplicado** — y como el `dni` que vuelve en la
+      alarma es el que cargamos nosotros, un repetido es el monitoreo llamando a
+      la casa equivocada. HMAC con clave, no un hash pelado: 12 dígitos se
+      invierten con un diccionario.
+    - **Etiqueta de 40 × 20 mm** (la del equipo son 90 × 45 y no entra en un
+      llavero), con el serial escrito y un QR `CPS-CR|serial|modelo|4 códigos`.
+      **Los códigos van en claro por decisión explícita**, con el costo asumido:
+      una foto alcanza para clonar el control y para apagar la alarma del barrio.
+      Lo que queda es trazabilidad — imprimir es solo-CPS y deja `audit_log`.
+    - **Botón "Listo"** (migración `RemoteReady`), igual que en alarmas:
+      fabricar no es estar listo, y hasta el visto bueno el control **no entra
+      al stock**. `status` no podía decirlo — uno recién fabricado ya está en
+      INVENTORY porque el CHECK de custodia lo exige. Se puede revertir.
+    - La pantalla quedó al molde de la de alarmas: la tabla muestra **solo el
+      número de serie y las acciones** (ver códigos, imprimir, listo), lista
+      TODO lo fabricado —no solo la tanda de la sesión— y la etiqueta se imprime
+      con `window.print()` sobre un bloque invisible, sin vista previa aparte.
+    - **Papelera y borrado definitivo** (migración `RemoteRemoved`), espejo del
+      equipo: remover / dar de alta / borrar, con `/inventario/controles/removidos`.
+      Restaurar devuelve el control **sin el visto bueno**. Al borrar, **sus
+      códigos vuelven a quedar disponibles** — sale solo del diseño: la reserva
+      vive en el índice del HMAC y se va con el CASCADE. Removerlo NO los libera.
+      Un control con eventos no se puede borrar.
+    - **Aviso que hay que sostener**: remover un control **no lo deja sin
+      efecto**. Sus códigos siguen grabados en cada panel y la web no los
+      sincroniza. En el equipo ese hueco se cierra revocando la credencial del
+      broker; acá el equivalente es `cmd t:rf op:del`, que es parte del flujo RF
+      congelado. La pantalla lo dice explícito.
+    - Pantalla `/inventario/controles`, solo CPS. 48 e2e contra la base real, 11
+      unitarios del generador y 29 del front.
+
+    **Fase 2, CUSTODIA COMPLETA: HECHA (2026-08-05).** Migración `RemoteClaimCode`.
+    El recorrido entero, espejo del de la alarma:
+    fábrica → stock CPS → **entrega de lote** o **adopción por código** → stock
+    del cliente → **asignación** (municipio → barrio → casa → vecino) →
+    **devolución** al stock.
+    - **Código de reclamo** en el control (`claim_code`), con su consecuencia
+      asumida: entra en la etiqueta de 40×20 mm que ya estaba cerrada. El serial
+      no alcanzaba —está impreso a la vista y viaja en los listados—; el código
+      es lo que demuestra que el control está en la mano.
+    - **El portador es OBLIGATORIO al asignar** (decisión del usuario). El `dni`
+      del portador es lo que viaja en la alarma, así que un control entregado sin
+      nombre es un evento que después no se le puede atribuir a nadie. Cambiarlo
+      después sigue siendo libre.
+    - **CPS puede asignar directo** desde su stock, sin escala en el municipio.
+      Costo asumido: el inventario del cliente no ve pasar ese control.
+    - **Devolver al stock** (`POST /remotes/:id/return`): la familia lo entrega y
+      el control queda listo para otra casa. Antes lo único posible era tirarlo a
+      la papelera. Un control entregado NO se manda directo a otra casa: hay que
+      devolverlo primero.
+    - **Se eliminó el alta manual de controles** (`remote-form`): creaba
+      controles sin serial, sin modelo y sin códigos — o sea que no podían
+      funcionar. Todo control nace en la fábrica. El endpoint `POST /remotes`
+      quedó sin pantalla: sacarlo es un pendiente chico.
+    - Pantallas: inventario con **entrega de lote** y **adopción**, y
+      `/controles/asignar` con el recorrido de cuatro pasos. La asignación NO se
+      hace desde una fila: son cuatro decisiones encadenadas y la lista de
+      controles disponibles depende del destino.
+    - 17 e2e del flujo + 48 de la fábrica, y 164 tests del front.
+
+    **Las tres pantallas avisan lo mismo, y hay que sostenerlo**: asignar no
+    carga los códigos en los paneles y devolver no los borra. Hasta que exista la
+    sincronización de la base RF, el vecino se lleva un llavero que las alarmas
+    no conocen.
+
+    **Fase 3, LA LISTA DE OPERAR: HECHA (2026-08-05).** `/controles` dejó de ser
+    una grilla de tarjetas y pasó a **tabla con filtros y paginación del
+    servidor** (espejo de Eventos). El número que lo decidió: una alarma lleva de
+    10 a 120 controles, un barrio ~10 alarmas y una municipal ~10 barrios →
+    **~12.000 llaveros**. `GET /remotes` devuelve `{items,total,limit,offset}` y
+    cada fila viaja con vivienda, barrio, cliente y portador ya resueltos: antes
+    traía todo y el front se bajaba además todas las viviendas para traducir
+    `homeId → dirección`. Filtros en cascada cliente → barrio → alarma preferida,
+    más estado y un buscador por DNI / serial / dirección / portador. Los códigos
+    RF salieron de esa pantalla: se graban al fabricar y se revelan en Fábrica.
+
+    **Fase 4, LA BASE RF EN EL PANEL: HECHA (2026-08-05).** Es lo que hace que el
+    control efectivamente dispare. Migraciones `RemoteSync` + `RfSyncOnAck`.
+
+    - **Regla de dominio nueva: una persona lleva UN control**
+      (`uq_remote_one_per_carrier`). No es preferencia nuestra: la base del panel
+      se indexa por **DNI** y guarda un registro por persona con hasta 4 códigos
+      (`ee_client_t`), así que el segundo control del mismo portador nunca podría
+      cargarse — el equipo lo rechaza con `EE_DUP`.
+    - **Qué controles le tocan a un equipo**: los de las viviendas que lo tienen
+      como **alarma preferida** (`home.default_device_id`). No todos los del
+      barrio: en el chip entran ~126 vecinos.
+    - **El estado no es un flag**: `remote.synced_device_id/_dni/_hash/_at`
+      guardan lo que QUEDÓ CARGADO, y "pendiente" se deduce comparándolo con lo
+      que debería estar. Cambiar el portador, editar un código, devolver el
+      control o reportarlo perdido lo desincronizan solos.
+    - **La cadena**: la tanda se encola entera pero solo el primer paso nace
+      `pending`; el resto queda `queued` (estado nuevo que el GtD no ve) y
+      `gtd.confirm_command` libera el siguiente con cada ack. El panel recuerda 8
+      `cid` y bloquea ~2,25 s por lote: publicar 24 en ráfaga desbordaba su dedup
+      y le tapaba la cola.
+    - **El ack escribe el dominio**, en la base: cuando el panel contesta, del
+      lado de Node no corre nadie. Mismo criterio que `confirm_provisioning`.
+    - **Reportar un llavero perdido ahora lo saca del panel.** Era el agujero más
+      grande que quedaba: hasta acá era un acto administrativo y el control
+      seguía abriendo la alarma de esa gente.
+    - Pantalla: bloque propio en la pestaña **Configuración** del equipo, con el
+      conteo contra la capacidad real del chip y el motivo de cada control que no
+      se puede cargar (sin portador, DNI de más de 8 dígitos, hueco de posición).
+    - Se corrigió de paso un bug del GtD: `TeleMsg.rf_gen` leía una clave de
+      primer nivel que el firmware no manda (viene en `rf.gen`), así que
+      `device_state.rf_gen` era 0 para todos los paneles y la detección de
+      desincronización comparaba contra un cero fijo.
+
+    **Falta de este punto**: usar `op:"audit"` —los hashes por DNI que el panel ya
+    sabe mandar— para detectar deriva REAL contra su memoria, y un "poner al día
+    el barrio" que recorra todas sus alarmas. Con lo que hay, "sincronizado"
+    significa *el panel ackeó que lo guardó*.
+13. ~~**OTA: catálogo de firmwares y gestor de actualizaciones**~~ — **HECHO
+    (2026-08-06)**. Detalle completo en `docs/ota.md`. Migraciones
+    `FirmwareCatalog` y `OtaProgress`.
+
+    **Lo que faltaba no era el firmware.** Al leerlo apareció que el OTA por MQTT
+    y la carga local por el portal **ya estaban implementados** —el
+    `ota_design.md §0` de allá dice que están pendientes y está desactualizado—.
+    Lo que no existía era el otro extremo: de dónde salen los `.bin`. El origen
+    automático apuntaba a un 404, verificado contra el servidor real.
+
+    - **Son DOS OTA y no son lo mismo.** `new` es la última a desplegar;
+      `emergency` es el **último bueno conocido**, que el equipo baja SOLO cuando
+      se detecta roto. Publicar ahí la versión de la que trata de escapar anula
+      el mecanismo, así que son dos acciones distintas y la pantalla avisa cuando
+      apuntan al mismo release.
+    - **El host tiene que ser el APEX.** `ota_url_is_allowed()` compara contra
+      `cpssecurity.com.ar` EXACTO: servir los `.bin` desde `system.` los haría
+      rechazar sin bajar un byte. Los dos dominios están en la misma Raspberry;
+      falta pegar el `location /firmware/` del sitio institucional
+      (`deploy/apex-firmware.conf`), que es el único paso con sudo.
+    - **Del `.bin` se lee todo menos la versión.** `project_name`, tamaño y
+      sha256 salen del `esp_app_desc_t`. La versión se tipea porque el
+      `CMakeLists.txt` del firmware no define `PROJECT_VER` y la imagen declara
+      su `git describe` (`f1a0459-dirty`). Propuesta F-OTA-1.
+    - **`cmd t:ota` pasó a ser SOLO CPS.** Antes entraba por `CONFIGURAN_EQUIPOS`
+      y un técnico de una organización podía mandar un OTA **con la URL que
+      quisiera**; el contrato con el GtD ya pedía que fuera solo-CPS y nunca se
+      había implementado en ningún lado. `restart` y `factory` no se tocaron.
+      La cola devuelve un tercer flag, `puedeActualizar`.
+    - **El progreso dejó de tirarse.** El panel ya mandaba `up t:ota` y el GtD ya
+      lo guardaba en `uplink_raw`: nadie lo leía. `gtd.last_ota` lo expone como
+      función y no como GRANT, porque `uplink_raw` tiene también los `cfg_full`
+      con las passwords WiFi en claro.
+    - **La selección múltiple NO es una campaña**: cada equipo recibe su comando
+      y su `cid`, por la misma puerta que desde su ficha. Sin broadcast (el
+      firmware lo prohíbe) y con el resultado equipo por equipo — va a haber
+      rebotes, porque el panel rechaza el OTA fuera del modo de energía activo.
+    - 30 unitarios de backend nuevos y 27 del front (235 en total).
+
+    **Descartado (sigue sin reabrirse)**: campañas masivas automáticas.
+
+    **Queda anotado, sin hacer**: el **mecanismo de actualizaciones pendientes**.
+    Hoy un OTA a un equipo fuera de modo activo **se pierde** —el firmware
+    contesta error y se termina ahí—, así que actualizar de noche una flota solar
+    no actualiza nada. La idea es una cola nuestra que reintente cuando el equipo
+    reporte modo activo; sigue decidiendo una persona qué equipos. Ojo con dos
+    cosas: el `cmd t:ota` no tiene expiración (F-OTA-4) y el equipo no compara
+    versiones, así que el reintento tiene que verificar que siga haciendo falta.
+
+14. **Servicio de alarmas** (programa separado, MQTT → `device_state` + `event` + FCM):
    diseñarlo recién cuando el resto esté estable.
-13. Más adelante: 2FA para OWNER, estado ACKNOWLEDGED del evento (pospuesto a
+15. Más adelante: 2FA para OWNER, estado ACKNOWLEDGED del evento (pospuesto a
     propósito), alcance del personal de CPS (ver punto 7), tests e2e del modelo v2
     (`sembrar()` de `test/helpers.ts` sigue armando el modelo v1 y su suite está en
     rojo; los e2e de configuración y de provisioning no lo usan, siembran su
@@ -321,6 +604,8 @@ comparte solo la base; controles con 4 códigos RF; sin git por decisión del us
 | `docs/negocio-redisenado.md` | el negocio en lenguaje de negocio | vigente |
 | `docs/diseno-relaciones-fase1.md` | diseño del modelo con el porqué de cada decisión | vigente (implementado) |
 | `docs/esquema-postgres-v2.sql` | DDL, fuente de verdad del esquema | vigente |
+| `docs/ota.md` | actualización de firmware: las dos OTA, el catálogo y qué falta | vigente |
+| `docs/propuestas-firmware-ota.md` | lo que le pedimos al repo del firmware (no se edita desde acá) | vigente |
 | `docs/relevamiento-fase0.md` | análisis de las 3 fuentes que originó el rediseño | **histórico** |
 | `backend-nestjs/docs/*` | detalle por módulo (modelo, negocio, activos, auth, seguridad, geografía, migraciones, handoff al front) | vigentes (v2) |
 | `frontend-angular/docs/pendientes-y-decisiones.md` | estado del front (migrado a v2) + pendientes | vigente |

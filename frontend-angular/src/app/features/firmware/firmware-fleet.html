@@ -1,0 +1,310 @@
+<div class="mb-3">
+  <h2 class="h5 fw-bold mb-0">
+    <i class="icon-radio-tower text-brand me-2"></i>Equipos
+  </h2>
+  <p class="text-muted small mb-0">
+    Qué versión corre cada poste, contra la que está publicada.
+  </p>
+</div>
+
+@if (error(); as e) {
+  <div class="alert alert-danger py-2 small d-flex align-items-start gap-2">
+    <i class="icon-circle-alert mt-1"></i>
+    <div>{{ e }}</div>
+  </div>
+}
+
+@if (publicada(); as p) {
+  <div class="d-flex flex-wrap align-items-center gap-3 mb-3">
+    <div class="small">
+      Publicada: <span class="font-monospace fw-semibold">{{ p }}</span>
+    </div>
+    <div class="vr d-none d-sm-block"></div>
+    <div class="d-flex gap-2 small">
+      <span class="badge text-bg-warning">{{ atrasados() }} desactualizados</span>
+      <span class="badge text-bg-success">{{ alDia() }} al día</span>
+      @if (desconocidos() > 0) {
+        <span
+          class="badge text-bg-secondary"
+          title="Nunca conectaron: no sabemos qué versión tienen. No es lo mismo que estar atrasado."
+          >{{ desconocidos() }} sin datos</span
+        >
+      }
+    </div>
+  </div>
+} @else {
+  <div class="alert alert-warning py-2 small d-flex align-items-start gap-2">
+    <i class="icon-triangle-alert mt-1"></i>
+    <div>
+      No hay ninguna versión publicada, así que no hay contra qué comparar ni nada
+      que mandar. Se publica en la pestaña
+      <a routerLink="/actualizaciones/versiones">Versiones</a>.
+    </div>
+  </div>
+}
+
+<!-- ═══════════════ LA BARRA DE ACCIÓN ═══════════════════════════════ -->
+<div class="card border mb-3">
+  <div class="card-body py-2 d-flex flex-wrap align-items-center gap-2">
+    <button
+      type="button"
+      class="btn btn-sm btn-outline-secondary"
+      [disabled]="atrasados() === 0"
+      (click)="elegirAtrasados()"
+    >
+      Elegir los {{ atrasados() }} desactualizados
+    </button>
+    @if (cuantosElegidos() > 0) {
+      <button type="button" class="btn btn-sm btn-outline-secondary" (click)="limpiarSeleccion()">
+        Limpiar
+      </button>
+    }
+
+    <div class="ms-auto d-flex align-items-center gap-2">
+      @if (cuantosElegidos() > 0) {
+        <span class="small text-muted">{{ cuantosElegidos() }} elegidos</span>
+      }
+      <button
+        type="button"
+        class="btn btn-sm btn-brand"
+        [disabled]="cuantosElegidos() === 0 || mandando() || !publicada()"
+        (click)="pedirActualizar()"
+      >
+        @if (mandando()) {
+          <span class="spinner-border spinner-border-sm me-1"></span> Mandando…
+        } @else {
+          <i class="icon-refresh-cw me-1"></i> Actualizar
+        }
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ EL RESULTADO DEL ÚLTIMO ENVÍO ════════════════════ -->
+@if (resultados(); as r) {
+  <div class="card border mb-3">
+    <div class="card-header bg-white border-bottom d-flex justify-content-between align-items-center">
+      <span class="fw-semibold small">
+        <i class="icon-inbox me-1"></i> Qué pasó con cada uno
+      </span>
+      <button type="button" class="btn-close btn-sm" (click)="cerrarResultados()"></button>
+    </div>
+    <div class="card-body small">
+      <p class="mb-2">
+        <strong>{{ encolados() }}</strong> encolados de {{ r.length }}.
+        @if (encolados() > 0) {
+          Cada uno es un pedido propio; el equipo lo toma cuando puede y el
+          resultado se ve en la columna "Pedido en curso".
+        }
+      </p>
+      <!--
+        Los que rebotaron se listan uno por uno CON su motivo. Es prácticamente
+        seguro que haya: el firmware rechaza el OTA fuera del modo activo.
+      -->
+      @if (rebotados().length > 0) {
+        <div class="alert alert-warning py-2 mb-0">
+          <p class="fw-semibold mb-1">
+            {{ rebotados().length }} no salieron:
+          </p>
+          <ul class="mb-0 ps-3">
+            @for (f of rebotados(); track f.deviceId) {
+              <li>
+                <span class="font-monospace">{{ f.serial }}</span> — {{ f.motivo }}
+              </li>
+            }
+          </ul>
+        </div>
+      }
+    </div>
+  </div>
+}
+
+<!-- ═══════════════ LA FLOTA ═════════════════════════════════════════ -->
+<div class="card border">
+  @if (cargando()) {
+    <div class="card-body text-center text-muted py-4">
+      <span class="spinner-border spinner-border-sm me-2"></span> Cargando…
+    </div>
+  } @else if (equipos().length === 0) {
+    <div class="card-body text-center text-muted py-4 small">
+      No hay equipos instalados. Un equipo en inventario todavía no tiene barrio y
+      no recibe comandos.
+    </div>
+  } @else {
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th style="width: 2.5rem"></th>
+            <th class="small">Equipo</th>
+            <th class="small">Barrio</th>
+            <th class="small">Versión</th>
+            <th class="small">Estado</th>
+            <th class="small">Última actualización</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (e of ordenados(); track e.deviceId) {
+            <tr [class.table-active]="estaElegido(e.deviceId)">
+              <td>
+                <input
+                  type="checkbox"
+                  class="form-check-input"
+                  [checked]="estaElegido(e.deviceId)"
+                  (change)="alternar(e.deviceId)"
+                  [attr.aria-label]="'Elegir ' + e.serial"
+                />
+              </td>
+              <td>
+                <a
+                  class="text-decoration-none fw-semibold"
+                  [routerLink]="['/alarmas', e.deviceId]"
+                >
+                  {{ e.nombre ?? e.serial }}
+                </a>
+                <div class="text-muted small font-monospace">{{ e.serial }}</div>
+              </td>
+              <td class="small">
+                {{ e.barrio ?? '—' }}
+                @if (e.cuenta) {
+                  <div class="text-muted">{{ e.cuenta }}</div>
+                }
+              </td>
+              <td class="small font-monospace">{{ e.fw ?? '—' }}</td>
+              <td>
+                <span class="badge {{ etiqueta(e.estado).clase }}">
+                  {{ etiqueta(e.estado).texto }}
+                </span>
+                <div class="mt-1 d-flex flex-wrap gap-1">
+                  @if (!e.online && !durmiendo(e)) {
+                    <span class="badge text-bg-light border small">desconectado</span>
+                  }
+                  @if (durmiendo(e)) {
+                    <span
+                      class="badge text-bg-light border small"
+                      [title]="'Duerme hasta ' + (e.durmiendoHasta | date: 'HH:mm')"
+                      >durmiendo</span
+                    >
+                  }
+                  <!--
+                    El aviso más importante de la pantalla: el equipo RECHAZA el
+                    OTA fuera del modo activo. No lo encola ni lo difiere.
+                  -->
+                  @if (sinEnergia(e)) {
+                    <span
+                      class="badge text-bg-danger small"
+                      title="El equipo rechaza la actualización si no está en modo de energía activo. No queda esperando: contesta error."
+                      >sin energía</span
+                    >
+                  }
+                </div>
+              </td>
+              <td class="small">
+                <!--
+                  Dos cosas distintas y las dos importan:
+                    · el PEDIDO   → el comando y su ack ("acepté")
+                    · el PROGRESO → lo que contó el equipo (up t:ota)
+                  Entre uno y otro hay una descarga de 1,2 MB, un sha256 y un
+                  reinicio. Un pedido confirmado con un progreso "falló" es
+                  justo el caso que antes no se veía en ningún lado.
+                -->
+                @if (e.progreso; as p) {
+                  <!--
+                    La confirmación NO se deduce acá: la resuelve el backend.
+                    "¿fw coincide con la publicada?" no alcanza y llegó a mostrar
+                    un falso "actualizada" — esa versión es la etiqueta de
+                    NUESTRO manifiesto que el equipo devuelve, y lo único que su
+                    self-test comprueba es que consiguió internet.
+                  -->
+                  @if (e.confirmacion; as c) {
+                    <span
+                      class="badge"
+                      [class.text-bg-success]="c.estado === 'arranco'"
+                      [class.text-bg-info]="c.estado === 'reiniciando'"
+                      [class.text-bg-danger]="c.estado === 'no_aplico' || c.estado === 'fallo'"
+                      [class.text-bg-secondary]="c.estado === 'indistinguible'"
+                      [title]="c.detalle"
+                    >
+                      {{ textoConfirmacion(c.estado) }}
+                    </span>
+                    <div class="text-muted">{{ c.detalle }}</div>
+                  } @else {
+                    <span
+                      class="badge"
+                      [class.text-bg-danger]="p.fallo"
+                      [class.text-bg-info]="p.enCurso"
+                      [class.text-bg-secondary]="!p.fallo && !p.enCurso"
+                    >
+                      {{ p.estadoTexto }}
+                    </span>
+                    @if (p.motivo) {
+                      <div class="text-danger-emphasis">{{ p.motivo }}</div>
+                    }
+                  }
+                  <div class="text-muted">{{ p.recibidoEn | date: 'dd/MM HH:mm' }}</div>
+                } @else if (e.otaEnCurso; as o) {
+                  <span class="badge text-bg-secondary">pedido {{ o.estado }}</span>
+                  <div class="text-muted">{{ o.creadoEn | date: 'dd/MM HH:mm' }}</div>
+                  @if (o.detalle) {
+                    <div class="text-muted">{{ o.detalle }}</div>
+                  }
+                } @else {
+                  <span class="text-muted">—</span>
+                }
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+</div>
+
+<p class="text-muted small mt-2 mb-0">
+  <i class="icon-info me-1"></i>
+  La versión que muestra cada equipo es la que él declara al conectarse, no la que
+  le mandamos: después de actualizar tarda un rato en reflejarse.
+</p>
+
+<!-- ═══════════════ CONFIRMAR EL ENVÍO ═══════════════════════════════ -->
+@if (confirmando()) {
+  <div class="modal d-block" tabindex="-1" style="background: rgba(0, 0, 0, 0.5)">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title h6">
+            Actualizar {{ cuantosElegidos() }}
+            {{ cuantosElegidos() === 1 ? 'equipo' : 'equipos' }}
+          </h5>
+        </div>
+        <div class="modal-body small">
+          <p>
+            Cada equipo va a bajar
+            <span class="font-monospace">{{ publicada() }}</span> y
+            <strong>reiniciarse solo</strong>. Durante ese rato el barrio tiene una
+            alarma menos.
+          </p>
+          @if (elegidosSinEnergia() > 0) {
+            <div class="alert alert-warning py-2 mb-2">
+              <i class="icon-triangle-alert me-1"></i>
+              <strong>{{ elegidosSinEnergia() }}</strong> de los elegidos no están
+              en modo de energía activo. Esos van a rechazar el pedido —no queda
+              esperando, se pierde— y hay que volver a mandarlos cuando haya sol.
+            </div>
+          }
+          <p class="text-muted mb-0">
+            Se manda un pedido por equipo. Si alguno falla, los demás siguen igual.
+          </p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-sm btn-outline-secondary" (click)="cancelar()">
+            Cancelar
+          </button>
+          <button type="button" class="btn btn-sm btn-brand" (click)="confirmar()">
+            Mandar
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+}

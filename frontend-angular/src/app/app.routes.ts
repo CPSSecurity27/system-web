@@ -111,8 +111,8 @@ export const routes: Routes = [
       // El stock se mudó a Inventario. Van ANTES de ':id' o el router se come
       // "stock" y "nueva" como si fueran un id — mismo motivo por el que
       // 'barrios/nuevo' precede a ':id'.
-      { path: 'alarmas/stock', pathMatch: 'full', redirectTo: '/inventario/stock' },
-      { path: 'alarmas/nueva', redirectTo: '/inventario/fabrica' },
+      { path: 'alarmas/stock', pathMatch: 'full', redirectTo: '/inventario/alarmas' },
+      { path: 'alarmas/nueva', redirectTo: '/inventario/fabrica/alarmas' },
       {
         // INSTALAR vive acá y no en Inventario (2026-08-05): es trabajo de
         // campo —dónde va el poste, a qué altura, de qué luminaria cuelga— y no
@@ -136,6 +136,15 @@ export const routes: Routes = [
         path: 'controles',
         loadComponent: () => import('./features/remotes/remote-list').then((m) => m.RemoteList),
       },
+      {
+        // Asignar: municipio -> barrio -> casa -> vecino -> control. Pantalla
+        // propia y no un formulario en la fila: son cuatro decisiones
+        // encadenadas y la lista de controles disponibles depende del destino.
+        path: 'controles/asignar',
+        canActivate: [managerGuard],
+        loadComponent: () =>
+          import('./features/remotes/remote-assign').then((m) => m.RemoteAssign),
+      },
 
       // ---------------------------------------------------------------------
       // INVENTARIO — los equipos que TODAVÍA NO están en servicio.
@@ -153,49 +162,79 @@ export const routes: Routes = [
         loadComponent: () =>
           import('./features/inventory/inventory-shell').then((m) => m.InventoryShell),
         children: [
-          { path: '', pathMatch: 'full', redirectTo: 'stock' },
+          { path: '', pathMatch: 'full', redirectTo: 'alarmas' },
           {
-            // El stock: equipos entregados y por entregar. Provisorio — la
-            // ENTREGA de lotes se separa a /inventario/entregas en la Fase 4,
-            // y la instalación por reclamo se muda al detalle del barrio.
-            path: 'stock',
+            // El stock de ALARMAS y nada más. Antes esta pantalla vivía debajo
+            // de unas pestañas que saltaban a las dos fábricas: estabas mirando
+            // stock y el menú te ofrecía fabricar.
+            path: 'alarmas',
             loadComponent: () =>
               import('./features/devices/device-inventory').then((m) => m.DeviceInventory),
           },
           {
-            // Alta desde MAC + n° de placa, y el registro de todo lo fabricado.
-            // Alta y listado en la MISMA pantalla: la estación de flasheo carga
-            // placas en tanda y navegar por equipo sería fricción pura.
+            // El stock de CONTROLES. Su acción propia es ENTREGAR a una
+            // vivienda; la alarma, en cambio, se instala en la calle.
+            path: 'controles',
+            loadComponent: () =>
+              import('./features/remotes/remote-inventory').then((m) => m.RemoteInventory),
+          },
+          {
+            // FÁBRICA: el ingreso al sistema, con alarmas y controles adentro.
             //
-            // SOLO CPS: una organización recibe equipos, no los fabrica.
+            // Es el único lugar donde las dos familias comparten pestañas, y
+            // ahí sí corresponde: fabricar es el mismo trabajo para las dos y
+            // quien está en la mesa pasa de una a la otra.
+            //
+            // SOLO CPS: una organización recibe equipos, no los produce.
             path: 'fabrica',
             canActivate: [cpsGuard],
             loadComponent: () =>
-              import('./features/devices/device-factory').then((m) => m.DeviceFactory),
-          },
-          {
-            // La papelera. Pantalla aparte y no una pestaña de fábrica: son dos
-            // trabajos distintos. En fábrica se cargan equipos de a decenas;
-            // acá se revisan de a uno y las dos acciones cuestan deshacerlas.
-            path: 'removidos',
-            canActivate: [cpsGuard],
-            loadComponent: () =>
-              import('./features/devices/device-removed').then((m) => m.DeviceRemoved),
-          },
-          {
-            // Provisorio: el único acto de fábrica que hoy existe para
-            // controles es el alta. La pantalla propia —con su listado, al
-            // molde de la de alarmas— es la Fase 4.
-            path: 'controles',
-            loadComponent: () => import('./features/remotes/remote-form').then((m) => m.RemoteForm),
+              import('./features/inventory/factory-shell').then((m) => m.FactoryShell),
+            children: [
+              { path: '', pathMatch: 'full', redirectTo: 'alarmas' },
+              {
+                // Alta desde MAC + n° de placa, y el registro de lo fabricado.
+                // Alta y listado en la MISMA pantalla: la estación carga placas
+                // en tanda y navegar por equipo sería fricción pura.
+                path: 'alarmas',
+                loadComponent: () =>
+                  import('./features/devices/device-factory').then((m) => m.DeviceFactory),
+              },
+              {
+                // La papelera de alarmas. Pantalla aparte y no una pestaña de
+                // fábrica: son dos trabajos distintos. En fábrica se cargan de a
+                // decenas; acá se revisan de a uno y cuesta deshacerlo.
+                path: 'alarmas/removidos',
+                loadComponent: () =>
+                  import('./features/devices/device-removed').then((m) => m.DeviceRemoved),
+              },
+              {
+                // Fábrica de controles: modelo, serial, códigos y etiqueta, al
+                // molde de la de alarmas.
+                path: 'controles',
+                loadComponent: () =>
+                  import('./features/remotes/remote-factory').then((m) => m.RemoteFactory),
+              },
+              {
+                path: 'controles/removidos',
+                loadComponent: () =>
+                  import('./features/remotes/remote-removed').then((m) => m.RemoteRemoved),
+              },
+            ],
           },
           // Los links viejos siguen andando: alguien los tiene en un favorito.
-          { path: 'alarmas', pathMatch: 'full', redirectTo: 'fabrica' },
-          { path: 'alarmas/fabricar', redirectTo: 'fabrica' },
+          // `controles` cambió de significado —era la fábrica, ahora es el
+          // stock— y por eso el viejo apunta explícito a su destino nuevo.
+          { path: 'stock', pathMatch: 'full', redirectTo: 'alarmas' },
+          { path: 'removidos', redirectTo: 'fabrica/alarmas/removidos' },
+          { path: 'alarmas/fabricar', redirectTo: 'fabrica/alarmas' },
         ],
       },
 
-      { path: 'controles/nuevo', redirectTo: 'inventario/controles' },
+      // El alta vieja ya no existe: creaba controles sin serial, sin modelo y
+      // sin códigos, o sea controles que no podían funcionar. Todo control nace
+      // en la fábrica.
+      { path: 'controles/nuevo', redirectTo: '/controles/asignar' },
 
       // ---------------------------------------------------------------------
       // CLIENTES — el mundo de afuera: quién nos compra el servicio.
@@ -226,6 +265,38 @@ export const routes: Routes = [
       { path: 'cuentas', pathMatch: 'full', redirectTo: 'clientes' },
       { path: 'cuentas/nueva', redirectTo: 'clientes/nuevo' },
       { path: 'cuentas/:id', redirectTo: 'clientes/:id' },
+
+      // ---------------------------------------------------------------------
+      // ACTUALIZACIONES (OTA) — solo CPS.
+      //
+      // Sección propia y no una pestaña de Inventario: un firmware no es stock
+      // ni se fabrica. Acá se decide qué software corre la infraestructura, y
+      // eso vale para los postes de TODOS los clientes — igual que la fábrica,
+      // una organización recibe equipos, no los programa.
+      // ---------------------------------------------------------------------
+      {
+        path: 'actualizaciones',
+        canActivate: [cpsGuard],
+        loadComponent: () =>
+          import('./features/firmware/firmware-shell').then((m) => m.FirmwareShell),
+        children: [
+          { path: '', pathMatch: 'full', redirectTo: 'versiones' },
+          {
+            // Subir el .bin y decidir qué versión está publicada en cada una de
+            // las dos bases que el firmware tiene hardcodeadas.
+            path: 'versiones',
+            loadComponent: () =>
+              import('./features/firmware/firmware-versions').then((m) => m.FirmwareVersions),
+          },
+          {
+            // Qué versión corre cada poste y mandarles la nueva. NO es una
+            // campaña: cada equipo recibe su propio comando.
+            path: 'equipos',
+            loadComponent: () =>
+              import('./features/firmware/firmware-fleet').then((m) => m.FirmwareFleet),
+          },
+        ],
+      },
 
       // ---------------------------------------------------------------------
       // MI EMPRESA — nuestro negocio, no el de los clientes.

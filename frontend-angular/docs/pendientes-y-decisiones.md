@@ -146,3 +146,134 @@ Diseño completo en `../../docs/superpowers/specs/2026-08-02-viviendas-y-vecinos
   backend; credenciales en `../../docs/estado-proyecto.md` §3.1.
 - Verificación: `npx tsc --noEmit && npx ng build && npm test -- --watch=false`
   (no hay eslint en este proyecto; formato con `npx prettier --write`).
+
+
+## Navegación de Inventario (2026-08-05)
+
+Quedó así, y el porqué de cada corte:
+
+| Menú | Ruta | Qué es |
+|---|---|---|
+| Alarmas | `/inventario/alarmas` | **stock** de alarmas |
+| Controles | `/inventario/controles` | **stock** de controles |
+| Fábrica (solo CPS) | `/inventario/fabrica` | el ingreso al sistema, con pestañas Alarmas / Controles |
+
+**Lo que estaba mal.** El menú decía *Alarmas · Fábrica · Controles*, pero
+"Fábrica" era **solo** la de alarmas y "Controles" apuntaba a la **fábrica** de
+controles, no a su stock. Encima el shell de Inventario tenía sus propias
+pestañas Alarmas/Controles que saltaban a las dos fábricas: estabas mirando
+stock y el menú te ofrecía fabricar.
+
+**La regla que ordena esto.** La FÁBRICA es el único lugar donde las dos
+familias comparten pestañas, y ahí sí corresponde: fabricar es el mismo trabajo
+para las dos —una estación, una tanda, una etiqueta— y quien está en la mesa
+pasa de una a la otra. En INVENTARIO no: ahí las preguntas son distintas (a qué
+barrio va una alarma, a qué vivienda va un control) y mezclarlas obligaba a
+saltar entre pestañas que no tenían nada que ver con lo que se estaba mirando.
+
+Las papeleras cuelgan de su fábrica (`/inventario/fabrica/alarmas/removidos` y
+`.../controles/removidos`), así las pestañas siguen a la vista.
+
+Los links viejos redirigen. **Ojo con uno**: `/inventario/controles` cambió de
+significado —era la fábrica de controles, ahora es su stock—, así que
+`controles/nuevo` apunta explícito a `/inventario/controles/alta`.
+
+
+## `/controles`: de tarjetas a tabla paginada (2026-08-05)
+
+La pantalla de controles entregados era una grilla de tarjetas de dos columnas,
+cada una con el portador, la devolución y un panel de códigos RF adentro. Se
+rehízo como **tabla con filtros y paginación del servidor**, espejo de Eventos.
+
+**El número que decidió todo:** una alarma lleva de 10 a 120 controles, un barrio
+tiene ~10 alarmas y una municipal ~10 barrios → **~12.000 llaveros**. Con eso:
+
+- Un acordeón por vivienda quedaba descartado: sirve para "qué tiene la familia
+  X" y falla justo en la pregunta que se hace todos los días, "dónde está el
+  control del DNI 30.111.222".
+- Achicar la tarjeta tampoco: 12.000 tarjetas chicas siguen siendo 12.000.
+
+**Lo que cambió del lado del dato.** `GET /remotes` devolvía un array con TODO el
+alcance, y encima la pantalla se bajaba todas las viviendas para traducir
+`homeId → dirección`. Ahora devuelve `{ items, total, limit, offset }` y cada
+fila viaja con vivienda, barrio, cliente y portador ya resueltos.
+
+**El orden lo pone el backend**: barrio → dirección → serial. Los controles de
+una misma casa caen juntos, así que se lee agrupado sin pagar el acordeón.
+
+**Los filtros**: cliente → barrio → alarma preferida (en cascada; la alarma se
+habilita recién con un barrio elegido, porque las alarmas se listan por barrio),
+más estado y un único buscador por DNI, serial, dirección o portador, con
+debounce de 400 ms. El selector de cliente aparece solo si hay más de uno.
+
+**`?homeId=` sigue funcionando** (viene de la ficha del hogar) pero ahora se
+muestra como chip: la lista recortada tiene que decir por qué lo está.
+
+**Se fue el botón de códigos RF.** Los códigos se graban al fabricar y se
+revelan en Fábrica, las dos cosas solo CPS. El operador que busca un llavero no
+necesita el número que tiene grabado adentro, y tenerlo acá era una superficie
+de exposición sin uso.
+
+**Sin filtros la pantalla muestra la página 1 con el total real** ("1–50 de
+11.842") en vez de exigir elegir un cliente antes de ver nada: los filtros están
+ahí arriba y esconder la lista no ayudaba a nadie.
+
+
+## La base de controles, en la pestaña de Configuración (2026-08-05)
+
+El bloque que carga los códigos de los controles en la memoria del equipo vive
+en `Configuración`, pero es un **componente aparte** (`app-device-rf`) y no un
+campo más del formulario.
+
+**Por qué aparte.** La base RF no es configuración: no tiene `cfg_v`, no se
+mergea, no es retained y no entra en el diff de "vas a cambiar". Es una cola de
+comandos con su ack. Adentro de `DeviceConfigTab` parecería un campo más, y el
+día que alguien apriete "Descartar cambios" esperaría que también descartara
+esto. Va **arriba** de la configuración: decide si un llavero dispara o no, y eso
+pesa más que un huso horario.
+
+**Lo que muestra, y por qué así.** Los que ya están cargados son un **número**,
+no una lista: lo que pide una decisión es lo que falta. Los que no se pueden
+cargar vienen con la explicación **escrita por el backend** — la regla es del
+firmware (la base se indexa por DNI, los botones se llenan en orden desde el
+primero) y no se reescribe en dos idiomas. El conteo va contra la capacidad REAL
+del chip que reporta el equipo, no contra un número fijo.
+
+**Dos honestidades que la pantalla sostiene**: los lotes salen de a uno y esperan
+la respuesta del equipo, así que con el panel dormido esto avanza cuando
+despierte; y no se puede apurar, porque cada alta le hace barrer la memoria
+entera (~2,25 s por lote de 5). Las dos cosas se dicen antes de apretar, para
+que nadie crea que se colgó.
+
+
+## Corregir dónde está una casa (2026-08-06)
+
+Faltaba: el GPS de la vivienda se carga al darla de alta y **no había forma de
+corregirlo**. Un pin mal puesto quedaba mal para siempre, y no es un dato
+decorativo — sale en el mapa del monitoreo y viaja en el `gps` de cada evento,
+así que un error manda al móvil a otra cuadra.
+
+El backend ya lo aceptaba (`PATCH /homes/:id` con `latitude`/`longitude`): era
+un agujero solo del front.
+
+**Dónde vive**: una tarjeta "Dónde está" al pie de la ficha de la vivienda
+(`/viviendas/:id`), calcada de la pestaña Instalación de la alarma, que resuelve
+exactamente lo mismo. Se hace click en el mapa, **se ve el punto nuevo antes de
+guardar** y recién ahí se confirma: que mover el pin sin querer se guardara solo
+sería peor que no poder moverlo.
+
+**El botón que faltaba** está en la lista de viviendas y dice "Ubicación". Va a
+la misma ficha que "Miembros", pero con su propia etiqueta y ancla: nadie iba a
+buscar el pin de una casa detrás de un botón que dice "Miembros".
+
+**Quién puede**: el que gestiona el barrio y el **TITULAR de esa casa** — el
+mismo conjunto que acepta el backend. Ojo con `auth.isTitular()` a secas: dice
+que sos titular de ALGUNA casa, no de esta, y usarlo acá le daría el botón al
+titular de la casa de enfrente. Hay un test para eso.
+
+**Lo que a propósito NO se toca desde acá**: el barrio. Mudar una casa arrastra
+sus miembros, sus controles ya sincronizados y su alarma preferida — no es una
+corrección, y el backend además exige gestionar el barrio destino. Tampoco se
+recalcula la alarma preferida: mover el pin unos metros no cambia nada, pero
+corregir una casa cargada en la otra punta del barrio puede dejarla apuntando a
+un poste lejano. La pantalla lo avisa; no decide por el gestor.

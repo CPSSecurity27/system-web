@@ -4,13 +4,17 @@ import {
   Injectable,
 } from '@nestjs/common';
 import { DataSource, EntityManager } from 'typeorm';
+import type { AuthenticatedUser } from '../auth/auth.service';
+import { cumpleMembresia } from '../auth/decorators/roles.decorator';
 import { AuditService } from '../common/audit.service';
 import { AccessScope, ScopeService } from '../common/scope.service';
 import { MAX_PAYLOAD_BYTES, validarPatch } from './device-config.limits';
+import { CONFIGURAN_EQUIPOS, VEN_PASSWORDS_WIFI } from './device-permissions';
 import { DevicesService } from './devices.service';
 import {
   DeviceConfigView,
   EstadoConfig,
+  FuenteConfigView,
   RedWifiRevelada,
   RedWifiView,
   ScanRedView,
@@ -38,6 +42,8 @@ interface RedCruda {
   ssid?: unknown;
   psw?: unknown;
   prio?: unknown;
+  /** Solo sube en el `cfg_full`: la lista negra permanente del panel. */
+  bl_perm?: unknown;
 }
 
 /**
@@ -106,6 +112,7 @@ export class DeviceConfigService {
       ssid: typeof red.ssid === 'string' ? red.ssid : '',
       prio: typeof red.prio === 'number' ? red.prio : i + 1,
       tienePassword: typeof red.psw === 'string' && red.psw.length > 0,
+      bloqueada: red.bl_perm === true,
     }));
   }
 
@@ -164,7 +171,11 @@ export class DeviceConfigService {
     return filas[0];
   }
 
-  async findConfig(id: number, scope: AccessScope): Promise<DeviceConfigView> {
+  async findConfig(
+    id: number,
+    scope: AccessScope,
+    user: AuthenticatedUser,
+  ): Promise<DeviceConfigView> {
     const device = await this.equipoVisible(id, scope);
 
     const espejo = await this.leerEspejo(id);
@@ -188,6 +199,12 @@ export class DeviceConfigService {
       estado = 'VERIFICADO';
     } else if (cola.estado === 'failed') {
       estado = 'FALLIDA';
+    } else if (cola.estado === 'stale') {
+      // VA ANTES de comparar versiones a propósito: tras un factory el panel
+      // reporta cfg_v = 0 y el espejo NO se deja pisar por una versión más
+      // vieja, así que sigue diciendo 40 igual que la cola. La comparación daba
+      // VERIFICADO sobre un equipo que está corriendo defaults de fábrica.
+      estado = 'DESACTUALIZADA';
     } else if (BigInt(espejo.cfg_v) >= BigInt(cola.cfg_v)) {
       estado = 'VERIFICADO';
     } else if (cola.estado === 'applied') {
@@ -212,9 +229,14 @@ export class DeviceConfigService {
       detalle: cola?.detalle ?? null,
       espejoActualizadoEn: espejo?.updated_at.toISOString() ?? null,
       ultimoScan,
+      // Los DOS ejes, igual que el PUT: el rol dice QUÉ y la membresía DÓNDE.
+      // Con solo el segundo, el MONITOR —que tiene el barrio en su alcance—
+      // recibía el formulario habilitado y el 403 le llegaba al guardar.
       puedeEditar:
+        cumpleMembresia(user.memberships, CONFIGURAN_EQUIPOS) &&
         device.neighborhoodId !== null &&
         (await this.scopes.managesNeighborhood(scope, device.neighborhoodId)),
+      puedeVerPasswords: cumpleMembresia(user.memberships, VEN_PASSWORDS_WIFI),
     };
   }
 
@@ -222,8 +244,9 @@ export class DeviceConfigService {
     id: number,
     patch: Record<string, unknown>,
     scope: AccessScope,
-    userId: number,
+    user: AuthenticatedUser,
   ): Promise<DeviceConfigView> {
+    const userId = user.id;
     await this.exigirGestion(id, scope);
 
     const errores = validarPatch(patch);
@@ -281,7 +304,7 @@ export class DeviceConfigService {
       newValue: { cfgV, secciones: Object.keys(patch) },
     });
 
-    return this.findConfig(id, scope);
+    return this.findConfig(id, scope, user);
   }
 
   private async encolar(
@@ -322,6 +345,40 @@ export class DeviceConfigService {
   ): Promise<{ mensaje: string }> {
     await this.encolar(id, 'refresh', scope, userId);
     return { mensaje: 'Se le pidió al equipo su configuración actual.' };
+  }
+
+  /**
+   * Los equipos del MISMO barrio que ya reportaron su configuración.
+   *
+   * Es el atajo para "40 postes con el mismo WiFi municipal", que es el costo
+   * asumido de no tener configuración por barrio. Solo precarga el formulario:
+   * son copias independientes, no queda vínculo, y cambiar el original no toca
+   * a las copias. Por eso no hace falta ningún permiso especial — quien copia
+   * después tiene que guardar, y ahí sí se le pide gestionar el barrio.
+   *
+   * Se limita al mismo barrio a propósito: copiarle la configuración a un poste
+   * de otro barrio significa copiarle redes WiFi que no existen ahí.
+   */
+  async fuentesParaCopiar(
+    id: number,
+    scope: AccessScope,
+  ): Promise<FuenteConfigView[]> {
+    const device = await this.equipoVisible(id, scope);
+    if (device.neighborhoodId === null) return [];
+
+    return this.consultar<FuenteConfigView>(
+      `SELECT d.id AS "deviceId",
+              COALESCE(d.name, d.serial) AS nombre,
+              d.serial,
+              ce.updated_at AS "espejoActualizadoEn"
+         FROM device d
+         JOIN gtd.config_espejo ce ON ce.device_id = d.id
+        WHERE d.neighborhood_id = $1
+          AND d.id <> $2
+          AND d.removed_at IS NULL
+        ORDER BY COALESCE(d.name, d.serial)`,
+      [device.neighborhoodId, id],
+    );
   }
 
   /**
